@@ -333,14 +333,22 @@ defmodule Worker.Jack.Chronik.Notizen do
   @doc "Der Hinweis nach einer Änderung (Antwort von `notiz`, unter `weg`)."
   @spec hinweis(Stand.t()) :: String.t()
   def hinweis(%Stand{} = s) do
-    offen = Worker.Jack.Chronik.Abschluss.offene_geschehen(s)
+    # **`Abschluss.offene/1`, nicht `offene_geschehen/1`**: Letzteres rechnet
+    # gegen die Notizen — die Rechnung des Überblicks. In der Verfeinerung
+    # liegen die Fakten in Chronik-Einträgen, also meldete diese Antwort dort
+    # ALLE nicht-notierten als offen (69 von 112), obwohl keiner unbewertet
+    # war. Jack sah die Zahl, hielt seine eigene Zuordnung für falsch und
+    # verbrannte eine Runde mit einer Gegenprobe (18.09.2026). Dieselbe
+    # Verwechslung wie in `offene_kurz` — `offene/1` ist die eine Stelle, die
+    # die Betriebsart kennt.
+    offen = Worker.Jack.Chronik.Abschluss.offene(s)
     {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
 
     "#{length(phasen)} Phasen, #{length(szenen)} Schlüsselszenen, " <>
       "#{length(ausgeschlossen(s))} Fakten begründet ausserhalb; " <>
       case offen do
-        [] -> "jedes Geschehen liegt in einer Gruppe."
-        ids -> "noch #{length(ids)} Geschehen ohne Gruppe."
+        [] -> "jeder Fakt ist bewertet."
+        ids -> "noch #{length(ids)} Fakten unbewertet."
       end
   end
 
@@ -570,11 +578,17 @@ defmodule Worker.Jack.Chronik.Notizen do
     }
   end
 
-  # Die offenen Geschehen mit den kurzen IDs, die auch das Modell sieht — eine
-  # echte ID sagt dem Zuschauer nichts.
+  # Die unbewerteten Fakten mit den kurzen IDs, die auch das Modell sieht —
+  # eine echte ID sagt dem Zuschauer nichts.
+  #
+  # **`Abschluss.offene/1`, nicht `offene_geschehen/1`**: Letzteres ist die
+  # Rechnung des Überblicks (gegen die Notizen). In der Verfeinerung gibt es
+  # keine Notizen, also zeigte die Laufsicht dort ALLE Fakten als unbewertet
+  # (112 von 112), während die Prüfung längst richtig rechnete. Ein
+  # Anzeigefehler, der wie ein Datenverlust aussah (18.09.2026).
   defp offene_kurz(%Stand{fakten: fakten} = s) do
     karte = Map.new(fakten, &{&1.fakt_id, &1.id})
-    for id <- Abschluss.offene_geschehen(s), do: Map.get(karte, id, id)
+    for id <- Abschluss.offene(s), do: Map.get(karte, id, id)
   end
 
   defp eintrag_abbild(e) do

@@ -387,8 +387,9 @@ defmodule Worker.Jack.Chronik.Abschluss do
             "solange ein Fakt unbewertet ist; in der Ablehnung stehen sie beim Namen. " <>
             "Bewertet heisst: in einem Eintrag ODER begründet unter NICHT_ZEITLEISTE. " <>
             "Erwartete Zahlen: eintraege (Einträge der Chronik) und " <>
-            "fakten_zugeordnet (Geschehen, die in einem Eintrag aufgehen). Deine Zahlen " <>
-            "und die Buchhaltung werden verglichen.",
+            "fakten_zugeordnet (Geschehen, die in einem Eintrag aufgehen) — beide " <>
+            "als GESAMTSTAND der Chronik, nicht als Zuwachs dieses Laufs. Deine " <>
+            "Zahlen und die Buchhaltung werden verglichen.",
         parameter: schema(@zahlen_schreiben),
         wiederholung: :frei,
         ausfuehren: &fertig/2
