@@ -1761,6 +1761,23 @@ Eintrag**, darf aber in einer Phase aufgehen, wenn er sie erklärt — und
 `fertig()` verlangt ihn nicht. Die Aufträge sagen jetzt zusätzlich:
 **entscheide am Inhalt, nicht am Etikett**.
 
+**Ein Werkzeugfehler ist kein Hindernis** (`Worker.Agent.Aufruf`, gilt für
+alle Jacks). Eine Ausnahme im Werkzeug kam bis zum 18.09.2026 als
+gewöhnliches `{:error, text}` zurück — für das Modell nicht von „dir fehlt
+noch etwas" zu unterscheiden. Der Abschluss der Chronik-Durchsicht warf bei
+JEDEM Aufruf `key :absaetze not found` (`Chronik.Abschluss.fertig` rief die
+Resümee-Hindernisse, die `s.durchsicht.absaetze` lesen — die Chronik führt
+`vorgelegt`/`erledigt`), und Jack verbrannte **28 von 51 Runden**: erst
+Diagnose, dann der Versuch, das Feld zu erfinden, dann ein kompletter zweiter
+Durchgang. Er hatte den Bug sogar richtig erkannt („This isn't something I
+can fix by changing my parameters") und konnte trotzdem nicht aufhören — ein
+Lauf endet nur über `fertig()`, und `fertig` ist `:frei`, läuft also nie in
+die Wiederholungssperre. Seitdem sagt die Antwort, dass es **nicht an den
+Angaben liegt**, und nach drei inneren Fehlern desselben Werkzeugs endet der
+Lauf (`@innere_fehler_deckel`) — der Bestand bleibt, weil jeder Jack
+veröffentlicht, was bis dahin steht. Der Rundendeckel liegt bei 5000; ohne
+diesen Riegel liefe ein Bug im Abschluss stundenlang.
+
 **Offen aus demselben Review:** `eintrag_ergaenzen` hängt Text an; werden
 die Fakten einer Sitzung neu extrahiert und umformuliert, gelten sie als
 offen, und die Phase wird ein zweites Mal geschrieben. Provenienz je
@@ -1783,6 +1800,37 @@ Bei einer gebündelten Chronik ist das die entscheidende Zahl — „gebündelt"
 „verschluckt" sehen im Ergebnis gleich aus. Genau dieser Zähler fehlte, als
 wochenlang „16 → 175 Einträge" als belegter Erfolg in der Doku stand, während
 die Wirkung null war.
+
+**Gepflichtet ist die BEWERTUNG, nicht die Zuordnung** (Maintainer,
+18.09.2026: „es darf keine pflicht geben — pflicht ist das sie bewertet
+werden — also jedes ding anschauen — und wenn alle NICHT_ZEITLEISTE sind —
+dann ist das ok"). Jeder Fakt muss entschieden sein: in einem Eintrag oder
+mit Begründung unter `NICHT_ZEITLEISTE`. Was herauskommt, ist frei — stehen
+am Ende alle Fakten ausserhalb, ist das ein gültiges Ergebnis, und die
+Chronik bleibt zu Recht leer (eine Sitzung, die nur am Tisch stattfand, hat
+keine Zeitleiste). Die Pflicht ist das Anschauen: Ein Fakt, den niemand
+entschieden hat, ist unbemerkt verschwunden, und von aussen sieht das aus wie
+ein gut gebündelter Abschnitt.
+
+**Das gilt für ALLE Fakten, auch für Zustände.** Die frühere Regel nahm
+`fact_type: "zustand"` von der Prüfung aus. An echten Daten ist das die
+Mehrheit — **85 von 112 Fakten** an seattleV5 S1 (14 `ereignis`, 10
+`absicht`, 2 `beziehung`, 1 `zustandsänderung`) —, und damit entschied ein
+laufzeit-ungegatetes Extraktions-Etikett darüber, was die Zeitleiste
+überhaupt sehen darf; Jack hat es im Lauf mehrfach selbst angezweifelt („F77
+ereignis? No, it says zustand — wait"). Jetzt sieht er jeden Fakt, `offen()`
+nennt die unbewerteten **mit Art und Aussage**, und die Aufträge sagen:
+entscheide am Inhalt, nicht am Etikett. Ohne eigenen Eintrag bleibt ein
+dauerhafter Zustand weiterhin (#1119) — das ist eine Regel über die Flughöhe,
+keine über die Bewertung.
+
+**Vorbereitung am Tisch gehört nach `NICHT_ZEITLEISTE`** (Maintainer-Wort):
+Charaktererstellung, Regelerklärung, Weltvorstellung, Terminabsprachen. Im
+Lauf plante Jack „Character creation 2080 (meta)" als Chronik-Eintrag und
+nannte es selbst „meta"; zwei solche Einträge banden **73 der 112 Fakten**.
+Nicht zu verwechseln mit dem, WAS dabei erzählt wird: Schildert die
+Spielleitung die Vitas-Plage, ist der Inhalt Weltgeschichte und gehört in
+eine Phase — nur der Akt des Vorstellens nicht.
 
 **Keine Code-Prüfung gegen verschluckte Einschnitte** (Maintainer-Wort): der
 Fakt-Typ `zustandsänderung` ist zu fein (jede Verletzung trägt ihn), und ein

@@ -22,7 +22,19 @@ defmodule Worker.Agent.Aufruf do
           optional(atom()) => term()
         }
   @type art :: :ok | :error | :halt | :abbruch
+
+  # Was ein Werkzeug intern liefern kann: dazu `:innerer_fehler` — eine
+  # Ausnahme im Werkzeug selbst. Nach aussen wird daraus ein `:error` (mit
+  # dem Hinweis, dass es nicht an den Angaben liegt) oder ein `:abbruch`
+  # (nach dem Deckel); `art()` bleibt also die Menge, die die Laufschleife
+  # sieht.
+  @type werkzeug_art :: art() | :innerer_fehler
   @type sperre :: nil | {:warnung | :abbruch, pos_integer()}
+
+  # Wie oft ein Werkzeug an sich selbst scheitern darf, bevor der Lauf endet.
+  # Drei, damit ein einmaliger Aussetzer (ein Zeitüberschritt in einem
+  # Leser) nichts kostet, ein echter Bug aber nicht 28 Runden frisst.
+  @innere_fehler_deckel 3
 
   @doc """
   Ein Zustand für Aufrufe von außen. `wiederholungen` wie in
@@ -42,7 +54,12 @@ defmodule Worker.Agent.Aufruf do
           end
       end
 
-    %{werkzeuge: Map.new(werkzeuge, &{&1.name, &1}), wiederholung: w, abbruch: nil}
+    %{
+      werkzeuge: Map.new(werkzeuge, &{&1.name, &1}),
+      wiederholung: w,
+      abbruch: nil,
+      innere_fehler: %{}
+    }
   end
 
   @doc """
@@ -93,7 +110,44 @@ defmodule Worker.Agent.Aufruf do
               s
           end
 
-        {{art, text}, s, nil}
+        innerer_fehler(s, aufruf, art, text)
+    end
+  end
+
+  # Ein Werkzeug, das an sich selbst scheitert, ist kein Hindernis.
+  #
+  # Am 18.09.2026 hat genau diese Verwechslung 28 Runden gekostet: Der
+  # Abschluss der Chronik-Durchsicht warf bei JEDEM Aufruf
+  # `key :absaetze not found`. Für das Modell sah das aus wie „dir fehlt noch
+  # etwas", also suchte es — erst nach dem fehlenden Feld, dann in der ganzen
+  # Arbeit von vorn. Es hat den Bug sogar richtig erkannt („This isn't
+  # something I can fix by changing my parameters") und konnte trotzdem nicht
+  # aufhören, weil ein Lauf nur über `fertig()` endet und `fertig` als `:frei`
+  # nie in die Wiederholungssperre läuft.
+  #
+  # Deshalb zwei Dinge: Die Antwort SAGT, dass der Fehler nicht an den
+  # Angaben liegt, und nach `@innere_fehler_deckel` Mal endet der Lauf — der
+  # Bestand bleibt (jeder Jack veröffentlicht, was bis dahin steht), statt in
+  # der Wiederholung zu verglühen.
+  defp innerer_fehler(s, _aufruf, art, text) when art != :innerer_fehler,
+    do: {{art, text}, s, nil}
+
+  defp innerer_fehler(s, aufruf, :innerer_fehler, text) do
+    n = Map.get(s.innere_fehler, aufruf.name, 0) + 1
+    s = %{s | innere_fehler: Map.put(s.innere_fehler, aufruf.name, n)}
+
+    hinweis =
+      "Das Werkzeug #{aufruf.name} ist an einem inneren Fehler gescheitert: #{text} " <>
+        "Das liegt NICHT an deinen Angaben — derselbe Aufruf scheitert wieder. " <>
+        "Versuch es nicht mit anderen Feldern; die gibt es nicht."
+
+    if n >= @innere_fehler_deckel do
+      {{:abbruch,
+        hinweis <>
+          " Nach #{n} Versuchen endet der Lauf hier. Was du bis jetzt eingetragen hast, " <>
+          "bleibt erhalten."}, %{s | abbruch: {:innerer_fehler, aufruf.name}}, nil}
+    else
+      {{:error, hinweis <> " Arbeite weiter, wenn du kannst."}, s, nil}
     end
   end
 
@@ -116,7 +170,7 @@ defmodule Worker.Agent.Aufruf do
   end
 
   @doc "Den Aufruf ausführen, ohne Sperre: finden, Argumente, Schema, sicher ausführen."
-  @spec ausfuehren(aufruf(), %{String.t() => Werkzeug.t()}) :: {art(), String.t()}
+  @spec ausfuehren(aufruf(), %{String.t() => Werkzeug.t()}) :: {werkzeug_art(), String.t()}
   def ausfuehren(%{name: name} = aufruf, werkzeuge) do
     with {:ok, w} <- finden(werkzeuge, name),
          {:ok, argumente} <- argumente(aufruf) do
@@ -196,15 +250,15 @@ defmodule Worker.Agent.Aufruf do
 
   defp sicher(w, fun) do
     case fun.() do
-      {art, inhalt} when art in [:ok, :error, :halt, :abbruch] ->
+      {art, inhalt} when art in [:ok, :error, :halt, :abbruch, :innerer_fehler] ->
         {art, als_text(inhalt)}
 
       anderes ->
         {:error, "Werkzeug #{w.name} lieferte ein ungültiges Ergebnis: #{inspect(anderes)}"}
     end
   rescue
-    e -> {:error, Exception.message(e)}
+    e -> {:innerer_fehler, Exception.message(e)}
   catch
-    art, grund -> {:error, "#{art}: #{inspect(grund)}"}
+    art, grund -> {:innerer_fehler, "#{art}: #{inspect(grund)}"}
   end
 end

@@ -128,11 +128,14 @@ defmodule Worker.Jack.Chronik.LesenTest do
 
       text = Lesen.offen_text(s)
 
-      assert text =~ "1 Geschehen"
+      # Seit dem 18.09.2026 wollen ALLE Fakten bewertet werden, auch Zustände
+      # — die Art steht als Hinweis daneben, entschieden wird am Inhalt.
+      assert text =~ "2 Fakten sind noch nicht bewertet"
       assert text =~ "f2"
       assert text =~ "Kodex holt seine Ausrüstung ab"
-      refute text =~ "f1 "
-      refute text =~ "Stadtstaat", "Zustände gehören nicht in den Zeitstrahl"
+      assert text =~ "welt"
+      assert text =~ "[zustand]"
+      refute text =~ "f1 ", "was in einem Eintrag liegt, ist bewertet"
     end
 
     test "ist nichts offen, sagt es das und nennt fertig()" do

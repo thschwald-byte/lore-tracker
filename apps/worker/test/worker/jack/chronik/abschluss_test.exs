@@ -69,13 +69,14 @@ defmodule Worker.Jack.Chronik.AbschlussTest do
       assert t["fakten_ereignis"] == 3
     end
 
-    test "ein Zustand unter NICHT_ZEITLEISTE zählt nicht als ausserhalb — er war nie drin" do
+    test "ein Zustand unter NICHT_ZEITLEISTE zählt als ausserhalb — er wurde bewertet" do
       s = %{
         stand([fakt("f1"), fakt("welt", "zustand")], [eintrag("chr-a", ["f1"])])
         | notizen: [ausserhalb(["welt"])]
       }
 
-      assert Abschluss.trichter(s)["fakten_ausserhalb"] == 0
+      assert Abschluss.trichter(s)["fakten_ausserhalb"] == 1
+      assert Abschluss.hindernisse(s) == []
     end
   end
 
@@ -96,14 +97,25 @@ defmodule Worker.Jack.Chronik.AbschlussTest do
       assert m =~ "eintrag_ergaenzen"
     end
 
-    test "Zustände halten nichts auf — sie gehören nicht in den Zeitstrahl (#1119)" do
+    test "auch Zustände wollen bewertet werden (Maintainer, 18.09.2026)" do
+      # Bis dahin nahm der Abschluss `zustand`-Fakten von der Prüfung aus. An
+      # echten Daten war das die Mehrheit (85 von 112 an seattleV5 S1) — damit
+      # entschied ein Extraktions-Etikett, was die Zeitleiste überhaupt sehen
+      # darf. Jetzt braucht jeder Fakt eine Entscheidung; welche, ist frei.
       s =
         stand(
           [fakt("f1"), fakt("w1", "zustand"), fakt("w2", "zustand")],
           [eintrag("chr-a", ["f1"])]
         )
 
-      assert Abschluss.hindernisse(s) == []
+      assert [m] = Abschluss.hindernisse(s)
+      assert m =~ "noch nicht bewertet"
+      assert m =~ "w1"
+      assert m =~ "w2"
+
+      # Begründet hinausgestellt sind sie bewertet — auch wenn am Ende alles
+      # ausserhalb steht, ist das ein gültiges Ergebnis.
+      assert Abschluss.hindernisse(%{s | notizen: [ausserhalb(["w1", "w2"])]}) == []
     end
 
     test "alles zugeordnet → durch" do

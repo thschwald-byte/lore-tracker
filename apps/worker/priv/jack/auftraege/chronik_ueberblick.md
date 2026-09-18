@@ -68,16 +68,23 @@ Du **liest und gruppierst**, du schreibst noch nichts.
 Geh die Fakten der Kampagne durch — es sind **{{anzahl_fakten}}** — und
 gruppiere sie mit `notiz()` zu den Abschnitten der Handlung.
 
-**Dein Ziel: Am Ende liegt jedes Geschehen in genau einer Gruppe.** Das ist
-die Aufgabe, nicht bloß eine Bedingung am Schluss. Ein Geschehen, das du in
-keiner Gruppe unterbringst, wäre aus der Zeitleiste verschwunden — und von
-aussen sähe das genauso aus wie ein gut gebündelter Abschnitt. Deshalb zählt
-jeder einzelne. Was du dabei bündelst, bleibt dir überlassen: zwanzig
-Abschnitte für hunderte Fakten sind das Ziel, nicht hundert Abschnitte.
+**Dein Ziel: Am Ende ist jeder Fakt bewertet.** Bewertet heißt: Er liegt in
+einer Gruppe, **oder** er steht mit Begründung unter `NICHT_ZEITLEISTE`. Was
+dabei herauskommt, ist frei — es gibt keine Pflicht, etwas in die Zeitleiste
+zu nehmen. Auch „gehört nicht hinein" ist eine Entscheidung, und wenn am Ende
+**alle** Fakten unter `NICHT_ZEITLEISTE` stehen, ist das ein gültiges
+Ergebnis.
 
-Nicht mitgezählt werden **Zustände** — dauerhaftes Weltwissen ohne Zeitpunkt
-(Art `zustand`). Sie dürfen in einer Phase aufgehen, wenn sie dazu beitragen,
-und bleiben sonst einfach in den Fakten.
+Die Pflicht ist, dass du **jeden anschaust**. Ein Fakt, den niemand
+entschieden hat, wäre unbemerkt aus der Zeitleiste verschwunden — und von
+aussen sähe das genauso aus wie ein gut gebündelter Abschnitt. Was du
+bündelst, bleibt dir überlassen: zwanzig Abschnitte für hunderte Fakten sind
+das Ziel, nicht hundert Abschnitte.
+
+**Das gilt für alle Fakten, auch für Zustände** (Art `zustand`). Ein
+dauerhafter Zustand bekommt keinen eigenen Eintrag — aber er gehört
+vielleicht in eine Phase, weil er sie erklärt, oder begründet hinaus. Die Art
+ist ein Hinweis, kein Urteil: **entscheide am Inhalt, nicht am Etikett.**
 
 **Nicht alles, was als Geschehen dasteht, gehört in eine Zeitleiste.**
 Würfelmechanik, ein Gespräch am Tisch ohne Folge für die Handlung, ein
@@ -85,6 +92,18 @@ Regelhinweis — so etwas bekommt keinen Eintrag und wird auch in keine Phase
 gezwängt. Leg es unter `NICHT_ZEITLEISTE` ab, mit den Fakten und einer
 Begründung in der Zeile. Dann gilt es als behandelt. Was in der Handlung
 geschieht, gehört dagegen in eine Phase — auch wenn es klein ist.
+
+**Vorbereitung am Tisch gehört nach `NICHT_ZEITLEISTE`.** Die Gruppe erstellt
+Charaktere, die Spielleitung erklärt Regeln, stellt die Welt vor oder verteilt
+Ausrüstungspunkte, jemand fragt nach dem nächsten Termin — das geschieht am
+Tisch, nicht in der Welt. Es hat Folgen für das Spiel und ist trotzdem kein
+Abschnitt der Handlung.
+
+**Nicht zu verwechseln mit dem, WAS dabei erzählt wird.** Wenn die
+Spielleitung schildert, dass vor sechzig Jahren die Vitas-Plage wütete, ist
+der Inhalt Weltgeschichte und gehört in die Chronik; das Vorstellen selbst
+gehört nicht hinein. **Der Inhalt zählt, nicht wer ihn am Tisch ausgesprochen
+hat.**
 
 Jede Gruppe ist eine `notiz()` mit:
 
@@ -110,9 +129,9 @@ ein guter Ausgangspunkt — aber ein Bogen ist nicht dasselbe wie eine Phase: Ei
 Bogen kann sich über die ganze Kampagne ziehen und mehrere Phasen enthalten.
 
 **So kommst du ans Ziel:** Leg zuerst die Abschnitte an, die du siehst. Dann
-ruf **`offen()`** — es nennt dir die Geschehen, die noch in keiner Gruppe
-liegen, **mit ihrer Aussage**. Du musst also nicht die Faktenliste
-durchzählen, um zu finden, was fehlt. Ordne sie zu, bis keines mehr offen
+ruf **`offen()`** — es nennt dir die Fakten, die noch keine Bewertung haben,
+**mit ihrer Art und ihrer Aussage**. Du musst also nicht die Faktenliste
+durchzählen, um zu finden, was fehlt. Entscheide sie, bis keiner mehr offen
 ist: in eine bestehende Gruppe (denselben Schlüssel erneut schreiben, mit der
 längeren Faktenliste), in eine neue — oder begründet unter
 `NICHT_ZEITLEISTE`. Jede Antwort von `notiz()` nennt dir den Reststand

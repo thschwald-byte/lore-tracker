@@ -5,33 +5,39 @@ defmodule Worker.Jack.Chronik.Abschluss do
   den offenen Punkten, Zahlenabgleich, der dritte Versuch mit falschen Zahlen
   geht durch und die Abweichung steht im Journal), die Regeln sind eigen.
 
-  ## Offen ist das Schreiben, solange
+  ## Gepflichtet ist die BEWERTUNG, nicht die Zuordnung
 
-    * **ein ereignisförmiger Fakt in keinem Eintrag liegt.** Das ist die
-      zentrale Regel dieses Laufs, und sie ist die Antwort auf die Frage, an
-      der eine gebündelte Chronik scheitern kann: „gebündelt" und
-      „verschluckt" sehen im Ergebnis gleich aus — zwanzig Einträge statt
-      544 sind das Ziel, zwanzig Einträge mit der Hälfte der Fakten darin
-      wären ein Verlust. Die Ablehnung nennt die offenen Fakten beim Namen
-      (Muster `stationen_ohne_satz` aus J5), damit Jack sie zuordnen kann,
-      statt zu suchen.
-    * **die Chronik leer ist.** Ein Lauf ohne einen einzigen Eintrag ist
-      kein Ergebnis.
+  **Jeder Fakt muss angeschaut und entschieden sein** — entweder liegt er in
+  einem Eintrag, oder er steht begründet unter NICHT_ZEITLEISTE. Was dabei
+  herauskommt, ist frei: Landen alle unter NICHT_ZEITLEISTE, ist das ein
+  gültiges Ergebnis (Maintainer, 18.09.2026: „es darf keine pflicht geben —
+  pflicht ist das sie bewertet werden — also jedes ding anschauen — und wenn
+  alle NICHT_ZEITLEISTE sind — dann ist das ok").
 
-  **Zustände zählen nicht mit** — sie werden nicht verlangt. Ein Fakt mit
-  `fact_type: "zustand"` ist Weltwissen ohne Zeitpunkt („X ist
-  Steuerberater", „das Gebäude hat neun Stockwerke"); als **eigener Eintrag**
-  hätte er in einer Zeitleiste nichts zu suchen, das ist der Befund aus #1119
-  (49 von 70 Einträgen einer Sitzung waren Zustände). **In** einer Phase ist
-  er dagegen oft am richtigen Platz, weil er sie erklärt — Jack entscheidet
-  das, der Abschluss erzwingt es nicht.
+  **Das gilt für ALLE Fakten, auch für Zustände.** Die frühere Regel nahm
+  Fakten mit `fact_type: "zustand"` von der Prüfung aus; an echten Daten war
+  das die Mehrheit (85 von 112 an seattleV5 S1), und damit entschied ein
+  Extraktions-Etikett darüber, was die Zeitleiste überhaupt sehen darf —
+  laufzeit-ungegated, von niemandem geprüft, und Jack hat es selbst mehrfach
+  angezweifelt. Jetzt sieht er jeden Fakt und entscheidet; das Etikett ist
+  ein Hinweis, kein Filter.
 
-  Die Formulierung war bis zum 18.09.2026 schärfer („gehört nicht in den
-  Zeitstrahl"), und der Maintainer hat sie zu Recht als grenzwertig benannt:
-  Ein Zustand hat meist einen Anfang, und das Etikett kommt aus der
-  Extraktion, die laufzeit-ungegated ist — ein falsch gelabeltes Geschehen
-  fiele damit still heraus. Deshalb ist die Regel jetzt eine über
-  **Einträge**, nicht über Zugehörigkeit.
+  Warum die Bewertungspflicht überhaupt: „gebündelt" und „verschluckt" sehen
+  im Ergebnis gleich aus — zwanzig Einträge statt 544 sind das Ziel, zwanzig
+  Einträge mit der Hälfte der Fakten darin wären ein Verlust. Ein Fakt, den
+  niemand angeschaut hat, ist der Unterschied. Die Ablehnung nennt die
+  unbewerteten beim Namen (Muster `stationen_ohne_satz` aus J5), damit Jack
+  sie entscheiden kann, statt zu suchen.
+
+  Offen ist ein Lauf ausserdem, solange **die Chronik leer ist** — ein Lauf
+  ohne einen einzigen Eintrag ist kein Ergebnis.
+
+  **Kein eigener Eintrag für einen dauerhaften Zustand** — das ist der
+  Befund aus #1119 (49 von 70 Einträgen einer Sitzung waren Zustände), und er
+  bleibt eine Regel über die Flughöhe, nicht über die Bewertung: Ein Zustand
+  darf in einer Phase aufgehen, wenn er sie erklärt, und unter
+  NICHT_ZEITLEISTE, wenn er nirgends hingehört. Beides ist eine Entscheidung
+  und zählt als Bewertung.
 
   ## Was hier NICHT geprüft wird
 
@@ -48,7 +54,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   nicht beim einzelnen Aufruf.
   """
 
-  alias Worker.Jack.Chronik.{Entwurf, Notizen}
+  alias Worker.Jack.Chronik.{Durchsicht, Entwurf, Notizen}
   alias Worker.Jack.Resuemee.Abschluss, as: Mechanik
   alias Worker.Jack.Resuemee.Stand
 
@@ -65,21 +71,27 @@ defmodule Worker.Jack.Chronik.Abschluss do
     offen = kurz(s, offene_geschehen(s))
 
     cond do
-      Notizen.gruppen(s) == [] ->
+      # „Nichts notiert" heisst nichts BEWERTET — nicht „keine Phase". Stellt
+      # Jack alle Fakten begründet unter NICHT_ZEITLEISTE, ist der Überblick
+      # fertig, auch ohne eine einzige Phase (Maintainer, 18.09.2026: „wenn
+      # alle NICHT_ZEITLEISTE sind — dann ist das ok"). Eine Sitzung, die nur
+      # am Tisch stattfand, hat keine Chronik, und das ist eine Aussage.
+      Notizen.gruppen(s) == [] and Notizen.ausgeschlossen(s) == [] ->
         [
-          "Du hast noch keinen Abschnitt notiert. Trag mit notiz() unter PHASEN ein, " <>
-            "welche Abschnitte der Handlung du siehst — ein ganzer Auftrag von der Annahme " <>
-            "bis zur Abrechnung ist EINE Phase."
+          "Du hast noch nichts notiert. Trag mit notiz() ein, welche Abschnitte der " <>
+            "Handlung du siehst (PHASEN) — ein ganzer Auftrag von der Annahme bis zur " <>
+            "Abrechnung ist EINE Phase. Was in keine Zeitleiste gehört, kommt mit " <>
+            "Begründung unter NICHT_ZEITLEISTE."
         ]
 
       offen != [] ->
         [
-          "Diese #{length(offen)} Fakten liegen in keiner Gruppe: #{liste(offen)}. " <>
-            "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es eine eigene " <>
-            "Phase bekommt: Nimm es in die Phase auf, zu der es gehört (denselben " <>
-            "Schlüssel erneut schreiben ersetzt den Eintrag), oder leg die fehlende Phase " <>
-            "an. Dauerhafte Zustände stehen nicht in dieser Liste — sie werden nicht " <>
-            "verlangt; in eine Phase dürfen sie, wenn sie zu ihr beitragen."
+          "Diese #{length(offen)} Fakten hast du noch nicht bewertet: #{liste(offen)}. " <>
+            "Jeder Fakt braucht eine Entscheidung — aber keine bestimmte: Nimm ihn in die " <>
+            "Gruppe auf, zu der er gehört (denselben Schlüssel erneut schreiben ersetzt " <>
+            "den Eintrag), leg die fehlende Gruppe an, oder stell ihn mit Begründung " <>
+            "unter NICHT_ZEITLEISTE. Auch „gehört nicht in die Zeitleiste\" ist eine " <>
+            "Bewertung. offen() zeigt sie mit ihrer Aussage."
         ]
 
       true ->
@@ -91,21 +103,25 @@ defmodule Worker.Jack.Chronik.Abschluss do
     offen = offene(s)
 
     cond do
-      s.eintraege == [] ->
+      # Eine leere Chronik ist nur dann kein Ergebnis, wenn auch nichts
+      # bewertet wurde. Stehen alle Fakten begründet unter NICHT_ZEITLEISTE,
+      # bleibt die Chronik zu Recht leer (Maintainer, 18.09.2026).
+      s.eintraege == [] and Notizen.ausgeschlossen(s) == [] ->
         [
           "Die Chronik hat noch keinen Eintrag. Lege mit chronik_eintrag() die " <>
             "Abschnitte der Handlung an — ein ganzer Auftrag von der Annahme bis zur " <>
-            "Abrechnung ist EIN Eintrag."
+            "Abrechnung ist EIN Eintrag. Was in keine Zeitleiste gehört, kommt mit " <>
+            "notiz() unter NICHT_ZEITLEISTE."
         ]
 
       offen != [] ->
         [
-          "Diese #{length(offen)} Fakten liegen in keinem Eintrag: #{liste(kurz(s, offen))}. " <>
-            "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es einen " <>
-            "eigenen Eintrag bekommt: Nimm es in die Phase auf, zu der es gehört " <>
-            "(eintrag_ergaenzen), oder lege die fehlende Phase an. Dauerhafte " <>
-            "Zustände stehen nicht in dieser Liste — sie werden nicht verlangt; in eine " <>
-            "Phase dürfen sie, wenn sie zu ihr beitragen."
+          "Diese #{length(offen)} Fakten hast du noch nicht bewertet: #{liste(kurz(s, offen))}. " <>
+            "Jeder Fakt braucht eine Entscheidung — aber keine bestimmte: Nimm ihn in die " <>
+            "Phase auf, zu der er gehört (eintrag_ergaenzen), lege die fehlende Phase an, " <>
+            "oder stell ihn mit notiz() und Begründung unter NICHT_ZEITLEISTE. Auch " <>
+            "„gehört nicht in die Zeitleiste\" ist eine Bewertung. offen() zeigt sie mit " <>
+            "ihrer Aussage."
         ]
 
       true ->
@@ -128,7 +144,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   def offene(%Stand{lauf: :ueberblick} = s), do: offene_geschehen(s)
 
   def offene(%Stand{} = s),
-    do: Entwurf.offene_fakten(s.eintraege, ereignisse(s) -- ausserhalb(s))
+    do: Entwurf.offene_fakten(s.eintraege, alle_fakten(s) -- Notizen.ausgeschlossen(s))
 
   @doc """
   Die ereignisförmigen Fakten, die im Überblick in keiner Gruppe liegen.
@@ -140,8 +156,12 @@ defmodule Worker.Jack.Chronik.Abschluss do
   @spec offene_geschehen(Stand.t()) :: [String.t()]
   def offene_geschehen(%Stand{} = s) do
     behandelt = MapSet.new(Notizen.gruppiert(s) ++ Notizen.ausgeschlossen(s))
-    for id <- ereignisse(s), not MapSet.member?(behandelt, id), do: id
+    for id <- alle_fakten(s), not MapSet.member?(behandelt, id), do: id
   end
+
+  @doc "Die echten IDs aller Fakten — die Menge, die bewertet werden muss."
+  @spec alle_fakten(Stand.t()) :: [String.t()]
+  def alle_fakten(%Stand{fakten: fakten}), do: Enum.map(fakten, & &1.fakt_id)
 
   @doc """
   Die ereignisförmigen Fakten — alles ausser `zustand`. Öffentlich, weil die
@@ -160,8 +180,8 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec ausserhalb(Stand.t()) :: [String.t()]
   def ausserhalb(%Stand{} = s) do
-    ereignisse = MapSet.new(ereignisse(s))
-    for id <- Notizen.ausgeschlossen(s), MapSet.member?(ereignisse, id), do: id
+    bekannt = MapSet.new(alle_fakten(s))
+    for id <- Notizen.ausgeschlossen(s), MapSet.member?(bekannt, id), do: id
   end
 
   @doc "Die Zahlen, die `fertig` im Überblick verlangt."
@@ -174,11 +194,9 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec ist_ueberblick(Stand.t()) :: map()
   def ist_ueberblick(%Stand{} = s) do
-    ereignisse = ereignisse(s)
-
     %{
       "gruppen" => length(Notizen.gruppen(s)),
-      "fakten_zugeordnet" => length(ereignisse) - length(offene_geschehen(s))
+      "fakten_zugeordnet" => length(Notizen.gruppiert(s))
     }
   end
 
@@ -196,12 +214,11 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec ist_schreiben(Stand.t()) :: map()
   def ist_schreiben(%Stand{} = s) do
-    ereignisse = ereignisse(s) -- ausserhalb(s)
-    offen = offene(s)
+    zu_bewerten = alle_fakten(s) -- ausserhalb(s)
 
     %{
       "eintraege" => length(s.eintraege),
-      "fakten_zugeordnet" => length(ereignisse) - length(offen)
+      "fakten_zugeordnet" => length(zu_bewerten) - length(offene(s))
     }
   end
 
@@ -285,9 +302,9 @@ defmodule Worker.Jack.Chronik.Abschluss do
         beschreibung:
           "Meldet die Chronik als geschrieben — der EINZIGE gültige Abschluss. Ein Satz in " <>
             "der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
-            "solange ein Geschehen in keinem Eintrag liegt; in der Ablehnung stehen die " <>
-            "Fakten beim Namen. Dauerhafte Zustände zählen nicht mit — sie werden nicht " <>
-            "verlangt. Erwartete Zahlen: eintraege (Einträge der Chronik) und " <>
+            "solange ein Fakt unbewertet ist; in der Ablehnung stehen sie beim Namen. " <>
+            "Bewertet heisst: in einem Eintrag ODER begründet unter NICHT_ZEITLEISTE. " <>
+            "Erwartete Zahlen: eintraege (Einträge der Chronik) und " <>
             "fakten_zugeordnet (Geschehen, die in einem Eintrag aufgehen). Deine Zahlen " <>
             "und die Buchhaltung werden verglichen.",
         parameter: schema(@zahlen_schreiben),
@@ -304,7 +321,15 @@ defmodule Worker.Jack.Chronik.Abschluss do
       "type" => "object",
       "properties" =>
         Map.new(zahlen, &{&1, %{"type" => "integer"}})
-        |> Map.put("offen_geblieben", %{"type" => "string"}),
+        |> Map.put("offen_geblieben", %{
+          "type" => "string",
+          # `minLength: 0` wie beim Resümee-Jack: Blieb nichts offen, ist die
+          # leere Angabe die wahre. Ohne das lehnte das strenge Schema sie ab
+          # („mindestens 1 Zeichen, erhalten 0"), und Jack musste sich etwas
+          # ausdenken — eine Runde für nichts (18.09.2026 im Lauf gesehen).
+          "minLength" => 0,
+          "description" => "was offen geblieben ist — in Worten; leer, wenn nichts offen ist"
+        }),
       "required" => zahlen ++ ["offen_geblieben"]
     }
   end
@@ -316,10 +341,10 @@ defmodule Worker.Jack.Chronik.Abschluss do
   @spec fertig(Stand.t(), map()) :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
   def fertig(%Stand{lauf: :durchsicht} = s, p) do
     Mechanik.mit_regeln(s, p, %{
-      hindernisse: Worker.Jack.Resuemee.Abschluss.hindernisse(s, p),
+      hindernisse: hindernisse_durchsicht(s),
       zahlen: @zahlen_durchsicht,
-      ist: %{},
-      weg: fn _ -> nil end,
+      ist: Durchsicht.zaehler(s),
+      weg: fn stand -> "Durchgang #{Durchsicht.durchgang(stand)}" end,
       abschluss: fn stand, eintrag -> {stand, eintrag} end
     })
   end
@@ -352,6 +377,29 @@ defmodule Worker.Jack.Chronik.Abschluss do
   defp kurz(%Stand{fakten: fakten}, echte) do
     karte = Map.new(fakten, &{&1.fakt_id, &1.id})
     Enum.map(echte, &Map.get(karte, &1, &1))
+  end
+
+  @doc """
+  Die offenen Punkte der Durchsicht: Einträge, die im laufenden Durchgang
+  weder bestätigt noch ersetzt sind.
+
+  **Eigene Funktion, nicht die des Resümee-Jack** — dessen
+  `hindernisse/2` liest `s.durchsicht.absaetze`, was es hier nicht gibt; der
+  Abschluss war damit unerreichbar (s. `Worker.Jack.Chronik.Durchsicht.offen/1`).
+  """
+  @spec hindernisse_durchsicht(Stand.t()) :: [String.t()]
+  def hindernisse_durchsicht(%Stand{} = s) do
+    case Durchsicht.offen(s) do
+      [] ->
+        []
+
+      offen ->
+        [
+          "In Durchgang #{Durchsicht.durchgang(s)} sind diese Einträge noch offen: " <>
+            "#{Enum.join(offen, ", ")}. Leg jeden mit durchsicht(nummer) vor und bestätige " <>
+            "oder ersetze ihn."
+        ]
+    end
   end
 
   defp liste(ids) when length(ids) <= 12, do: Enum.join(ids, ", ")

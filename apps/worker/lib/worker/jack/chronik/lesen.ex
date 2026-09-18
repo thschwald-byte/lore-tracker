@@ -73,7 +73,7 @@ defmodule Worker.Jack.Chronik.Lesen do
 
     case ids do
       [] ->
-        "Jedes Geschehen liegt #{wohin} oder steht begründet unter NICHT_ZEITLEISTE. " <>
+        "Jeder Fakt ist bewertet — #{wohin} oder begründet unter NICHT_ZEITLEISTE. " <>
           "Du kannst fertig() rufen."
 
       ids ->
@@ -81,11 +81,19 @@ defmodule Worker.Jack.Chronik.Lesen do
           for id <- ids,
               kurz_id = Map.get(kurz, id, id),
               f = Stand.fakt(s, kurz_id),
-              do: "  #{kurz_id}  #{aussage(f)}"
+              do: "  #{kurz_id}  [#{art(f)}]  #{aussage(f)}"
 
-        "#{length(ids)} Geschehen liegen noch #{wohin}:\n" <> Enum.join(zeilen, "\n")
+        "#{length(ids)} Fakten sind noch nicht bewertet — jeder gehört #{wohin} oder " <>
+          "begründet unter NICHT_ZEITLEISTE:\n" <> Enum.join(zeilen, "\n")
     end
   end
+
+  # Die Art steht daneben, weil sie ein Hinweis ist: Ein `zustand` gehört
+  # meist nicht in einen eigenen Eintrag — entscheiden muss Jack trotzdem,
+  # und am Inhalt, nicht am Etikett (das kommt aus einer ungegateten
+  # Extraktion; an seattleV5 S1 trugen 85 von 112 Fakten diese Art).
+  defp art(nil), do: "?"
+  defp art(f), do: Map.get(f, :typ) || "?"
 
   defp aussage(nil), do: "(Fakt nicht im Bestand)"
 

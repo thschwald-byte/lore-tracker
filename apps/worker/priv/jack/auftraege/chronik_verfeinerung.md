@@ -76,11 +76,27 @@ keinen Eintrag und wird in keine Phase gezwängt: leg es mit `notiz()` unter
 `NICHT_ZEITLEISTE` ab, mit den Fakten und der Begründung in der Zeile. Dann
 gilt es als behandelt.
 
+**Vorbereitung am Tisch gehört nach `NICHT_ZEITLEISTE`.** Die Gruppe erstellt
+Charaktere, die Spielleitung erklärt Regeln, stellt die Welt vor oder verteilt
+Ausrüstungspunkte, jemand fragt nach dem nächsten Termin — das geschieht am
+Tisch, nicht in der Welt. Es hat Folgen für das Spiel und ist trotzdem kein
+Abschnitt der Handlung.
+
+**Nicht zu verwechseln mit dem, WAS dabei erzählt wird.** Wenn die
+Spielleitung schildert, dass vor sechzig Jahren die Vitas-Plage wütete, ist
+der Inhalt Weltgeschichte und gehört in die Chronik; das Vorstellen selbst
+gehört nicht hinein. **Der Inhalt zählt, nicht wer ihn am Tisch ausgesprochen
+hat.**
+
 **`offen()` nennt dir die Geschehen, die noch in keinem Eintrag liegen —
 mit ihrer Aussage.** Nutze es, statt die Faktenliste durchzuzählen; jede
 Antwort auf einen Eintrag nennt den Reststand ohnehin mit.
 
-**`fertig()` lehnt ab, solange ein Geschehen in keinem Eintrag liegt** — und
-nennt dir die offenen Fakten beim Namen.
+**`fertig()` lehnt ab, solange ein Fakt unbewertet ist** — und nennt dir
+diese Fakten beim Namen. Bewertet heißt: in einem Eintrag **oder** mit
+`notiz()` begründet unter `NICHT_ZEITLEISTE`. Es gibt keine Pflicht, etwas in
+die Zeitleiste zu nehmen; die Pflicht ist, jeden Fakt anzuschauen und zu
+entscheiden. Das gilt auch für Zustände — die Art ist ein Hinweis, entscheide
+am Inhalt.
 
 **Wir glauben an dich! Du schaffst das!**

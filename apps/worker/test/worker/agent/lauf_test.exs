@@ -175,13 +175,38 @@ defmodule Worker.Agent.LaufTest do
       end
     end
 
-    test "Ausnahme im Werkzeug" do
+    test "Ausnahme im Werkzeug — als innerer Fehler benannt, nicht als Hindernis" do
       kaputt = werkzeug("kaputt", fn _ -> raise "boom" end)
 
       assert {:ok, bericht} =
                laufen([antwort(aufrufe: [aufruf("kaputt", %{})]), antwort()], werkzeuge: [kaputt])
 
-      assert [%{fehler: true, content: "boom"}] = werkzeug_nachrichten(bericht)
+      assert [%{fehler: true, content: text}] = werkzeug_nachrichten(bericht)
+
+      # Die Meldung muss sagen, dass es NICHT an den Angaben liegt: Am
+      # 18.09.2026 hat ein Werkzeug, das an sich selbst scheiterte, 28 Runden
+      # gekostet, weil das Modell die Fehlermeldung als Hindernis las und
+      # immer neue Felder erfand.
+      assert text =~ "boom"
+      assert text =~ "inneren Fehler"
+      assert text =~ "NICHT an deinen Angaben"
+    end
+
+    test "nach dem dritten inneren Fehler endet der Lauf" do
+      kaputt = werkzeug("kaputt", fn _ -> raise "boom" end)
+      ruf = antwort(aufrufe: [aufruf("kaputt", %{})])
+
+      # Der Abbruch endet als Fehler — und das ist gewollt: Beim Chronik-Jack
+      # greift damit der Fehlerzweig der Durchsicht, der die Einträge des
+      # Schreibens veröffentlicht, statt sie mitzunehmen.
+      assert {:error, bericht} =
+               laufen([ruf, ruf, ruf, ruf, antwort()], werkzeuge: [kaputt])
+
+      nachrichten = werkzeug_nachrichten(bericht)
+
+      assert length(nachrichten) == 3, "der vierte Aufruf darf nicht mehr kommen"
+      assert List.last(nachrichten).content =~ "endet der Lauf hier"
+      assert List.last(nachrichten).content =~ "bleibt erhalten"
     end
 
     test "ungültiges Ergebnis eines Werkzeugs" do

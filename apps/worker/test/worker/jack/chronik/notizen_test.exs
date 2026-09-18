@@ -157,7 +157,7 @@ defmodule Worker.Jack.Chronik.NotizenTest do
       assert a["betriebsart"] == "aufbau"
       assert a["phasen"] == 1
       assert a["geschehen"] == 2
-      assert a["offene_geschehen"] == ["f2"]
+      assert a["offene_geschehen"] == ["f2", "welt"]
       refute Map.has_key?(a, "max_woerter")
       refute Map.has_key?(a, "gliederung")
     end
@@ -242,6 +242,38 @@ defmodule Worker.Jack.Chronik.NotizenTest do
     end
   end
 
+  describe "Vorbereitung am Tisch (Maintainer, 18.09.2026)" do
+    # Am Lauf gesehen: Jack plante „Character creation 2080 (meta)" als
+    # Chronik-Eintrag und nannte es selbst „meta" — der Auftrag nannte nur
+    # Würfelmechanik und Tischgespräch, und Charaktererstellung hat ja Folgen.
+    test "der Auftrag weist Vorbereitung am Tisch nach NICHT_ZEITLEISTE" do
+      for vorlage <- ~w(chronik_ueberblick chronik_schreiben chronik_verfeinerung) do
+        # Umbrüche zu Leerzeichen: die Vorlagen sind auf 79 Zeichen gesetzt,
+        # ein Prüfbegriff fällt sonst über das Zeilenende und der Test ist
+        # rot, obwohl der Text stimmt.
+        text =
+          "priv/jack/auftraege/#{vorlage}.md"
+          |> File.read!()
+          |> String.replace(~r/\s+/, " ")
+
+        assert text =~ "Vorbereitung am Tisch", vorlage
+        assert text =~ "erstellt Charaktere", vorlage
+
+        assert text =~ "Der Inhalt zählt, nicht wer ihn am Tisch ausgesprochen",
+               "#{vorlage}: der INHALT einer erzählten Rückblende gehört in eine Phase — " <>
+                 "ohne diese Abgrenzung wirft Jack die Weltgeschichte mit hinaus"
+      end
+    end
+
+    test "das Werkzeug nennt beides: Vorbereitung raus, erzählter Inhalt rein" do
+      notiz = Enum.find(Notizen.werkzeuge(stand([fakt("f1")])), &(&1.name == "notiz"))
+
+      assert notiz.beschreibung =~ "Vorbereitung am Tisch"
+      assert notiz.beschreibung =~ "Charaktererstellung"
+      assert notiz.beschreibung =~ "INHALT"
+    end
+  end
+
   describe "kurze IDs im Gespräch, echte im Abgleich" do
     test "die Notizen halten die kurzen IDs, gruppiert/1 liefert die echten" do
       s = stand([fakt("f1"), fakt("f2")])
@@ -262,9 +294,10 @@ defmodule Worker.Jack.Chronik.NotizenTest do
   end
 
   describe "Abschluss des Überblicks" do
-    test "ohne eine einzige Gruppe geht es nicht" do
+    test "ohne jede Bewertung geht es nicht" do
       assert [m] = Abschluss.hindernisse(stand([fakt("f1")]))
-      assert m =~ "noch keinen Abschnitt notiert"
+      assert m =~ "noch nichts notiert"
+      assert m =~ "NICHT_ZEITLEISTE", "der Weg hinaus gehört in die Ablehnung"
       assert m =~ "notiz()"
       refute m =~ "chronik_eintrag()", "dieses Werkzeug hat der Überblick nicht"
     end
@@ -278,16 +311,47 @@ defmodule Worker.Jack.Chronik.NotizenTest do
       refute m =~ "f1"
     end
 
-    test "Zustände zählen nicht mit" do
+    test "auch ein Zustand will bewertet werden — irgendwie" do
       s = stand([fakt("f1"), fakt("welt", "zustand")])
       {s, {:ok, _}} = notieren(s, [phase("a", ["f1"])])
 
-      assert Abschluss.hindernisse(s) == []
+      assert [m] = Abschluss.hindernisse(s)
+      assert m =~ "welt"
+
+      # In die Gruppe genommen: bewertet.
+      {mit_gruppe, {:ok, _}} = notieren(s, [phase("a", ["f1", "welt"])])
+      assert Abschluss.hindernisse(mit_gruppe) == []
+
+      # Oder begründet hinaus: ebenfalls bewertet.
+      {draussen, {:ok, _}} =
+        notieren(s, [
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "weltwissen",
+            "zeile" => "dauerhafter Zustand ohne Zeitpunkt",
+            "fakten" => ["welt"],
+            "boegen" => []
+          }
+        ])
+
+      assert Abschluss.hindernisse(draussen) == []
     end
 
-    test "sind alle Geschehen zugeordnet, LÄSST fertig den Überblick durch" do
+    test "sind alle Fakten bewertet, LÄSST fertig den Überblick durch" do
       s = stand([fakt("f1"), fakt("f2"), fakt("welt", "zustand")])
-      {s, {:ok, _}} = notieren(s, [phase("a", ["f1"]), phase("b", ["f2"], "SCHLUESSELSZENEN")])
+
+      {s, {:ok, _}} =
+        notieren(s, [
+          phase("a", ["f1"]),
+          phase("b", ["f2"], "SCHLUESSELSZENEN"),
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "weltwissen",
+            "zeile" => "dauerhafter Zustand",
+            "fakten" => ["welt"],
+            "boegen" => []
+          }
+        ])
 
       assert Abschluss.hindernisse(s) == []
       assert Abschluss.ist_ueberblick(s) == %{"gruppen" => 2, "fakten_zugeordnet" => 2}
@@ -296,11 +360,33 @@ defmodule Worker.Jack.Chronik.NotizenTest do
         Abschluss.fertig(s, %{
           "gruppen" => 2,
           "fakten_zugeordnet" => 2,
-          "offen_geblieben" => "nichts"
+          "offen_geblieben" => ""
         })
 
       # `:halt` ist der Erfolg: ein angenommenes `fertig` beendet den Lauf.
+      # Und `offen_geblieben` darf leer sein, wenn nichts offen ist.
       assert status == :halt
+    end
+
+    test "sind ALLE Fakten ausserhalb, ist das ein gültiges Ergebnis" do
+      # Maintainer, 18.09.2026: „wenn alle NICHT_ZEITLEISTE sind — dann ist
+      # das ok". Eine Sitzung, die nur am Tisch stattfand, hat keine Chronik —
+      # und das ist eine Aussage, kein Fehler.
+      s = stand([fakt("f1"), fakt("f2")])
+
+      {s, {:ok, _}} =
+        notieren(s, [
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "vorbereitung",
+            "zeile" => "Charaktererstellung am Tisch",
+            "fakten" => ["f1", "f2"],
+            "boegen" => []
+          }
+        ])
+
+      assert Abschluss.hindernisse(s) == []
+      assert Abschluss.ausserhalb(s) |> length() == 2
     end
 
     test "fertig lehnt ab, solange ein Geschehen offen ist" do

@@ -159,6 +159,47 @@ defmodule Worker.Jack.Chronik.Durchsicht do
   # Der Zustand der Durchsicht: welcher Durchgang läuft und was darin schon
   # bearbeitet ist. Dieselbe Gestalt wie beim Resümee-Jack, damit
   # `Worker.Jack.Resuemee.Abschluss.hindernisse/2` sie lesen kann.
+  @doc """
+  Die Einträge, die im laufenden Durchgang noch nicht entschieden sind — die
+  Nummern, die `fertig` aufhalten.
+
+  **Eigene Funktion, weil die Zustandsform eine andere ist als beim
+  Resümee-Jack.** Bis zum 18.09.2026 rief `Chronik.Abschluss.fertig` für die
+  Durchsicht `Resuemee.Abschluss.hindernisse/2`, und das greift auf
+  `s.durchsicht.absaetze` zu — die Chronik führt `vorgelegt` und `erledigt`.
+  Jeder Abschlussversuch warf `key :absaetze not found`, die Durchsicht war
+  **nicht abschliessbar**, und Jack verbrannte 28 Runden: erst Diagnose
+  („that's odd… maybe it's a server-side bug"), dann der Versuch, das Feld zu
+  erfinden, dann ein kompletter zweiter Durchgang in der Hoffnung, den
+  internen Zustand zu heilen.
+  """
+  @spec offen(Stand.t()) :: [pos_integer()]
+  def offen(%Stand{durchsicht: nil, eintraege: eintraege}),
+    do: Enum.to_list(1..length(eintraege)//1)
+
+  def offen(%Stand{durchsicht: d, eintraege: eintraege}) do
+    erledigt = Map.get(d, :erledigt, %{})
+    for n <- 1..length(eintraege)//1, not Map.has_key?(erledigt, n), do: n
+  end
+
+  @doc "Wie oft in der Durchsicht bestätigt und ersetzt wurde."
+  @spec zaehler(Stand.t()) :: %{String.t() => non_neg_integer()}
+  def zaehler(%Stand{durchsicht: nil}), do: %{"bestaetigt" => 0, "ersetzt" => 0}
+
+  def zaehler(%Stand{durchsicht: d}) do
+    arten = d |> Map.get(:erledigt, %{}) |> Map.values() |> Enum.frequencies()
+
+    %{
+      "bestaetigt" => Map.get(arten, :bestaetigt, 0),
+      "ersetzt" => Map.get(arten, :ersetzt, 0)
+    }
+  end
+
+  @doc "Der Durchgang, in dem die Durchsicht steht."
+  @spec durchgang(Stand.t()) :: pos_integer()
+  def durchgang(%Stand{durchsicht: nil}), do: 1
+  def durchgang(%Stand{durchsicht: d}), do: Map.get(d, :durchgang, 1)
+
   defp merken(nil, nummer), do: %{durchgang: 1, vorgelegt: [nummer], erledigt: %{}}
 
   defp merken(d, nummer),

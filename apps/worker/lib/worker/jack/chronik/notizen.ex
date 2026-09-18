@@ -14,9 +14,18 @@ defmodule Worker.Jack.Chronik.Notizen do
     * **SCHLUESSELSZENEN** — was die Kampagne oder die Welt verändert und
       deshalb einen eigenen Eintrag bekommt: der Tod einer Spielerfigur, ein
       Krieg, eine Seuche, ein Epochenereignis. Gleiche Form wie eine Phase.
-    * **NICHT_ZEITLEISTE** — Geschehen, das in keine Zeitleiste gehört
-      (Würfelmechanik, Tischgespräch ohne Handlungsfolge, ein Ereignis ohne
-      Platz in der Zeit), mit Begründung in der Zeile. Diese Fakten gelten
+    * **NICHT_ZEITLEISTE** — Geschehen, das in keine Zeitleiste gehört, mit
+      Begründung in der Zeile: Würfelmechanik, Tischgespräch ohne
+      Handlungsfolge, ein Ereignis ohne Platz in der Zeit — und
+      **Vorbereitung am Tisch** (Charaktererstellung, Regelerklärung,
+      Weltvorstellung durch die Spielleitung, Terminabsprachen). Letzteres
+      hat Folgen für das Spiel und ist trotzdem kein Abschnitt der Handlung
+      (Maintainer, 18.09.2026, am Lauf gesehen: Jack plante
+      „Character creation 2080 (meta)" als Chronik-Eintrag und nannte es
+      selbst „meta"). **Nicht zu verwechseln mit dem, WAS dabei erzählt
+      wird:** Schildert die Spielleitung die Vitas-Plage von vor sechzig
+      Jahren, ist der Inhalt Weltgeschichte und gehört in eine Phase — der
+      Akt des Vorstellens nicht. Diese Fakten gelten
       als **behandelt**, werden aber nie ein Eintrag. Ohne diesen Abschnitt
       zwang `fertig()` Jack, jedes Geschehen irgendwo unterzubringen — also
       auch das, was nicht hineingehört (Maintainer, 18.09.2026: das Werkzeug
@@ -78,9 +87,11 @@ defmodule Worker.Jack.Chronik.Notizen do
             "Abrechnung, nicht zwölf Ereignisse), SCHLUESSELSZENEN (was die Kampagne oder " <>
             "die Welt verändert und deshalb einen eigenen Eintrag bekommt: Tod einer " <>
             "Spielerfigur, Krieg, Seuche, Epochenereignis), NICHT_ZEITLEISTE (Geschehen, das in " <>
-            "keine Zeitleiste gehört — Würfelmechanik, Tischgespräch ohne Handlungsfolge; die " <>
-            "Zeile ist die Begründung; diese Fakten gelten als behandelt und werden nie ein " <>
-            "Eintrag), OFFEN (wo die Fakten zum Verstehen nicht reichen; braucht keine " <>
+            "keine Zeitleiste gehört — Würfelmechanik, Tischgespräch ohne Handlungsfolge und " <>
+            "Vorbereitung am Tisch: Charaktererstellung, Regelerklärung, Weltvorstellung " <>
+            "durch die Spielleitung. Der INHALT einer erzählten Rückblende gehört dagegen in " <>
+            "eine Phase, nur der Akt des Vorstellens nicht. Die Zeile ist die Begründung; " <>
+            "diese Fakten gelten als behandelt und werden nie ein Eintrag), OFFEN (wo die Fakten zum Verstehen nicht reichen; braucht keine " <>
             "Fakten). Der Abschnitt ist zugleich die Wichtigkeit des späteren Eintrags. Jedes " <>
             "Geschehen gehört in höchstens eine Gruppe — oder unter NICHT_ZEITLEISTE, nicht " <>
             "beides.",
