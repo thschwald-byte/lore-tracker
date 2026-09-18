@@ -75,7 +75,7 @@ defmodule Worker.Recording.Pipeline do
   alias Shared.Events
   alias Worker.{Intents, Repo}
   # Issue #583: God-Module-Split — Stage-Impl/Prompt-Bau/Output-Parse ausgelagert.
-  alias Worker.Recording.Pipeline.{Fortschritt, Prompts, Zeit}
+  alias Worker.Recording.Pipeline.{Fortschritt, Prompts}
 
   # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
   # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
@@ -132,24 +132,27 @@ defmodule Worker.Recording.Pipeline do
   hat — ein irrläufiger Trigger auf eine leere/gelöschte Session darf eine
   bestehende Chronik nicht wipen.
   """
-  @spec republish_timeline_for_session(String.t()) :: :ok | {:error, term()}
+  @spec republish_timeline_for_session(String.t()) :: :ok
   def republish_timeline_for_session(session_id) when is_binary(session_id) do
-    with {:ok, session, campaign} <- session_and_campaign(session_id),
-         %{facts: facts} <- Repo.get_session_facts(session_id) do
-      verified =
-        Enum.filter(facts, fn f ->
-          Map.get(f, "verified?") == true and Map.get(f, "review_dismissed") != true
-        end)
+    # J7 (#1211): Es gibt keinen deterministischen Weg zurück in die Chronik
+    # mehr. Der alte Pfad rechnete aus jedem verifizierten Fakt einen
+    # datierten Eintrag; jetzt schreibt sie der Chronik-Jack, und ein
+    # Modelllauf ist nichts, was man als Nebenwirkung einer Kuration startet
+    # — der Resümee-Jack brauchte auf der Teststage 10 bis 72 Minuten, und
+    # eine Kuration ist ein Batch-Vorgang.
+    #
+    # EHRLICHE FOLGE, die hier stehen bleibt, statt still zu verschwinden:
+    # Nach einer Lücken-Kuration oder einer Neu-Extraktion ziehen die Fakten
+    # sofort nach, die CHRONIK aber erst beim nächsten regulären
+    # Pipeline-Lauf dieser Sitzung. Bis dahin kann sie Fakten zitieren, die
+    # inzwischen anders lauten. Das ist der Preis dafür, dass die Chronik
+    # gebündelt und über Sitzungsgrenzen hinweg entsteht.
+    Logger.debug(
+      "Chronik: kein deterministischer Republish mehr (#1211) — session=#{session_id} " <>
+        "zieht beim nächsten Pipeline-Lauf nach."
+    )
 
-      best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
-        Zeit.publiziere(session, campaign, verified)
-      end)
-
-      :ok
-    else
-      nil -> {:error, :no_facts}
-      {:error, reason} -> {:error, reason}
-    end
+    :ok
   end
 
   @impl true
@@ -567,15 +570,18 @@ defmodule Worker.Recording.Pipeline do
         # aus denselben verifizierten Fakten — ein Fehlschlag des einen darf das
         # andere nicht mitreißen (und keiner das schon publizierte Resümee).
         # Fehler landen einzeln klassifiziert in /admin/errors (with_status).
-        timeline_entries =
-          best_effort_artifact(
-            campaign.id,
-            "timeline",
-            :timeline,
-            session.id,
-            fn -> Zeit.publiziere(session, campaign, verified) end,
-            run_id
-          )
+        # J7 (#1211): die Chronik schreibt der Chronik-Jack. Der frühere
+        # deterministische Pfad (`Zeit.publiziere/3`) rechnete aus jedem
+        # verifizierten Fakt einen datierten Eintrag — 543 von 544 Einträgen
+        # einer echten Kampagne lagen dabei auf demselben Tag (#1092). Jetzt
+        # urteilt Jack (was gehört zusammen, was kam wovor), und Elixir
+        # rechnet die Reihenfolge.
+        #
+        # Best-effort wie bisher, aber ohne `with_status` — der Chronik-Jack
+        # meldet seine Stufen selbst. Ein Fehlschlag (auch ein Raise) reisst
+        # den Lauf nicht mit; die bestehende Chronik bleibt stehen, weil
+        # nichts mehr geleert wird.
+        timeline_entries = chronik_jack(session, campaign, run_id, deps)
 
         # J6 (#1210, E4): best-effort wie bisher, aber ohne `with_status` — der
         # Epos-Jack meldet seine drei Stufen selbst. Ein Fehlschlag (auch ein
@@ -700,7 +706,54 @@ defmodule Worker.Recording.Pipeline do
   # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
   # weder die anderen Artefakte noch den Gesamtlauf. Liefert den {:ok, value}-
   # Wert des Schritts oder nil.
-  defp best_effort_artifact(campaign_id, stage, tag, session_id, fun, run_id \\ nil) do
+  # J7 (#1211): der Chronik-Jack. Wie der Epos-Jack ohne `with_status` — er
+  # meldet seine Stufen selbst (`chronik_ueberblick`, `timeline`,
+  # `chronik_durchsicht`). Ein Fehlschlag reisst den Lauf nicht mit und lässt
+  # die bestehende Chronik stehen; ein Raise ebenso, deshalb der Rettungszweig.
+  #
+  # Zurück kommen die veröffentlichten Einträge — der Kapitelkopf des Epos
+  # leitet daraus seine Tagesspanne ab (#752). Bei einem Fehlschlag ist das
+  # `nil`, und der Kopf bleibt ohne Datum; das war schon vorher so.
+  defp chronik_jack(session, campaign, run_id, deps) do
+    # `deps.chronik_jack` ersetzt den Lauf ganz (Tests: kein Modell in der
+    # Umgebung) — dasselbe Muster wie `deps.render_epos`. `deps.chronik`
+    # trägt nur seine Optionen.
+    lauf =
+      Map.get(deps, :chronik_jack, fn ->
+        Worker.Jack.Chronik.Pipeline.schreiben(
+          session,
+          campaign,
+          Keyword.put(
+            Map.get(deps, :chronik, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
+        )
+      end)
+
+    case lauf.() do
+      {:ok, eintraege} ->
+        eintraege
+
+      {:error, grund} ->
+        Logger.warning(
+          "Pipeline[wahrheitsbild]: Chronik-Jack gescheitert für session=#{session.id}: " <>
+            "#{inspect(grund, limit: 20)} — die bestehende Chronik bleibt stehen."
+        )
+
+        nil
+    end
+  rescue
+    e ->
+      Logger.error(
+        "Pipeline[wahrheitsbild]: Chronik-Jack ist abgestürzt für session=#{session.id}: " <>
+          "#{Exception.message(e)}"
+      )
+
+      nil
+  end
+
+  defp best_effort_artifact(campaign_id, stage, tag, session_id, fun, run_id) do
     guarded = fn ->
       try do
         tag_error(fun.(), tag)

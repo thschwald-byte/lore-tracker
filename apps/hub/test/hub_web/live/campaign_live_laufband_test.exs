@@ -113,9 +113,26 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
 
       assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte: Schreiben"
       assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee: Schreiben"
-      assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik"
+      # J7 (#1211): die Chronik hat jetzt drei Läufe wie die anderen Jacks, und
+      # alle drei tragen den Spaltennamen. Vorher hiess die mittlere Stufe nur
+      # „Chronik" — im Band stand dann „Chronik: Überblick", der eigene
+      # Spaltenname, „Chronik: Durchsicht", und der mittlere sah aus wie ein
+      # Fremdkörper (an der Teststage gesehen).
+      assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik: Schreiben"
       # andere Stufen behalten ihren Titel aus Shared.PipelineStufen
       assert Laufband.titel(stufe("extract", "offen"), campaign) == "extract"
+    end
+
+    test "J7 (#1211): die drei Läufe des Chronik-Jack heißen nach der Chronik-Spalte" do
+      campaign = %{"vorgaben" => %{"chronik" => %{"name" => "Datenspur"}}}
+
+      assert Laufband.titel(stufe("chronik_ueberblick", "offen"), campaign) ==
+               "Datenspur: Überblick"
+
+      assert Laufband.titel(stufe("timeline", "offen"), campaign) == "Datenspur: Schreiben"
+
+      assert Laufband.titel(stufe("chronik_durchsicht", "offen"), campaign) ==
+               "Datenspur: Durchsicht"
     end
 
     test "J5 (#1209): die drei Läufe des Resümee-Jack heißen nach der Resümee-Spalte" do

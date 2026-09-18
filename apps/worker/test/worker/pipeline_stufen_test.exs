@@ -23,7 +23,9 @@ defmodule Worker.PipelineStufenTest do
                "resuemee_ueberblick",
                "render",
                "resuemee_durchsicht",
+               "chronik_ueberblick",
                "timeline",
+               "chronik_durchsicht",
                "epos_ueberblick",
                "render_epos",
                "epos_durchsicht",
@@ -62,6 +64,8 @@ defmodule Worker.PipelineStufenTest do
                "jack_verifikation",
                "resuemee_ueberblick",
                "resuemee_durchsicht",
+               "chronik_ueberblick",
+               "chronik_durchsicht",
                "epos_ueberblick",
                "epos_durchsicht",
                "render_arc_progressions"

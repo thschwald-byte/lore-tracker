@@ -118,6 +118,7 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @abschnitte ~w(FORM GLIEDERUNG OFFEN)
   @abschnitte_epos ~w(FORM SZENEN ABWEICHUNG OFFEN)
+  @abschnitte_chronik ~w(PHASEN SCHLUESSELSZENEN NICHT_ZEITLEISTE OFFEN)
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
   @standard_woerter Shared.ResuemeeLaenge.standard()
@@ -153,6 +154,10 @@ defmodule Worker.Jack.Resuemee.Stand do
             notizen: [],
             unveraendert: %{},
             entwurf: [],
+            # Issue #1211 (J7): die Chronik-Einträge, die der Chronik-Jack in
+            # diesem Lauf baut. `chronik` daneben bleibt die Lesebasis — der
+            # BESTAND, den er vorfindet; `eintraege` ist sein Ergebnis.
+            eintraege: [],
             durchsicht: nil,
             abschluss_zahlversuche: 0,
             journal: []
@@ -323,12 +328,22 @@ defmodule Worker.Jack.Resuemee.Stand do
   @doc """
   Die Abschnitte der Notizen im Überblick: beim Resümee-Jack FORM,
   GLIEDERUNG, OFFEN; beim Epos-Jack (`:epos`, #1210) FORM, SZENEN,
-  ABWEICHUNG, OFFEN.
+  ABWEICHUNG, OFFEN; beim Chronik-Jack (`:chronik`, #1211) PHASEN,
+  SCHLUESSELSZENEN, NICHT_ZEITLEISTE, OFFEN — dort ist der Abschnitt
+  zugleich die Wichtigkeit des Eintrags, den das Schreiben daraus anlegt,
+  und NICHT_ZEITLEISTE hält fest, was begründet draussen bleibt.
+
+  **Jede Art hat ihre eigene Klausel, es gibt keinen Auffangzweig.** Der gab
+  es bis #1211, und er hat den Chronik-Jack gekostet: `abschnitte(:chronik)`
+  fiel still auf die Resümee-Abschnitte zurück, `notiz` erzwang damit
+  FORM/GLIEDERUNG/OFFEN, und der Überblick konnte nie abschließen — ohne
+  Fehler, ohne Warnung. Eine unbekannte Art wirft jetzt.
   """
-  @spec abschnitte(:resuemee | :epos) :: [String.t()]
+  @spec abschnitte(:resuemee | :epos | :chronik) :: [String.t()]
   def abschnitte(art \\ :resuemee)
+  def abschnitte(:resuemee), do: @abschnitte
   def abschnitte(:epos), do: @abschnitte_epos
-  def abschnitte(_art), do: @abschnitte
+  def abschnitte(:chronik), do: @abschnitte_chronik
 
   @doc """
   Der Hinweis, wenn es keine früheren Sitzungen gibt — neutral und wörtlich

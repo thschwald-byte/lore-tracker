@@ -239,7 +239,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:user_role_set)), do: "campaign_members"
   # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — schmaler Scope statt
   # Voll-Reload (Muster campaign_chronik).
-  def scope_for_event(Shared.Events.k(:session_fact_date_set)), do: "campaign_review_facts"
+  # Issue #1211: `SessionFactDateSet` löst keinen Scope-Read mehr aus — die
+  # Review-Liste, die ihn anzeigte, gibt es nicht mehr. Das Ereignis bleibt
+  # lesbar (Bestand, Anker für den Chronik-Jack), es hat nur keine Anzeige.
   # Issue #839 (Epic #829 Slice D3): Re-Clustering → schmaler Offene-Fäden-Reload.
   def scope_for_event(Shared.Events.k(:thread_registry_computed)), do: "campaign_threads"
   # Issue #836 (Slice D2): Kuration → derselbe schmale Reload (sonst wird der
@@ -406,9 +408,6 @@ defmodule HubWeb.CampaignLive.Updates do
   # Issue #724 Slice F: Review-Facts speisen keine Sync-/Refs-Indizes — kein
   # rebuild_refs nötig (anders als summaries/chronik/epos oben).
   # Issue #1204: die Liste nur, solange das Panel offen ist (`ReviewListe`).
-  def apply_scope(socket, "campaign_review_facts", snap),
-    do: HubWeb.CampaignLive.ReviewListe.aus_scope(socket, snap)
-
   # Issue #916 (Cut 2): editierbare Fakten-Spalte. Fakten tragen quell_utterance_ids
   # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker).
   #

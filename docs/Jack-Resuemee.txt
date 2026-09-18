@@ -1,0 +1,735 @@
+WIE JACK DAS RESÜMEE BAUT
+=========================
+
+Technische Beschreibung des Resümee-Jack (J5, #1209, Epic #1195)
+
+Code-Stand:   Worktree /home/tom/Projekte/lore_tracker_j4,
+              Branch issue-1197-j4, Commit d81a88b1 (lokal, nicht gepusht).
+              Die Änderung „Weg der Gruppe, Ziel 150 / höchstens 300 Wörter“
+              ist seit Commit 0015fbab (13.09. 11:27) drin; sie steht
+              gesondert in Abschnitt 10 und ist überall sonst als „seit
+              0015fbab“ markiert.
+Pfade:        Wo nichts anderes steht, relativ zu apps/worker/lib/worker/
+              (also jack/resuemee/entwurf.ex =
+              apps/worker/lib/worker/jack/resuemee/entwurf.ex). Die Aufträge
+              liegen in apps/worker/priv/jack/auftraege/.
+Belege:       Fundstellen stehen als Modul- oder Funktionsname, nicht als
+              Zeilennummer — die Dateien ändern sich gerade.
+Beispiele:    Erfunden oder aus den Vorlagen (die Uhrmacher-Welt: Werkstatt am
+              Hafen, der Alte, Mira, die Familie von Arnheim). Aus echten
+              Sitzungen stammen nur Zahlen (Abschnitt 11), kein Text.
+
+
+== 0. Kurzfassung ==
+
+Das Resümee einer Sitzung schreibt nicht mehr ein einzelner LLM-Aufruf,
+sondern der Resümee-Jack: derselbe Agent mit Werkzeugen wie beim Faktenbau,
+dasselbe Modell (eigens einstellbar), aber drei eigene Läufe und eigene
+Werkzeuge. Jeder Lauf beginnt frisch; was von einem zum nächsten reist, sind
+Daten, keine Erinnerung.
+
+  1. Überblick: Jack liest ALLE Fakten der Sitzung, notiert zuerst die FORM
+     (abgeleitet aus der Überschrift der Resümee-Spalte in „Stil setzen“),
+     dann eine kurze GLIEDERUNG und unter OFFEN, wo die Fakten zum Verstehen
+     nicht reichen.
+  2. Schreiben: Jack bekommt zuerst den Ton, dann seine Notizen, und schreibt
+     Absatz für Absatz. Die Prüfeinheit ist der SATZ: jeder Satz nennt die
+     Fakten, auf die er sich stützt. Ohne Fakt dieser Sitzung muss er als
+     Rückblick (nur frühere Fakten) oder Übergang (gar keine Fakten)
+     markiert sein. Eine harte Längengrenze gilt.
+  3. Durchsicht: gnädig, nur grobe Schnitzer. Jack liest Absatz für Absatz
+     gegen die zitierten Fakten, sieht Hinweise auf großgeschriebene Wörter
+     ohne Fundstelle und bestätigt, ersetzt oder streicht. Scheitert die
+     Durchsicht, gilt der Entwurf aus dem Schreiben.
+
+Heraus kommen das Markdown des Resümees, zu jedem Satz seine Fakt-IDs
+(„Satzquellen“) und Zählwerte. Die Pipeline veröffentlicht das Resümee als
+SessionSummaryGenerated — mit genauen Quellen (nur die Belegblöcke der
+zitierten Fakten) — und legt Jacks Stand als JackResuemeeStandAbgelegt ab,
+damit spätere Sitzungen seine Notizen als „vorige Gedanken“ lesen können.
+
+Was bewusst NICHT geprüft wird: ob ein Satz inhaltlich sagt, was seine Fakten
+sagen, und ob Namen im Satz in den Fakten vorkommen. Das ist die Linie aus
+#1124 (kein Prosa-Prüf-Agent) und Toms Vorgabe „Jack darf ein wenig kreativ
+sein, der Nachlauf soll gnädig sein“.
+
+
+== 1. Einbettung in die Pipeline ==
+
+--- 1.1 Wo das Resümee entsteht ---
+
+Worker.Recording.Pipeline.run_wahrheitsbild/4 (recording/pipeline.ex) läuft
+nach Jacks Faktenbau so weiter:
+
+  Jack (Gedächtnis, Extraktion, Verifikationen)
+  → Entity-Registry, Thread-Registry (best-effort)
+  → bestand_lesen/3 (die Fakten nach den Registries zurücklesen)
+  → Resümee:   render.(verified)  =  Worker.Jack.Resuemee.Pipeline.schreiben/3
+  → Worker.Jack.Resuemee.Pipeline.veroeffentlichen/4  (SessionSummaryGenerated)
+  → Geschwister: Chronik (timeline), Epos-Kapitel (render_epos),
+    Bogen-Progressionen (render_arc_progressions)
+
+Der Resümee-Schritt läuft NICHT in with_status/5, weil er seine drei Stufen
+selbst ans Laufband meldet (Rückruf :melde_stufe aus stufen_melder/3, wie beim
+Fakten-Jack). Der alte Render (Render.render_summary/2) ist entfernt; es gibt
+keinen Rückfall darauf.
+
+Die Fakten, die run_wahrheitsbild übergibt, benutzt schreiben/3 nicht: es
+liest die Sitzung selbst aus dem Repo (Eingabe.aus_repo/1, Abschnitt 2). Die
+Fakten braucht erst veroeffentlichen/4, für die Quellen.
+
+--- 1.2 Die drei Laufband-Stufen ---
+
+Shared.PipelineStufen (apps/shared/lib/shared/pipeline_stufen.ex):
+
+  Name                  Titel (neutral)       Art          zählt
+  resuemee_ueberblick   Resümee: Überblick    Pflicht      gelesene Fakten
+  render                Resümee: Schreiben    Pflicht      nichts
+  resuemee_durchsicht   Resümee: Durchsicht   best-effort  entschiedene Absätze
+                                                           je Durchgang
+
+„render“ behält seinen Namen, weil /admin/errors und die Busy-Anzeige der
+Spalte daran hängen (wie „extract“ beim Fakten-Jack). Im Laufband ersetzt der
+Name der Resümee-Spalte das Wort „Resümee“: heißt die Spalte „Run-Report“,
+stehen dort „Run-Report: Überblick / Schreiben / Durchsicht“
+(HubWeb.CampaignLive.Laufband.titel/2, Tabelle @stil_stufe).
+
+Gezählt wird von Worker.Jack.Resuemee.Melder: er bekommt nach jedem
+Werkzeugaufruf das Abbild des Stands ({:jack_resuemee_stand, abbild}) und
+rechnet daraus „n von m Fakten gelesen“ (Überblick) bzw. „n von m Absätzen
+entschieden, Durchgang k“ (Durchsicht). Im Schreiben steht keine Zahl — wie
+viele Absätze es werden, weiß vorher niemand. Die Nachricht geht weiter an
+die Jack-Laufsicht (http://127.0.0.1:8099 auf einem Worker, der sie
+startet), die die Läufe des Resümee-Jack in einer eigenen Ansicht zeigt.
+
+--- 1.3 Was bei Fehlern passiert ---
+
+  * Fehler VOR den Läufen (kein Modell, ungültiges Kontextfenster, keine
+    Glättung, fehlende Auftragsvorlage): die Stufe „render“ meldet Beginn und
+    Fehlschlag, Klasse aus dem Grund (Worker.Recording.ErrorClass:
+    no_model_configured, ctx_jack_ungueltig, auftrag_fehlt, …; ein
+    {:jack, grund} wird auf den inneren Grund klassifiziert).
+  * Überblick oder Schreiben enden ohne fertig(): kein neues Resümee. Klassen
+    resuemee_ueberblick_ohne_abschluss / resuemee_schreiben_ohne_abschluss.
+    Der Lauf endet dort, wie früher beim Render: Chronik, Epos und
+    Bogen-Progressionen laufen dann NICHT. Das alte Resümee bleibt stehen.
+  * Nur die Durchsicht scheitert: Worker.Jack.Resuemee.laufen/2 liefert
+    trotzdem {:ok, …} mit dem Markdown aus dem Schreiben und vermerkt
+    durchsicht: {:error, …}; es gibt eine Logger-Warnung, das Resümee wird
+    veröffentlicht, der Lauf geht weiter, und in /admin/errors steht die
+    Klasse resuemee_durchsicht_gescheitert.
+  * Eine Sitzung ohne Fakten: {:error, :keine_fakten} schon vor dem ersten
+    Modellaufruf (laufen_ueberblick/2) — ohne Fakten gibt es nichts zu
+    gliedern.
+
+--- 1.4 Wann das Resümee neu geschrieben wird ---
+
+Jeder Weg durch run_wahrheitsbild: Aufnahme-Ende (UtterancesTranscribed),
+„neu generieren“, Kampagnen-Replay und „noch N Iterationen“ (jack_weiter).
+NICHT neu geschrieben wird es nach einer Kuration (Pipeline.Dirty leitet nur
+Fakten und Zeitstrahl neu ab — wie vorher beim Render).
+
+Von Hand lässt sich nur das Resümee neu schreiben, ohne Jacks Faktenbau zu
+wiederholen: Worker.Jack.Resuemee.Pipeline.schreiben/3 und danach
+veroeffentlichen/4 (so auf der Teststage am 13.09. gemacht, per RPC).
+
+
+== 2. Die Eingabe ==
+
+Worker.Jack.Resuemee.Eingabe.aus_repo/1 baut eine reine Map; alles dahinter
+(Stand, Werkzeuge) arbeitet ohne Mnesia und ist so testbar.
+
+  sitzung            %{id, nummer, name}
+  fakten             die geprüften Fakten dieser Sitzung (siehe unten)
+  fruehere           Sitzungen mit KLEINERER Nummer (nicht: zuletzt erzeugt),
+                     je %{nummer, name, fakten} — ihre Fakten ohne
+                     Blocknummern, ihr Mitschnitt wird nicht geladen
+  boegen             die Bögen, die Fakten dieser Sitzung berühren
+  vorige_resuemees   [%{nummer, name, text}] — die angezeigte Fassung
+                     (get_session_summary/1), leere fallen weg
+  vorige_gedanken    je frühere Sitzung %{fakten_jack, resuemee_jack}:
+                     das Gedächtnis-Register des Fakten-Jack aus
+                     JackStandAbgelegt und die Notizen des Resümee-Jack aus
+                     JackResuemeeStandAbgelegt (beides darf nil sein)
+  bloecke            die Kontextliste des Fakten-Jack (siehe unten)
+  cast, straenge     wie beim Fakten-Jack
+  ueberschrift       Name der Resümee-Spalte aus „Stil setzen“, sonst
+                     „Resümee“
+  flavor             %{base, summary}: Grundton und Resümee-Ton
+  max_woerter        Länge des Resümees für diese Kampagne, sonst der
+                     Standard (Shared.ResuemeeLaenge; Abschnitt 8)
+
+Die Fakten. Pipeline.geprueft/1 (Worker.Repo.get_session_facts/1), davon die
+mit verified? == true — dasselbe Filter wie der frühere Render; Jack setzt es
+bei allen seinen Fakten. Die Kuration der Fakten-Spalte wirkt hier nicht (sie
+wird neu gedacht und darf bis dahin kaputt bleiben). Auch Fakten eines
+„rauschen“-Strangs kommen an; die Art steht an jedem.
+
+Jeder Fakt wird für Jack umgeformt (Eingabe.fakten/4):
+
+  id           KURZE ID „S<Sitzungsnummer>-F<Position ab 1>“, z. B. S3-F12.
+               Die inhaltsadressierte Pipeline-ID (f_<hash>) wird beim
+               Abschreiben leicht verfälscht; der Stand hält sie als fakt_id.
+  aussage      claim
+  figur        character_alias (leer → nil)
+  typ          fact_type (Standard ereignis)
+  boegen       [%{titel, art}] aus Worker.Repo.fact_render_assignments/2 —
+               dieselbe Präzedenz wie das Fäden-Panel (Label-Kette,
+               FactArcSet-Override, Merge-Redirect), Art arc/context/rauschen
+  datum        in_game_date (leer → nil)
+  erzaehlzeit  narration_time
+  bloecke      die Blocknummern der Kontextliste, auf die source_refs zeigen
+  ohne_block   wie viele Belege dort nicht (mehr) stehen
+
+Die Kontextliste. Pipeline.gespeicherter_kontext/1 und Pipeline.kontext/1:
+dieselben Blöcke in derselben Reihenfolge wie beim Fakten-Jack (ohne
+OOC-Blöcke). Nur in genau dieser Liste zeigt Blocknummer n auf die Block-ID,
+die ein Fakt zitiert. Ohne Glättung scheitert die Eingabe mit dem Fehler der
+Fakten-Pipeline.
+
+Die Bögen (Eingabe.boegen/2): jeder Bogen, der einen Fakt dieser Sitzung
+berührt, in der Reihenfolge seines ersten Fakts, mit Art, Leitfrage und
+Status aus dem Strang gleichen Titels (Arc-Status offen/geschlossen, sonst
+Strang-Status) und den kurzen IDs seiner Fakten. Jack erfindet keine Bögen;
+die kampagnenweiten Stränge sind die Grundlage.
+
+
+== 3. Die gemeinsame Laufzeit aller drei Läufe ==
+
+Worker.Jack.Resuemee.starten/5 (intern) fährt jeden Lauf über
+Worker.Agent.laufen/1, mit:
+
+  modell         Worker.Jack.Resuemee.Pipeline.modell/0: das Modell aus
+                 resuemee_jack_model, leer = Jacks Modell
+                 (model_stage2_local); Endpunkt (local_endpoint) und Regler
+                 (jack_temperature, jack_top_p, jack_frequency_penalty,
+                 jack_max_tokens) wie bei Jack (Jack.Pipeline.modell/1).
+                 Gesprochen wird /v1/chat/completions; es wird KEIN num_ctx
+                 gesetzt.
+  system         Worker.Jack.Systemprompt.pi/0 — derselbe Systemprompt wie
+                 beim Fakten-Jack.
+  nachrichten    genau eine: der Auftrag des Laufs (Abschnitte 4–6).
+  anheften       true (Default der Laufzeit). ANDERS als beim Fakten-Jack
+                 (dort false, weil seine Aufträge so gemessen sind): der
+                 Auftrag bleibt über jede Kompaktierung erhalten.
+  werkzeuge      Worker.Jack.Resuemee.Werkzeuge.fuer/1 — je Lauf ein
+                 eigener Satz.
+  kontext        Phase.kontext/2: Fenster ctx_jack (98 304), Reserve 4096,
+                 Behalten 8000, Zusammenfassung aus dem Stand
+                 (Worker.Jack.Resuemee.Zusammenfassung): kein vom Modell
+                 geschriebener Text, sondern ein Arbeitsstand, den die
+                 Werkzeuge aus ihren Daten bauen (Auftrag in drei Zeilen,
+                 Ton, „wo du stehst“, Notizen, gekürzter Entwurf, nächster
+                 Schritt).
+  max_runden     5000, max_ms 6 Stunden je Lauf.
+  bei_stopp      Phase.nachhaken/1: endet eine Antwort ohne
+                 Werkzeugaufruf, bekommt Jack bis zu dreimal „Setz die Arbeit
+                 fort; wenn du durch bist, ruf fertig() auf“; die vierte
+                 Antwort ohne Aufruf beendet den Lauf.
+
+Aus der Laufzeit (Worker.Agent) gilt außerdem die Wiederholungssperre: der
+vierte völlig gleiche Aufruf wird nicht ausgeführt (Warnung), der sechste
+bricht den Lauf ab. Frei davon sind boegen, cast, straenge, notizen_lesen,
+entwurf und fertig; durchsicht zählt nur, solange sich nichts geändert hat.
+
+Der Stand liegt in einem Halter-Prozess (Worker.Jack.Resuemee.Halter, ein
+Agent): die Werkzeuge sind reine Funktionen stand, argumente → neuer Stand,
+ergebnis. Nach jedem Aufruf bekommt ein Beobachter das Abbild
+(Stand.abbild/1). Wirft ein Werkzeug, bleibt der Stand unverändert und das
+Ergebnis ist ein Fehler.
+
+Alle Werkzeuge sind streng (Worker.Agent.Werkzeug.neu/1): jedes Feld ist
+Pflicht, außer es steht ausdrücklich in optional:. Ablehnungen nennen, was
+fehlt oder falsch ist, aber nie die richtigen Zahlen, die Jack melden soll.
+
+Ein Journal im Stand (Stand.journal/3) hält fest, was die Werkzeuge
+beobachten (notizen_verlauf.txt, entwurf_verlauf.jsonl, durchsicht.jsonl,
+abschluss.jsonl, zusammenfassung.txt); Jack sieht es nicht. Daraus kommen
+die Zählwerte.
+
+
+== 4. Lauf 1: Überblick ==
+
+Auftrag: resuemee_ueberblick.md, gefüllt mit Sitzungsnummer, Überschrift,
+Zahl der Fakten, letztem Block und einem Satz zu den früheren Sitzungen. Gibt
+es keine, steht dort wörtlich: „Es gibt keine früheren Sitzungen — mit dieser
+Sitzung beginnt die Aufzeichnung.“ (Stand.keine_frueheren/0).
+
+Kern des Auftrags: lies ALLE Fakten, notiere während des Lesens (der Kontext
+hält nicht alles), zuerst die FORM, dann die GLIEDERUNG. Geschrieben wird im
+nächsten Auftrag — „dort bist du es selbst, ohne Erinnerung an dieses Lesen,
+und hast nur deine Notizen“. Die FORM-Tabelle der Vorlage ordnet
+Überschriften Formen zu (Resümee → chronologische Zusammenfassung in wenigen
+Sätzen; Rückblick → chronologische Nacherzählung; Handlungsstränge → ein
+Abschnitt je Bogen; Stichpunkte → knappe Liste). Bei einer anderen Überschrift
+nimmt Jack die Form, die ein Leser unter dem Wort erwartet.
+
+--- 4.1 Werkzeuge im Überblick ---
+
+  Werkzeug                   Pflicht (optional)      Wirkung
+  fakten(von, bis)           von, bis (sitzung)      Fakten 1..n dieser Sitzung,
+                                                     Spalten ID, Figur, Typ,
+                                                     Bögen (Art), Zeit, Blöcke,
+                                                     Aussage; merkt sie als
+                                                     gelesen. Mit sitzung: eine
+                                                     frühere, nur Vorgeschichte.
+  fakt(id)                   id                      ein Fakt + Text seiner
+                                                     Belegblöcke; zählt als
+                                                     gelesen. Früherer Fakt:
+                                                     ohne Mitschnitt.
+  boegen()                   –                       Titel, Art, Status,
+                                                     Leitfrage, Fakten; dazu
+                                                     „Ohne Bogen: …“
+  vorige_resuemees()         (von, bis)              frühere Resümees
+  vorige_gedanken(sitzung)   sitzung                 Gedächtnis des Fakten-Jack
+                                                     + Notizen des Resümee-Jack
+  bloecke(von, bis),         wie beim Fakten-Jack    der Mitschnitt, mit dem
+  block(nummer),                                     Zusatz „dient zum
+  suche(begriff) (ab, bis)                           Verstehen, der Stoff sind
+                                                     die Fakten“
+  cast(), straenge()         –                       Namen, Stränge
+  notiz(eintraege)           je Eintrag abschnitt,   schreibt/ersetzt/streicht
+                             schluessel, zeile|null, Notizen
+                             fakten, boegen
+  notizen_lesen()            –                       Notizen + „wo du stehst“
+  fertig(fakten, gliederung, offen_geblieben)        Abschluss (4.3)
+
+--- 4.2 Die Notizen (Worker.Jack.Resuemee.Notizen) ---
+
+Drei Abschnitte, gleiche Mechanik wie Jacks Gedächtnis: derselbe Schlüssel im
+selben Abschnitt ERSETZT, zeile: null streicht, eine leere Zeile ist kein
+Eintrag, ein Aufruf, der nichts schrieb, ist ein Fehler, der dritte
+gleichlautende Versuch eine Warnung.
+
+  FORM        GENAU ein Eintrag. Ein zweiter unter anderem Schlüssel wird
+              abgelehnt.
+  GLIEDERUNG  erst NACH der FORM (sonst Ablehnung: „erst die FORM …“). Jeder
+              Punkt nennt mindestens einen Fakt. Höchstens
+              max(2, round(max_woerter / 25)) Punkte (bei 75: 3) —
+              Stand.max_gliederung/1; die 25 Wörter je Punkt sind gegriffen.
+              [Seit 0015fbab: max(3, round(2 · max_woerter / 25)), Abschnitt 10.]
+  OFFEN       Stellen, an denen die Fakten zum Verstehen nicht reichen.
+
+Nur Bekanntes: eine Fakt-ID muss es in dieser oder einer früheren Sitzung
+geben (Groß-/Kleinschreibung egal), ein Bogen unter den Bögen dieser Sitzung
+oder den Strängen der Kampagne (Normalform über Worker.ThreadOverride). Die
+Schreibweise des Bestands wird gespeichert.
+
+--- 4.3 fertig im Überblick (Worker.Jack.Resuemee.Abschluss) ---
+
+Lehnt ab, solange
+
+  * ein Fakt dieser Sitzung ungelesen ist (die Ablehnung nennt Bereiche wie
+    „41-57, 60“),
+  * die FORM fehlt,
+  * die GLIEDERUNG leer ist.
+
+Die Pflicht „jeder arc-Bogen braucht einen Gliederungspunkt“ gab es bis
+d81a88b1 und ist entfallen: die Gliederung wählt aus. Die Pflicht der
+Handlungsbögen hat jetzt das Schreiben (5.4).
+
+Dann der Zahlenabgleich: gemeldet fakten (gelesene Fakten dieser Sitzung) und
+gliederung (Punkte) gegen die Buchhaltung. Stimmt eine nicht, sagt die
+Ablehnung nur WELCHE; der dritte Versuch geht trotzdem durch, die Abweichung
+steht dann mit beiden Werten im Journal. Erfolg ist {:halt, …} — der Lauf
+endet.
+
+Was Lauf 2 davon bekommt: Stand.ablage/1 — nur die Notizen (Abschnitt,
+Schlüssel, Zeile, Fakten, Bögen), JSON-fähig. Dieselbe Form wird als
+„vorige Gedanken“ für spätere Sitzungen abgelegt.
+
+
+== 5. Lauf 2: Schreiben ==
+
+Stand: Stand.fuer_schreiben/2 — dieselbe Eingabe, lauf: :schreiben, die
+Notizen aus der Ablage. Auftrag: resuemee_schreiben.md in dieser Reihenfolge:
+
+  1. „Der Ton“ — Stand.ton/1: „**Grundton der Kampagne:** …“ und
+     „**Ton des Resümees:** …“, sonst „Für diese Kampagne ist kein Ton
+     vorgegeben.“
+  2. „Deine Notizen aus dem Überblick“ — FORM, GLIEDERUNG, OFFEN als Text.
+     Fehlen sie, blockiert das nicht; der Auftrag sagt es dann.
+  3. „Deine Aufgabe“ — das Resümee für die Spalte „<Überschrift>“, Absatz für
+     Absatz, in der FORM und nach der GLIEDERUNG, im Ton oben, für die
+     Mitspieler. Ein „Was bisher geschah“ in höchstens M Wörtern; die
+     übrigen Fakten bleiben im Faktenbestand.
+  4. Werkzeuge, die Satzarten (Tabelle), ein Beispielabsatz aus der
+     Uhrmacher-Welt mit einem Rückblick, einem Übergang und zwei erzählenden
+     Sätzen, Handlungsbögen, Überarbeiten, Abschluss.
+
+--- 5.1 Werkzeuge im Schreiben ---
+
+Die Lesewerkzeuge wie im Überblick, notizen_lesen (nur lesend; notiz gibt es
+hier nicht), dazu aus Worker.Jack.Resuemee.Entwurf:
+
+  absatz(saetze) (titel)           hängt einen Absatz an
+  absatz_ersetzen(nummer, saetze) (titel)   ersetzt ihn, gleiche Prüfung;
+                                   identischer Inhalt → „steht bereits so“
+  absatz_streichen(nummer)         streicht, die dahinter rücken vor
+  entwurf()                        der ganze Entwurf mit Nummern, Sätzen,
+                                   Fakten, Markierungen, Wortstand
+  fertig(absaetze, saetze, ausgelassen, offen_geblieben)
+
+Je Satz: text und fakten sind Pflicht (fakten = [] beim Übergang),
+uebergang und rueckblick optional.
+
+--- 5.2 Die Satzprüfung (Entwurf.satz_pruefen/2) ---
+
+Zuerst wird der Text normalisiert (Leerraum und Zeilenumbrüche → ein
+Leerzeichen) und jede Fakt-ID aufgelöst (doppelte fallen weg). Dann:
+
+  Fakten des Satzes                   nötige Markierung
+  mindestens einer dieser Sitzung     keine (frühere dürfen dazukommen)
+  nur Fakten früherer Sitzungen       rueckblick: true
+  keine                               uebergang: true
+
+Ablehnungsgründe (Codes im Journal):
+
+  leer                                Satz ohne Text
+  zu_lang                             mehr als 80 Wörter — dagegen, dass ein
+                                      ganzer Absatz als ein „Satz“ an der
+                                      Prüfung je Satz vorbeigeht (gegriffen)
+  fakt_unbekannt                      eine ID gibt es nicht; dann werden die
+                                      Markierungen nicht mehr geprüft
+  uebergang_mit_fakten                uebergang: true, aber Fakten genannt
+  rueckblick_mit_fakt_dieser_sitzung  rueckblick: true, obwohl ein Fakt dieser
+                                      Sitzung dabei ist
+  rueckblick_fehlt                    nur frühere Fakten, ohne Markierung
+  rueckblick_ohne_fakten              rueckblick: true ohne Fakten
+  uebergang_fehlt                     keine Fakten, ohne Markierung — die
+                                      Antwort erinnert: fehlt Stoff, gehört
+                                      die Stelle in fertig(offen_geblieben)
+  titel_leer, titel_zu_lang           Titel nur aus Leerraum / mehr als 12
+                                      Wörter (ungeprüfter Text soll eine
+                                      Überschrift bleiben)
+
+KEINE Namensprüfung (Tom: Jack darf formulieren). Geprüft wird, worauf ein
+Satz sich stützt, nicht, welche Wörter er benutzt.
+
+GANZ ODER GAR NICHT: ist auch nur ein Satz eines Absatzes nicht in Ordnung,
+geht der ganze Absatz nicht in den Entwurf. Die Antwort nennt jeden
+abgelehnten Satz mit Nummer (ab 1), Anfang (8 Wörter) und allen Gründen;
+Jack schickt den Absatz vollständig noch einmal.
+
+--- 5.3 Die Länge ---
+
+Gezählt werden alle Satztexte und Absatztitel, getrennt an Leerraum
+(Stand.woerter/1; ein freistehender Gedankenstrich zählt mit). Jede Antwort
+von absatz, absatz_ersetzen, absatz_streichen und entwurf nennt „X von
+höchstens M Wörtern“ — seit Commit c7cf93db auch die Wortzahl JE
+ABSATZ (Feld woerter_je_absatz, Absatzkopf in entwurf() „Absatz n … · k
+Wörter“, durchsicht(nummer) nennt die des gezeigten Absatzes;
+Laenge.je_absatz/1). Anlass: im ersten Lauf mit Obergrenze zählte Jack in
+der Denkspur selbst nach, eine Runde brauchte dafür 21 Minuten. absatz trägt auch über der Grenze ein (sonst könnte
+Jack nie umformulieren), warnt aber deutlich; fertig blockt.
+
+Stand d81a88b1: M = max_woerter (Standard 75) ist die harte Grenze.
+[Seit 0015fbab: M ist das Ziel, harte Obergrenze 2·M, dazwischen nur mit Begründung
+— Abschnitt 10.]
+
+--- 5.4 fertig im Schreiben ---
+
+Lehnt ab, solange
+
+  * der Entwurf leer ist,
+  * der Entwurf über der Grenze liegt („Kürze ihn: fass Sätze zusammen und
+    behalte die Ereignisse, die die Sitzung tragen …“),
+  * ein berührter Bogen der Art arc von keinem Satz erzählt wird (= kein Satz
+    zitiert einen seiner Fakten DIESER Sitzung; ein Rückblick zählt nicht)
+    und auch nicht in ausgelassen steht.
+
+ausgelassen ist Pflicht (Liste, [] erlaubt), je Eintrag bogen und grund. Ein
+Eintrag muss ein arc-Bogen dieser Sitzung sein und einen nicht leeren Grund
+haben; context- und rauschen-Bögen dürfen ohne Grund fehlen und gehören nicht
+hinein. Danach der Zahlenabgleich absaetze/saetze wie im Überblick.
+
+Ergebnis von laufen_schreiben/3: {:ok, %{stand, runden, ms, markdown}} oder
+{:error, {:schreiben_ohne_abschluss, ende}}.
+
+
+== 6. Lauf 3: Durchsicht ==
+
+Stand: lauf: :durchsicht, Notizen und Entwurf aus Lauf 2. Auftrag:
+resuemee_durchsicht.md. Grob, gnädig, im Zweifel bestätigen. Als grobe
+Schnitzer gelten: ein Satz sagt etwas anderes als seine Fakten (falsche
+Figur, falscher Ort, falscher Ausgang, verdrehte Reihenfolge), ein Satz nennt
+eine Figur oder einen Ort, den seine Fakten nicht kennen, ein Übergang trägt
+eigenen Stoff, ein Satz steht doppelt. KEIN Grund: Stil, Wortwahl, Satzbau,
+Länge, Geschmack. Die Vorlage zeigt einen holprigen, aber stimmigen Satz, der
+bestätigt wird, und einen mit falscher Figur, der ersetzt wird.
+
+--- 6.1 Werkzeuge (Worker.Jack.Resuemee.Durchsicht) ---
+
+  durchsicht(nummer)                 ein Absatz: jeder Satz mit seinen
+                                     Fakten im Wortlaut (ID, Figur, Aussage)
+                                     und den Hinweisen (6.2)
+  absatz_bestaetigen(nummer)         geht erst, nachdem Jack den Absatz in
+                                     diesem Durchgang seit seiner letzten
+                                     Änderung mit durchsicht gelesen hat
+  absatz_ersetzen(nummer, grund, saetze) (titel)   Pflicht-grund: welcher
+                                     grobe Schnitzer behoben wird; dieselbe
+                                     Satzprüfung wie in Lauf 2
+  absatz_streichen(nummer, grund)    nur, wenn ein Absatz als Ganzes doppelt
+                                     steht oder nur Schnitzer ist; der LETZTE
+                                     Absatz lässt sich nicht streichen (ohne
+                                     absatz gäbe es keinen Weg zurück)
+  entwurf(), notizen_lesen(), Lesewerkzeuge
+  fertig(bestaetigt, ersetzt, offen_geblieben)
+
+Kein absatz — angehängt wird in der Durchsicht nichts. absatz_ersetzen wird
+abgelehnt, wenn der Entwurf danach über der Grenze läge und länger würde.
+
+--- 6.2 Die Hinweise (Worker.Jack.Resuemee.Hinweise) ---
+
+Deterministisch, nie eine Ablehnung. Ein Hinweis ist ein Wort, das
+
+  * mit einem Großbuchstaben beginnt,
+  * nicht am Satzanfang steht (erstes Wort, und jedes Wort nach . ! ? : oder
+    einem Anführungszeichen),
+  * kein übliches Funktionswort ist (Liste in @funktionswoerter: Der, Dann,
+    Sie, …),
+  * und keine Fundstelle hat: nicht in Aussage oder Figur eines zitierten
+    Fakts, nicht im Cast, nicht in den Bogentiteln dieser Sitzung, nicht in
+    den Strängen. „Fundstelle“ heißt Wortteil: der Stamm (klein, eine
+    übliche Endung -ern/-en/-er/-es/-em/-e/-n/-s abgeschnitten, sofern
+    mindestens vier Buchstaben bleiben) steht irgendwo darin; kürzere Stämme
+    müssen als ganzes Wort dastehen („Tor“ nicht in „Motor“). Bindestrich-
+    Wörter: jeder Teil.
+
+In einem Übergang ist JEDES großgeschriebene Wort außer am Satzanfang ein
+Hinweis (ein Übergang soll keinen Stoff tragen).
+
+Grenzen, im Moduldoc benannt: Deutsch schreibt Substantive groß — die Liste
+enthält Rauschen (Synonyme, Umlaut-Plurale wie „Werkstätten“, zusammengesetzte
+Wörter). Umgekehrt entgeht ihr ein Name am Satzanfang, und vor allem die
+FALSCHE FIGUR: ein Name aus dem Cast hat immer eine Fundstelle, auch wenn der
+Fakt des Satzes von jemand anderem handelt. Titel werden nicht geprüft.
+
+--- 6.3 Durchgänge ---
+
+s.durchsicht trägt den laufenden Durchgang und je Absatz einen Status:
+offen, bestaetigt, ersetzt, frei (blieb im vorigen Durchgang unverändert).
+Ist kein Absatz mehr offen und wurde im Durchgang einer ersetzt, beginnt
+SOFORT der nächste: nur die ersetzten sind wieder offen. Nur gestrichen,
+nichts ersetzt → kein weiterer Durchgang. Nach höchstens 3 Durchgängen
+(gegriffen) beginnt keiner mehr. fertig lehnt ab, solange ein Absatz offen
+ist; danach Zahlenabgleich bestaetigt/ersetzt über alle Durchgänge.
+
+Die Durchsicht prüft NICHT, ob ein Handlungsbogen nach einer Ersetzung noch
+vorkommt (sie ist gnädig; die Pflicht hatte das Schreiben). Ob eine Änderung
+wirklich einen groben Schnitzer behebt, prüft niemand — der grund macht es
+nachlesbar, nicht richtig.
+
+
+== 7. Das Ergebnis ==
+
+--- 7.1 Markdown (Worker.Jack.Resuemee.Ergebnis.markdown/1) ---
+
+Absätze durch eine Leerzeile getrennt, Sätze durch ein Leerzeichen. Ein
+Absatztitel wird eine fette Zeile „**Titel**“ direkt vor dem Text (keine
+Überschrift ###): so sehen die Resümees mit fetten Bogen-Abschnitten heute
+schon aus, die Spalte hat ihre eigene Überschriften-Ordnung, und beides
+übersteht render_md_safe/1. Im Titel werden * _ ` [ ] maskiert; ein Absatz,
+der wie ein Markdown-Block beginnt (#, >, „- “, „3. Mai“), bekommt einen
+Backslash davor, damit keine Überschrift oder Liste entsteht.
+
+--- 7.2 Satzquellen und Quellen ---
+
+Ergebnis.satzquellen/1: je Satz %{absatz, satz, text, fakten (kurze IDs),
+fakt_ids (echte Pipeline-IDs), uebergang, rueckblick}.
+
+Worker.Jack.Resuemee.Pipeline.quellen/2: source_refs des Resümees = die
+Block-IDs aller Fakten DIESER Sitzung, die ein Satz zitiert, in
+Faktenreihenfolge, ohne Doppelte. Vorher waren es die Belege ALLER Fakten der
+Sitzung. Rückblick-Sätze tragen nichts bei (ihre Fakten stehen nicht im
+Mitschnitt dieser Sitzung). Folge: Sprungmarken, Sync-Index und der
+🕳-Lückenmarker (Worker.Repo.GlattQuellen) zeigen nur noch auf das, worauf
+das Resümee sich wirklich stützt — ein nicht zitierter Lückenblock trägt dem
+Resümee keinen 🕳 mehr ein.
+
+--- 7.3 Zählwerte (Ergebnis.zaehlwerte/1) ---
+
+absaetze, saetze, uebergaenge, rueckblicke, fakten (dieser Sitzung),
+fakten_im_text, woerter, max_woerter, abgelehnte_absaetze,
+abgelehnte_saetze, gruende (je Code), und ein Block durchsicht
+(durchgaenge, bestaetigt, ersetzt, gestrichen je mit Gründen, hinweise
+vorher/nachher; bei gescheiterter Durchsicht %{"gescheitert" => grund}).
+
+--- 7.4 Die Ereignisse ---
+
+SessionSummaryGenerated (veroeffentlichen/4):
+
+  content_md       das Markdown
+  source           "llm"
+  source_refs      siehe 7.2
+  satzquellen      additiv (J5)
+  zaehlwerte       additiv (J5)
+  render_backend   "jack"
+  render_model     Modell des Resümee-Jack
+
+Alte Ereignisse ohne satzquellen/zaehlwerte bleiben gültig.
+
+JackResuemeeStandAbgelegt (Resuemee.Pipeline, stand_ablegen): %{session_id,
+campaign_id, stand: %{notizen, entwurf, satzquellen, zaehlwerte, modell,
+zeitpunkt}}. Tabelle worker_jack_resuemee_staende, eine Zeile je Sitzung,
+Last-Writer-Wins über die event_id (Worker.Materializer.JackStandFolds,
+dieselbe Regel wie JackStandAbgelegt), in beiden Löschkaskaden. Leser:
+Worker.Repo.jack_resuemee_stand_for_session/1 — und über
+Eingabe.vorige_gedanken die Resümee-Läufe späterer Sitzungen.
+
+
+== 8. Einstellungen und „Stil setzen“ ==
+
+Modell — /settings, Jack-Block: resuemee_jack_model, Textfeld mit
+Vorschlägen aus der Ollama-Liste. Leer = Jacks Modell. Der Leerstring kommt
+durch (Options.normalize_settings_params/1 lässt ihn für diesen Key zu), sonst
+ließe sich ein gesetztes Modell nie wieder leeren. Endpunkt, Regler und
+Kontextfenster teilt der Resümee-Jack mit Jack.
+
+„Stil setzen“, Resümee-Tab (HubWeb.CampaignLive.Stil):
+
+  Überschrift   vorgaben["summary"].name — Spaltentitel UND Quelle der FORM.
+  Töne          Grundton (base) und Resümee-Ton (summary) gehen als
+                „Der Ton“ an den Anfang des Schreib-Auftrags (und in die
+                Durchsicht).
+  Länge         Zahlfeld „Länge des Resümees (Wörter)“, je Kampagne.
+                Ereignis CampaignResuemeeLaengeSet, eigene Tabelle
+                worker_campaign_resuemee_laengen (LWW über fold_meta, nie
+                delete, Kaskade). Getrennt von CampaignVorgabeSet, damit
+                Name und Länge einander nicht still löschen (dessen Fold
+                ersetzt die Zeile aus einem Payload). Standard und Bereich in
+                Shared.ResuemeeLaenge: Stand d81a88b1 Standard 75, Bereich
+                30–1000 [seit 0015fbab: Standard 150]. Der Hub lehnt eine ungültige
+                Eingabe ab und speichert dann gar nichts; der Worker nimmt
+                einen ungültigen Wert aus anderen Quellen als Standard und
+                loggt laut. Die Länge reist als resuemee_max_woerter mit
+                get_campaign/1 (nil = Standard).
+  Vorschau      der Resümee-Tab zeigt keinen Prompt mehr, sondern den
+                Hinweis: Jack schreibt, die Überschrift bestimmt die Form,
+                die Töne bekommt er vor dem Schreiben, die Länge gilt.
+                (summary_prompt/2 bleibt im Worker nur für einen
+                zurückgerollten Hub.)
+
+Entfernt: das Feld „Darstellungsform“. Die Form folgt aus der Überschrift.
+Fold und Tabellenspalte lesen Alt-Events weiter, gelesen wird die Spalte
+nicht mehr.
+
+
+== 9. Was im Code nicht geprüft wird ==
+
+  * Ob ein Satz inhaltlich sagt, was seine Fakten sagen. Geprüft wird nur,
+    DASS er Fakten nennt und die Markierungen dazu passen. (Toms Linie; kein
+    Prosa-Prüf-Agent nach #1124.)
+  * Ob Namen und Orte im Satz in seinen Fakten vorkommen (keine harte
+    Namensprüfung; nur die Hinweise der Durchsicht, mit Rauschen und mit
+    der blinden Stelle „falsche Figur aus dem Cast“).
+  * Ob ein Übergang wirklich nur verbindet (nur gezählt; in der Durchsicht
+    ist jedes großgeschriebene Wort darin ein Hinweis).
+  * Ob die Durchsicht wirklich nur grobe Schnitzer ändert (grund ist
+    nachlesbar, nicht geprüft).
+  * Alle Grenzwerte sind gegriffen, nicht gemessen: 80 Wörter je Satz, 12 je
+    Titel, 25 Wörter je Gliederungspunkt, 3 Durchgänge, Standardlänge.
+  * Die Wortzählung ist grob (Leerraum; ein Gedankenstrich zählt).
+  * Nach einer Kuration wird das Resümee nicht neu geschrieben.
+
+
+== 10. Seit 0015fbab: Weg der Gruppe, Ziel und Obergrenze ==
+
+Anlass und Toms Entscheidungen vom 13.09.:
+
+  „der weg den die gruppe genommen hat muss aus den resümee ersichtlich sein
+   - wenn die 75 worte nicht reichen für die grobe abdeckung darf man bis zu
+   maximal dem doppelten erweitern“
+  Standard danach auf „Ziel 150, höchstens 300“ gesetzt — Maßstab sind die
+  ersten drei Resümees einer anderen Kampagne mit je rund 210 Wörtern, die
+  er „eine gute Größe“ nannte.
+
+Umgesetzt (Commit 0015fbab, 13.09. 11:27; neue Module jack/resuemee/weg.ex
+und jack/resuemee/laenge.ex; Shared.ResuemeeLaenge.hoechstens/1):
+
+  * max_woerter ist das ZIEL (Standard 150), die harte OBERGRENZE ist das
+    Doppelte (300). fertig im Schreiben lehnt über der Obergrenze ab;
+    zwischen Ziel und Obergrenze verlangt es ein neues Pflichtfeld
+    laenge_begruendung (nicht leer; unter dem Ziel darf es leer sein). Alle
+    Antworten nennen „X Wörter — Ziel M, höchstens 2M“. Die Durchsicht lehnt
+    Ersetzungen über der Obergrenze ab.
+  * Die GLIEDERUNG ist der Weg der Gruppe, Station für Station vom Anfang
+    bis zum Ende. Deckel max(3, round(2 · max_woerter / 25)) — bei 150 also
+    12. Der Überblick zeigt als Hinweis (keine Ablehnung), von welchem bis zu
+    welchem Block die Gliederungsfakten reichen, gegen die Spanne aller
+    Fakten der Sitzung, und ob die Punkte in Blockreihenfolge stehen.
+  * JEDER Gliederungspunkt wird erzählt: fertig im Schreiben lehnt ab,
+    solange ein Punkt von keinem Satz getragen wird (kein Satz zitiert einen
+    seiner Fakten dieser Sitzung). Die Durchsicht darf keinen Absatz
+    streichen oder ersetzen, wenn danach ein Punkt nicht mehr getragen wäre.
+  * Die arc-Regel (erzählt oder in ausgelassen begründet) bleibt.
+  * „Stil setzen“: der Hilfetext am Längenfeld sagt, dass die Zahl das Ziel
+    ist und das Resümee bis zum Doppelten wachsen darf, wenn der Weg der
+    Gruppe es braucht.
+
+
+== 11. Erfahrungen aus dem ersten echten Lauf (Teststage, 13.09.) ==
+
+Nur Zahlen, kein Text. Teststage 4007, eine lange Sitzung (3679
+Utterances, 1824 geglättete Blöcke), alle Modellschritte qwen3.8:27b-text.
+Die Pipeline baute alles selbst: Glättung mit Lücken-Füllen (487
+Lückenblöcke, 215 Vorschläge, rund 2,6 s je Block), Jacks Faktenbau (115
+Aussagen → 114 Fakten; Toms Sichtprüfung: eine falsch, etwa fünf
+Regelfakten, sonst gut), dann das Resümee in der Spalte „Run-Report“.
+
+  Lauf A (B4-Stand, OHNE Längengrenze):
+    FORM notiert: „chronologische Zusammenfassung … in wenigen Absätzen“
+    Ergebnis: 12 Absätze, 73 Sätze, 1272 Wörter, 107 von 114 Fakten erzählt
+    — länger als das Epos-Kapitel derselben Sitzung (1002 Wörter); das
+    frühere Prod-Resümee dieser Sitzung hatte 159. Die Durchsicht bestätigte
+    alle 12 Absätze. Befund: nichts erzwang Auswahl; die FORM-Notiz allein
+    bindet nicht.
+
+  Lauf B (d81a88b1, Grenze 75, nur der Resümee-Jack neu, 609 s):
+    Ergebnis: 3 Absätze, 4 Sätze, 73 Wörter, 15 von 114 Fakten, 14 Hinweise,
+    alle Absätze bestätigt, keine Ablehnung. Befund: die Länge hält, aber
+    die Sätze bündeln mehrere Ereignisse und zitieren teils Fakten, die das
+    Gesagte nicht tragen (Beispiele beim Nachlesen: Ereignisse im Satz ohne
+    passenden zitierten Fakt; zitierte Fakten, die der Satz nicht erzählt).
+    Der Ablauf der Sitzung war nur bruchstückhaft erkennbar → Abschnitt 10.
+
+Zwei mögliche Hebel gegen die losen Belege sind vorgeschlagen, aber nicht
+beauftragt: eine strengere Durchsicht nur in diesem Punkt (ein Ereignis ohne
+tragenden Fakt → Fakt nachtragen oder streichen) und eine Pflicht, jeden
+Hinweis ausdrücklich zu entscheiden.
+
+
+== 12. Dateien ==
+
+  jack/resuemee.ex                 Ablaufsteuerung: laufen/2 (Überblick →
+                                   Schreiben → Durchsicht), laufen_*,
+                                   Aufträge füllen
+  jack/resuemee/eingabe.ex         die Eingabe aus dem Repo (Abschnitt 2)
+  jack/resuemee/stand.ex           der Stand: Fakten, Notizen, Entwurf,
+                                   Durchsicht, Länge, Abbild, Journal
+  jack/resuemee/lesen.ex           fakten, fakt, boegen, vorige_*, Mitschnitt
+  jack/resuemee/notizen.ex         notiz, notizen_lesen (FORM, GLIEDERUNG,
+                                   OFFEN)
+  jack/resuemee/entwurf.ex         absatz, absatz_ersetzen, _streichen,
+                                   entwurf, Satzprüfung
+  jack/resuemee/durchsicht.ex      Lauf 3: durchsicht, bestätigen, Durchgänge
+  jack/resuemee/hinweise.ex        die Hinweise der Durchsicht
+  jack/resuemee/abschluss.ex       fertig je Lauf, Zahlenabgleich
+  jack/resuemee/ergebnis.ex        markdown, satzquellen, zaehlwerte
+  jack/resuemee/werkzeuge.ex       die Werkzeugsätze je Lauf
+  jack/resuemee/halter.ex          der Halter-Prozess des Stands
+  jack/resuemee/zusammenfassung.ex der Arbeitsstand bei der Kompaktierung
+  jack/resuemee/pipeline.ex        Einbau: Modell, schreiben/3, Stand
+                                   ablegen, veroeffentlichen/4, quellen/2
+  jack/resuemee/melder.ex          Laufband-Zählung
+  materializer/jack_stand_folds.ex Fold JackResuemeeStandAbgelegt
+  materializer/resuemee_laenge_folds.ex  Fold CampaignResuemeeLaengeSet
+  apps/shared/lib/shared/resuemee_laenge.ex  Standard, Bereich, Prüfung
+  apps/shared/lib/shared/pipeline_stufen.ex  die drei Laufband-Stufen
+  apps/hub/lib/hub_web/live/campaign_live/stil.ex, editors.ex,
+    components.ex                  „Stil setzen“: Länge, Hinweis
+  apps/hub/lib/hub_web/live/einstellungen_live/jack_block.ex
+                                   resuemee_jack_model
+  apps/worker/priv/jack/auftraege/resuemee_ueberblick.md,
+    resuemee_schreiben.md, resuemee_durchsicht.md, LIES_MICH.md
+  apps/worker/priv/jack/sicht.html Laufsicht

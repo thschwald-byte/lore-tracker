@@ -40,6 +40,7 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
   Jedes Werkzeug ruft den `Worker.Jack.Resuemee.Halter` des Laufs.
   """
 
+  alias Worker.Jack.Antwort
   alias Worker.Agent.Werkzeug
   alias Worker.Jack.Resuemee.{Abschluss, Durchsicht, Entwurf, Halter, Lesen, Notizen, Stand}
 
@@ -93,7 +94,113 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
   @spec aus([map()], [String.t()], pid()) :: [Werkzeug.t()]
   def aus(definitionen, namen, halter) do
     defs = Map.new(definitionen, &{&1.name, &1})
-    for name <- namen, do: werkzeug(Map.fetch!(defs, name), halter)
+    gewaehlt = for name <- namen, do: Map.fetch!(defs, name)
+
+    [hilfe(gewaehlt) | for(d <- gewaehlt, do: werkzeug(d, halter))]
+  end
+
+  @doc """
+  Das Werkzeug `hilfe` — die Beschreibung eines Werkzeugs auf Abruf, und ohne
+  Angabe die Liste aller mit ihrem ersten Satz.
+
+  **Warum jeder Lauf es bekommt** (Maintainer, 18.09.2026): Die
+  Beschreibungen tragen die Regeln (`Worker.Jack.Chronik.Werkzeuge` &Co.), und
+  sie stehen nur EINMAL im Gespräch — nach einer Kompaktierung ist der
+  Wortlaut weg, und was das Modell dann noch weiss, ist eine Erinnerung.
+  Fragen ist besser als raten: Ein Probeaufruf kostet eine Ablehnung, und die
+  Wiederholungssperre zählt ihn mit.
+
+  `hilfe` ändert nichts und zählt nie als Wiederholung (`:frei`).
+  """
+  @spec hilfe([map()]) :: Werkzeug.t()
+  def hilfe(definitionen) do
+    namen = Enum.map(definitionen, & &1.name)
+    nach_name = Map.new(definitionen, &{&1.name, &1})
+
+    Werkzeug.neu(
+      name: "hilfe",
+      beschreibung:
+        "Erklärt ein Werkzeug: seine Beschreibung und die Felder, die es erwartet. " <>
+          "Ohne Angabe nennt es alle Werkzeuge dieses Laufs mit ihrem ersten Satz. " <>
+          "Nimm es, wenn du unsicher bist, wie ein Aufruf aussehen muss — das ist " <>
+          "billiger als ein Versuch, der abgelehnt wird. Verfügbar: " <>
+          Enum.join(namen, ", ") <> ".",
+      parameter: %{
+        "type" => "object",
+        "properties" => %{
+          "werkzeug" => %{
+            "type" => "string",
+            "description" => "der Name; ohne Angabe die Übersicht"
+          }
+        }
+      },
+      optional: ["werkzeug"],
+      wiederholung: :frei,
+      ausfuehren: fn argumente -> {:ok, hilfe_text(argumente, nach_name, namen)} end
+    )
+  end
+
+  defp hilfe_text(argumente, nach_name, namen) do
+    case name_aus(argumente) do
+      nil ->
+        Antwort.geordnet([
+          {"werkzeuge", for(n <- namen, do: "#{n} — #{erster_satz(nach_name[n].beschreibung)}")},
+          {"hinweis", "hilfe(werkzeug: \"name\") erklärt eines davon vollständig."}
+        ])
+
+      gesucht ->
+        case nach_name[gesucht] do
+          nil ->
+            Antwort.geordnet([
+              {"fehler", "Ein Werkzeug „#{gesucht}\" gibt es in diesem Lauf nicht."},
+              {"werkzeuge", namen}
+            ])
+
+          d ->
+            Antwort.geordnet([
+              {"werkzeug", d.name},
+              {"beschreibung", d.beschreibung},
+              {"felder", felder_text(d)},
+              {"pflicht", pflicht_text(d)}
+            ])
+        end
+    end
+  end
+
+  defp name_aus(%{"werkzeug" => n}) when is_binary(n) and n != "", do: String.trim(n)
+  defp name_aus(_), do: nil
+
+  defp erster_satz(text) do
+    case String.split(text, ~r/(?<=\.)\s/, parts: 2) do
+      [satz | _] -> satz
+      [] -> text
+    end
+  end
+
+  defp felder_text(d) do
+    props = get_in(d.parameter, ["properties"]) || %{}
+
+    Map.new(props, fn {name, spec} ->
+      {name, Map.get(spec, "description") || typ_text(spec)}
+    end)
+  end
+
+  defp typ_text(%{"type" => "array", "items" => %{"enum" => werte}}),
+    do: "Liste aus: " <> Enum.join(werte, ", ")
+
+  defp typ_text(%{"type" => "array"}), do: "Liste"
+  defp typ_text(%{"enum" => werte}), do: "eines von: " <> Enum.join(werte, ", ")
+  defp typ_text(%{"type" => t}) when is_binary(t), do: t
+  defp typ_text(_), do: "Wert"
+
+  defp pflicht_text(d) do
+    pflicht = get_in(d.parameter, ["required"]) || []
+    optional = Map.get(d, :optional, [])
+
+    %{
+      "pflicht" => pflicht,
+      "optional" => optional
+    }
   end
 
   defp werkzeug(d, halter) do

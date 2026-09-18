@@ -55,11 +55,12 @@ defmodule Worker.Jack.Resuemee.Lesen do
       %{
         name: "fakten",
         beschreibung:
-          "Liest Fakten, portionsweise. Ohne sitzung die Fakten dieser Sitzung " <>
-            "(#{s.sitzung.nummer}), durchnummeriert 1 bis #{length(s.fakten)}; von und bis " <>
-            "sind diese Nummern, der Bereich ist einschließlich. Spalten: ID, Figur, Typ, " <>
-            "Bögen (Art), Zeit, Blöcke, Aussage. Mit sitzung liest du die Fakten einer " <>
-            "früheren Sitzung als Vorgeschichte. Wie groß du den Bereich wählst, entscheidest du.",
+          "Liest Fakten, portionsweise. " <>
+            fakten_umfang(s) <>
+            " von und bis sind diese Nummern, der Bereich ist einschließlich. Spalten: ID, " <>
+            "Figur, Typ, Bögen (Art), Zeit, Blöcke, Aussage. Mit sitzung liest du die Fakten " <>
+            "einer früheren Sitzung als Vorgeschichte. Wie groß du den Bereich wählst, " <>
+            "entscheidest du.",
         parameter:
           objekt(%{
             "sitzung" => zahl("Nummer einer früheren Sitzung; ohne Angabe diese Sitzung"),
@@ -118,10 +119,35 @@ defmodule Worker.Jack.Resuemee.Lesen do
   # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1. Beim
   # Epos-Jack (#1210) die Szenen statt der Gliederung; in seiner Durchsicht
   # (E3) dasselbe Nachschlagen wie beim Resümee.
+  # Der Chronik-Jack sieht als einziger die ganze Kampagne
+  # (`Chronik.Eingabe.alle_fakten/1`). Ohne eigene Klausel las er hier „die
+  # Fakten dieser Sitzung", bekam aber S1-F1..S1-F112 vor den eigenen — und
+  # verbrannte drei Runden mit der Frage, ob das Werkzeug kaputt sei
+  # („the session is 2 but the fact IDs are S1-F…?", S2-Lauf 18.09.2026).
+  # Dieselbe Klasse wie die Chronik-Klauseln von `bloecke`, `block` und
+  # `boegen`; `fakten` war dabei übersehen worden.
+  defp fakten_umfang(%Stand{art: :chronik} = s),
+    do:
+      "Ohne sitzung ALLE Fakten der Kampagne — von der ersten Sitzung bis zur " <>
+        "laufenden, durchnummeriert 1 bis #{length(s.fakten)}. Die ID nennt die " <>
+        "Sitzung: S1-F12 ist der zwölfte Fakt der ersten Sitzung."
+
+  defp fakten_umfang(%Stand{} = s),
+    do:
+      "Ohne sitzung die Fakten dieser Sitzung (#{s.sitzung.nummer}), " <>
+        "durchnummeriert 1 bis #{length(s.fakten)}."
+
   defp boegen_zweck(%Stand{art: :epos, lauf: :durchsicht}),
     do: "Zum Nachschlagen, zu welchem Bogen ein Fakt gehört."
 
   defp boegen_zweck(%Stand{art: :epos}), do: "Sie sind die Grundlage deiner Szenen."
+
+  # Der Chronik-Jack (#1211) hat kein fertig(ausgelassen) und schreibt kein
+  # Resümee — ohne eigene Klausel bekäme er hier eine Regel des Resümee-Jack
+  # genannt (Fund des Reviews vom 18.09.2026).
+  defp boegen_zweck(%Stand{art: :chronik}),
+    do:
+      "Ein Bogen kann mehrere Phasen der Chronik umfassen; er ist ein Ausgangspunkt, keine Phase."
 
   defp boegen_zweck(%Stand{lauf: :schreiben}),
     do:
@@ -318,6 +344,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
             "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Deine Szenen nennen " <>
             "diese Titel, wie sie hier stehen."
+
+        {:chronik, _} ->
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Ein Bogen kann " <>
+            "mehrere Phasen der Chronik umfassen."
 
         {_, :schreiben} ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder kommt " <>

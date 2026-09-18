@@ -206,7 +206,13 @@ defmodule HubWeb.CampaignLive.Laufband do
     "epos_ueberblick" => {"epos", "Überblick"},
     "render_epos" => {"epos", "Schreiben"},
     "epos_durchsicht" => {"epos", "Durchsicht"},
-    "timeline" => {"chronik", nil}
+    # J7 (#1211): die drei Läufe des Chronik-Jack. Ohne die beiden äusseren
+    # stand im Band „Chronik: Überblick — <Spaltenname> — Chronik: Durchsicht",
+    # und der eigene Name der Spalte sah aus wie ein Fremdkörper zwischen zwei
+    # fremden Stufen (Tom, 18.09.2026, an der Teststage gesehen).
+    "chronik_ueberblick" => {"chronik", "Überblick"},
+    "timeline" => {"chronik", "Schreiben"},
+    "chronik_durchsicht" => {"chronik", "Durchsicht"}
   }
 
   @doc """
@@ -216,12 +222,18 @@ defmodule HubWeb.CampaignLive.Laufband do
   „<Überschrift>: Überblick“, „…: Schreiben“, „…: Durchsicht“ — heißt die
   Spalte „Run-Report“, dann „Run-Report: Überblick“. Ebenso die drei Läufe
   des Epos-Jack (J6, #1210) nach der Epos-Spalte: „Geschichte: Überblick“ …
+  und die des Chronik-Jack (J7, #1211) nach der Chronik-Spalte.
   Alle anderen Stufen tragen den Titel aus `Shared.PipelineStufen`.
+
+  Eine Stufe ohne eigenen Lauf-Namen gibt es seit #1211 nicht mehr — bis
+  dahin war `timeline` die eine Chronik-Stufe und hiess nur nach ihrer
+  Spalte. Die Klausel dafür ist entfernt statt vorsorglich stehen zu
+  bleiben: sie war unerreichbar und wurde zur Typwarnung, also zum roten
+  CI-Schritt.
   """
   def titel(stufe, campaign) do
     case Map.get(@stil_stufe, stufe["name"]) do
       nil -> stufe["titel"]
-      {stil, nil} -> HubWeb.CampaignLive.Components.output_label(campaign, stil)
       {stil, lauf} -> "#{HubWeb.CampaignLive.Components.output_label(campaign, stil)}: #{lauf}"
     end
   end

@@ -215,61 +215,23 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
-  # ─── Review-Queue-Fakt-Korrektur (Issue #724 Slice F) ───────────
-
-  def fact_date_edit_start(socket, sid, fid),
-    do: {:noreply, assign(socket, fact_date_editing: {sid, fid})}
-
-  def fact_date_edit_cancel(socket),
-    do: {:noreply, assign(socket, fact_date_editing: nil)}
-
-  # `extraction_event_id` kommt aus der Review-Fakt-Serialisierung (hidden
-  # Form-Feld, s. heex) — der Read-Merge im Worker wendet den Override nur an,
-  # wenn diese Generation zur AKTUELL gespeicherten session_facts-Row passt
-  # (Design-Fix gegen Cross-Contamination nach einem Regenerate: Fakt-IDs sind
-  # rein positional, nicht run-eindeutig).
-  def fact_date_edit_save(socket, sid, fid, extraction_event_id, raw) do
-    user = socket.assigns.perm_user
-    campaign = socket.assigns.campaign
-
-    if HubWeb.Permissions.can?(user, :set_fact_date, campaign) do
-      Publisher.publish(socket, %{
-        "kind" => Events.session_fact_date_set(),
-        "session_id" => sid,
-        "campaign_id" => socket.assigns.campaign_id,
-        "fact_id" => fid,
-        "extraction_event_id" => extraction_event_id,
-        "in_game_date_raw" => String.slice(raw || "", 0, 200),
-        "set_by" => user.discord_id
-      })
-
-      {:noreply, assign(socket, fact_date_editing: nil)}
-    else
-      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
-    end
-  end
-
-  def fact_dismiss(socket, sid, fid, extraction_event_id) do
-    user = socket.assigns.perm_user
-    campaign = socket.assigns.campaign
-
-    if HubWeb.Permissions.can?(user, :set_fact_date, campaign) do
-      Publisher.publish(socket, %{
-        "kind" => Events.session_fact_date_set(),
-        "session_id" => sid,
-        "campaign_id" => socket.assigns.campaign_id,
-        "fact_id" => fid,
-        "extraction_event_id" => extraction_event_id,
-        "in_game_date_raw" => "",
-        "dismissed" => true,
-        "set_by" => user.discord_id
-      })
-
-      {:noreply, socket}
-    else
-      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
-    end
-  end
+  # Die Review-Queue-Fakt-Korrektur (#724 Slice F) stand hier:
+  # `fact_date_edit_start/3`, `fact_date_edit_cancel/1`,
+  # `fact_date_edit_save/5` und `fact_dismiss/4`. Sie schrieben
+  # `SessionFactDateSet` — ein Datum je Fakt, oder das dauerhafte Ausblenden.
+  #
+  # Mit J7 (#1211) gibt es die Kategorie nicht mehr, für die sie gebaut waren:
+  # Der deterministische Zeitstrahl sortierte aus, was er nicht datieren
+  # konnte, und die Liste war der Ort, das von Hand nachzuholen. Jetzt
+  # entscheidet der Chronik-Jack, was einen Eintrag bekommt, und gibt die
+  # Reihenfolge an; ein Rechner, der etwas nicht platzieren kann, kommt darin
+  # nicht mehr vor.
+  #
+  # Ereignis, Fold und Tabelle (`worker_session_fact_overrides`) BLEIBEN
+  # lesbar — gesetzte Daten alter Sitzungen verschwinden nicht, und der
+  # Chronik-Jack darf sie als harten Anker nutzen. Nur Producer und Anzeige
+  # sind weg. Das Ausblenden eines Fakts kann die Fakten-Spalte (#916,
+  # `curation_dismissed`).
 
   # ─── Offene Fäden / Handlungsbögen (Issue #836, Slice D2) ───────
   #

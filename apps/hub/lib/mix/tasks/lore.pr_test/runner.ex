@@ -552,7 +552,15 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       {"LORE_WORKER_SETUP_PORT", "#{4090 + idx}"},
       # Issue #403: Sidecars (uvicorn) tragen diesen Tag als argv0, damit sie
       # in `ps`/`pgrep` ihrem Issue zuordenbar sind (Worker.Sidecar liest ihn).
-      {"LORE_PRTEST_TAG", tag}
+      {"LORE_PRTEST_TAG", tag},
+      # Laufsicht je Stage statt des geteilten 8099 (#1211): Stage-Port + 10,
+      # je weiterer Worker eine Dekade darueber (4001 -> 4011/4021). Der
+      # Versatz von 10 haelt Abstand zu den Stage-Ports selbst (4001..4007),
+      # die Dekade haelt zwei Worker DERSELBEN Stage auseinander, ohne in den
+      # Bereich der Nachbar-Stage zu laufen. Ohne das teilen sich Stage und
+      # worker_prod den Port 8099 — der Verlierer laeuft ohne Laufsicht
+      # weiter, und sein Denken ist weg (s. runtime.exs).
+      {"LORE_JACK_SICHT_PORT", "#{port + 10 + idx * 10}"}
     ] ++ if(discord?, do: [], else: [{"DISCORD_BOT_TOKEN", @sentinel_token}])
   end
 

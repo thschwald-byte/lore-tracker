@@ -154,7 +154,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:chronik_editing, nil)
     |> assign(:chronik_draft, %{})
     |> assign(:session_date_editing, nil)
-    |> assign(:fact_date_editing, nil)
     |> assign(:utterance_editing, nil)
     |> assign(:utterance_draft, "")
     |> assign(:utterance_adding, nil)
@@ -170,10 +169,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Issue #985 Slice 1: Discord-Config-Tab (Vorbereitung Voice-Capture-Bot).
     |> assign(:can_discord_config?, false)
     |> assign(:discord_config, %{})
-    |> assign(:review_facts, [])
-    # Issue #1204: die Review-Liste lädt erst beim Aufklappen (`ReviewListe`).
-    |> assign(:review_facts_count, 0)
-    |> assign(:review_offen?, false)
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
     # #905: Arc-Review-Register (verwaiste + gemergte Bögen), default leer/zu.
@@ -705,9 +700,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
         # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config fürs Config-
         # Formular. Keine funktionale Wirkung (der Bot existiert noch nicht).
         |> assign(:discord_config, snap["discord_config"] || %{})
-        # Issue #746: Review-Queue — unplatzierbare Fakten. Seit #1204 nur die
-        # Zahl; die Liste lädt `ReviewListe` beim Aufklappen.
-        |> HubWeb.CampaignLive.ReviewListe.aus_haupt_snapshot(snap)
+        # Issue #746 hatte hier die Review-Queue (unplatzierbare Fakten). Mit
+        # J7 (#1211) gibt es sie nicht mehr: Der Chronik-Jack entscheidet
+        # selbst, was einen Eintrag bekommt — ein Rechner, der etwas nicht
+        # datieren kann, kommt nicht mehr vor.
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
         # #905: Arc-Review (Alt-Worker ohne Key → leeres Register).

@@ -59,15 +59,18 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 1} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-md-1")
-      # Schema (13-Tupel seit #1092): {table, id, campaign_id, in_game_date, label,
-      #   summary, session_id, source_refs, markdown_body, in_game_day, precision,
-      #   generation, source_pos}. markdown_body bleibt Index 8 (neue Felder
-      #   trailing) — genau das pinnt dieser Test.
-      assert tuple_size(row) == 13
+      # Schema: {table, id, campaign_id, in_game_date, label, summary,
+      #   session_id, source_refs, markdown_body, …}. markdown_body bleibt
+      #   Index 8 — genau das pinnt dieser Test, und zwar auf Dauer: neue
+      #   Spalten hängen TRAILING an (#724, #698, #1092, zuletzt die
+      #   Phasen-Felder aus #1211), die vorderen Positionen verschieben sich
+      #   nie. Deshalb `>=` statt einer festen Arität; eine Gleichheitsprüfung
+      #   pinnte nicht die Aussage, sondern den Zeitpunkt.
+      assert tuple_size(row) >= 13
       assert elem(row, 8) == md
     end
 
-    test "ohne markdown_body im Payload → nil im 13-Tupel (Backward-Compat)" do
+    test "ohne markdown_body im Payload → nil an Index 8 (Backward-Compat)" do
       ev =
         event(
           "ChronikEntryChanged",
@@ -78,7 +81,7 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 2} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-bc-1")
-      assert tuple_size(row) == 13
+      assert tuple_size(row) >= 13
       assert elem(row, 8) == nil
       # Issue #724: neue Trailing-Felder in_game_day/precision → nil bei Events
       # ohne diese Keys (BC).

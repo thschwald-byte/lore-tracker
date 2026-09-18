@@ -105,111 +105,19 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     assert has_element?(lv, "[phx-click='session_date_edit_start']")
   end
 
-  describe "Review-Queue (#746)" do
-    @rf [
-      %{
-        "id" => "f1",
-        "session_id" => "s-1",
-        "extraction_event_id" => "ext-01",
-        "claim" => "Kaira verlor ihren Bruder",
-        "character_alias" => "Kaira",
-        "narration_time" => "flashback"
-      }
-    ]
-
-    defp gm(conn, rf) do
-      mount_as(conn, [],
-        viewer_role: "spielleiter",
-        members: [Fixtures.member("did-sp", "spielleiter")],
-        review_facts: rf
-      )
-    end
-
-    test "GM sieht das Review-Panel mit unplatzierbaren Fakten + Erzählzeit-Marker", %{conn: conn} do
-      html = conn |> gm(@rf) |> aufklappen() |> render()
-
-      assert html =~ "ohne Zeitstrahl-Datum"
-      assert html =~ "Kaira verlor ihren Bruder"
-      assert html =~ "⏮"
-    end
-
-    # Issue #1204: zugeklappt steht nur die Zahl da — gezeichnet wurde die Liste
-    # vorher trotzdem vollständig (an seattleV4 567 Einträge im zugeklappten
-    # <details>).
-    test "zugeklappt: nur die Zahl im Kopf, die Liste wird nicht gezeichnet", %{conn: conn} do
-      lv = gm(conn, @rf)
-      html = render(lv)
-
-      assert html =~ "1 Fakt(en) ohne Zeitstrahl-Datum"
-      refute html =~ "Kaira verlor ihren Bruder"
-      refute has_element?(lv, "[phx-click='fact_date_edit_start']")
-    end
-
-    test "Zuklappen verwirft die Liste wieder", %{conn: conn} do
-      lv = conn |> gm(@rf) |> aufklappen()
-      assert render(lv) =~ "Kaira verlor ihren Bruder"
-
-      render_click(lv, "fact_review_toggle", %{})
-      html = render(lv)
-      refute html =~ "Kaira verlor ihren Bruder"
-      assert html =~ "1 Fakt(en) ohne Zeitstrahl-Datum"
-    end
-
-    test "Spieler-Member sieht das Review-Panel (seit #1082)", %{conn: conn} do
-      html = conn |> mount_as([campaign_role: :spieler], review_facts: @rf) |> render()
-      assert html =~ "ohne Zeitstrahl-Datum"
-    end
-
-    test "leere Review-Queue → kein Panel", %{conn: conn} do
-      html = conn |> gm([]) |> render()
-
-      refute html =~ "ohne Zeitstrahl-Datum"
-    end
-
-    test "GM sieht ✎/✕ pro Fakt; Klick auf ✎ öffnet die Datum-Form", %{conn: conn} do
-      lv = conn |> gm(@rf) |> aufklappen()
-
-      assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
-      assert has_element?(lv, "[phx-click='fact_dismiss'][phx-value-fact='f1']")
-
-      html =
-        lv
-        |> element("[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
-        |> render_click()
-
-      assert html =~ "fact_date_edit_save"
-      assert html =~ ~s(name="in_game_date")
-      assert html =~ ~s(value="ext-01")
-    end
-
-    test "Abbrechen der Datum-Form schließt sie wieder (State geclärt)", %{conn: conn} do
-      lv = conn |> gm(@rf) |> aufklappen()
-
-      lv |> element("[phx-click='fact_date_edit_start'][phx-value-fact='f1']") |> render_click()
-      assert has_element?(lv, "form[phx-submit='fact_date_edit_save']")
-
-      lv |> element("[phx-click='fact_date_edit_cancel']") |> render_click()
-      refute has_element?(lv, "form[phx-submit='fact_date_edit_save']")
-      assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
-    end
-
-    test "Spieler-Member sieht ✎ und ✕ (seit #1082)", %{conn: conn} do
-      lv = conn |> mount_as([campaign_role: :spieler], review_facts: @rf) |> aufklappen()
-      assert has_element?(lv, "[phx-click='fact_date_edit_start']")
-      assert has_element?(lv, "[phx-click='fact_dismiss']")
-    end
-
-    test "date_parse_error-Flag zeigt den Nicht-auflösbar-Hinweis", %{conn: conn} do
-      rf_with_error = [
-        Map.merge(hd(@rf), %{"date_parse_error" => true, "in_game_date" => "32.13.1920"})
-      ]
-
-      html = conn |> gm(rf_with_error) |> aufklappen() |> render()
-
-      assert html =~ "nicht auflösbar"
-      assert html =~ "32.13.1920"
-    end
-  end
+  # Der Block „Review-Queue (#746)" stand hier mit sechs Tests: die
+  # zugeklappte Liste zeichnet nur die Zahl, Member und GM sehen ✎ und ✕, das
+  # date_parse_error-Flag zeigt seinen Hinweis, Abbrechen schließt die Form.
+  #
+  # Mit J7 (#1211) ist die Review-Queue abgebaut. Sie sammelte, was der
+  # deterministische Zeitstrahl nicht platzieren konnte — eine Kategorie, die
+  # es nicht mehr gibt: Der Chronik-Jack entscheidet selbst, was einen Eintrag
+  # bekommt, und gibt die Reihenfolge an. Das Ausblenden eines Fakts kann die
+  # Fakten-Spalte (#916, `curation_dismissed`).
+  #
+  # Das Ereignis `SessionFactDateSet`, sein Fold und die Tabelle bleiben
+  # lesbar — gesetzte Daten alter Sitzungen verschwinden nicht, und der
+  # Chronik-Jack darf sie als harten Anker nutzen.
 
   describe "Kalender-Config (Slice F2)" do
     alias HubWeb.CampaignLive.StageEdits

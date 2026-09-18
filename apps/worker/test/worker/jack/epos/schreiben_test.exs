@@ -360,14 +360,14 @@ defmodule Worker.Jack.Epos.SchreibenTest do
       assert j(a)["zahlen"] == %{"absaetze" => 1}
     end
 
-    test "Zahlenabgleich: welche Zahl nicht stimmt, ohne den richtigen Wert; der dritte geht durch" do
+    test "Zahlenabgleich: welche Zahl nicht stimmt und wie sie gezählt ist; der dritte geht durch" do
       s = mit_regen()
 
       {s, {:error, a}} = fertig(s, 3)
       a = j(a)
 
       assert a["abweichung"] == [
-               "absaetze: du sagst 3 — das stimmt nicht mit der Buchhaltung überein"
+               "absaetze: du sagst 3 — gezählt sind 1"
              ]
 
       refute Map.has_key?(a, "zahlen")

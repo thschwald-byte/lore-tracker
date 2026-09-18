@@ -42,6 +42,17 @@ if config_env() != :prod do
     config :worker, setup_port: setup_port
   end
 
+  # Laufsicht-Port je BEAM (#1211). Ohne ihn nehmen worker_prod und jede
+  # Teststage denselben Port 8099; der zweite bekommt ihn nicht, die Laufsicht
+  # startet als blosse WARNUNG nicht — und weil im Betrieb niemand ein
+  # Protokoll auf Platte schreibt, ist das Denken dieses Laufs unwiederbringlich
+  # weg. Am 18.09.2026 lief ein ganzer S2-Lauf so: die Teststage arbeitete
+  # blind, waehrend auf 8099 die LEERE Sicht von worker_prod antwortete und
+  # Beobachtbarkeit vortaeuschte.
+  if sicht_port = env!("LORE_JACK_SICHT_PORT", :integer, nil) do
+    config :worker, jack_sicht_port: sicht_port
+  end
+
   # Override Hub-Endpoint-Port in dev — used when running multiple hub
   # instances side-by-side (PR-test workflow). `dev.exs` hardcodes 4000 for
   # the default `mix phx.server`; PORT=4001 etc. shifts a second instance.

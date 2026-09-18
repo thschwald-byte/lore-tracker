@@ -233,24 +233,33 @@ defmodule Worker.Schema.Builder do
   """
   def chronik_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
-    {
-      S.chronik_entries(),
-      id,
-      campaign_id,
-      Keyword.get(attrs, :in_game_date, "Tag 1"),
-      Keyword.get(attrs, :label, "Event"),
-      Keyword.get(attrs, :summary, "Zusammenfassung"),
-      Keyword.get(attrs, :session_id),
-      Keyword.get(attrs, :source_refs, []),
-      Keyword.get(attrs, :markdown_body),
-      # Issue #724: in_game_day (kanonischer Tageszähler) + precision, trailing.
-      Keyword.get(attrs, :in_game_day),
-      Keyword.get(attrs, :precision),
-      # Issue #698: generation (Clear-Watermark-Vergleich), trailing.
-      Keyword.get(attrs, :generation),
-      # Issue #1092: source_pos (Sekundärschlüssel innerhalb eines Tages).
-      Keyword.get(attrs, :source_pos)
-    }
+    # Issue #1211: die Gestalt der Row steht seitdem an EINER Stelle
+    # (`Worker.Materializer.Chronik.row/2`) — hier werden nur noch die
+    # Test-Vorgaben gefüllt. Vorher baute dieser Builder das Tupel selbst
+    # nach, und als die Tabelle sechs Spalten bekam, brachen 18 Tests mit
+    # `{:aborted, {:bad_type, …}}`; die Meldung zeigte auf die Schreibstelle
+    # und nicht auf den Grund.
+    Worker.Materializer.Chronik.row(%{
+      "id" => id,
+      "campaign_id" => campaign_id,
+      "in_game_date" => Keyword.get(attrs, :in_game_date, "Tag 1"),
+      "label" => Keyword.get(attrs, :label, "Event"),
+      "summary" => Keyword.get(attrs, :summary, "Zusammenfassung"),
+      "session_id" => Keyword.get(attrs, :session_id),
+      "source_refs" => Keyword.get(attrs, :source_refs, []),
+      "markdown_body" => Keyword.get(attrs, :markdown_body),
+      "in_game_day" => Keyword.get(attrs, :in_game_day),
+      "precision" => Keyword.get(attrs, :precision),
+      "generation" => Keyword.get(attrs, :generation),
+      "source_pos" => Keyword.get(attrs, :source_pos),
+      # Issue #1211 (J7): die Phasen-Felder.
+      "wichtigkeit" => Keyword.get(attrs, :wichtigkeit),
+      "fakt_ids" => Keyword.get(attrs, :fakt_ids),
+      "zeit_bezug" => Keyword.get(attrs, :zeit_bezug),
+      "rang" => Keyword.get(attrs, :rang),
+      "in_game_day_bis" => Keyword.get(attrs, :in_game_day_bis),
+      "sitzungen" => Keyword.get(attrs, :sitzungen)
+    })
   end
 
   @doc """

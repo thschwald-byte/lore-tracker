@@ -356,11 +356,13 @@ defmodule Worker.RepoTimelinePersistenceTest do
       assert {:applied, 1} = Materializer.apply_event(with_fields)
 
       row = :mnesia.dirty_read(S.chronik_entries(), "e-day") |> List.first()
-      assert tuple_size(row) == 13
-      assert elem(row, 9) == 201_480
-      assert elem(row, 10) == "day"
-      # Issue #1092: source_pos trailing (Index 12, hinter generation).
-      assert elem(row, 12) == 17
+      # Issue #1211: über `aus_row/1` geprüft statt über Tupel-Stellen — die
+      # Aussage ist „diese Felder kommen an", nicht „sie stehen an Index 9".
+      # Eine neue Spalte darf diesen Test nicht brechen.
+      chr = Worker.Materializer.Chronik.aus_row(row)
+      assert chr["in_game_day"] == 201_480
+      assert chr["precision"] == "day"
+      assert chr["source_pos"] == 17
 
       # Event ohne die Keys → nil (Backward-Compat, :chain-Pfad).
       bc =
@@ -380,9 +382,10 @@ defmodule Worker.RepoTimelinePersistenceTest do
 
       assert {:applied, 2} = Materializer.apply_event(bc)
       bc_row = :mnesia.dirty_read(S.chronik_entries(), "e-bc") |> List.first()
-      assert elem(bc_row, 9) == nil
-      assert elem(bc_row, 10) == nil
-      assert elem(bc_row, 12) == nil
+      bc = Worker.Materializer.Chronik.aus_row(bc_row)
+      assert bc["in_game_day"] == nil
+      assert bc["precision"] == nil
+      assert bc["source_pos"] == nil
     end
   end
 end

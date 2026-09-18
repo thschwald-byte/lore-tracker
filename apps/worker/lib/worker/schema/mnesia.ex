@@ -666,6 +666,9 @@ defmodule Worker.Schema.Mnesia do
     # Issue #1092: MUSS nach add_generation! laufen — source_pos ist die 12.
     # Spalte, hinter generation.
     :ok = Migrations.Chronik.migrate_chronik_entries_add_source_pos!()
+    # Issue #1211 (J7): die Phasen-Felder. MUSS nach add_source_pos! laufen —
+    # sie hängen trailing an der 13. Spalte an.
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_phasen!()
 
     # Issue #698 (I7-Bucket-D): Clear-Watermark pro Session. clear_key = max
     # event_id (UUIDv7) der ChronikClearedForSession-Events dieser Session.

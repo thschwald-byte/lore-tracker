@@ -187,6 +187,77 @@ defmodule Worker.Schema.Migrations.Chronik do
     end
   end
 
+  @doc """
+  Issue #1211 (J7): die Chronik wird zur Zeitleiste aus **Phasen**, und dafür
+  braucht ein Eintrag fünf Felder mehr.
+
+  **Warum das nötig ist.** Bis hierher war ein Chronik-Eintrag ein datierter
+  Fakt einer Sitzung. Künftig ist er ein Abschnitt der Handlung — ein ganzer
+  Auftrag von der Annahme bis zur Abrechnung — und der spannt regelmäßig über
+  Sitzungen und über mehrere In-Game-Tage. Beides passt nicht in das alte
+  Modell:
+
+    * `in_game_day` ist **ein** Tag. Eine Phase hat Beginn und Ende, deshalb
+      `in_game_day_bis` daneben. Bleibt es `nil`, ist der Eintrag ein
+      Zeitpunkt und kein Zeitraum — das ist der Normalfall für die
+      Schlüsselszenen (ein Tod, ein Kriegsausbruch).
+    * `session_id` bleibt für Bestandszeilen lesbar, verliert aber seine
+      Rolle: `sitzungen` trägt alle berührten. Die Spalte zu löschen wäre der
+      falsche Weg — der Fold alter Events schreibt sie weiter, und der
+      Kapitelkopf des Epos liest sie noch.
+    * `wichtigkeit` unterscheidet `"phase"` von `"schluesselszene"`. Ohne das
+      Feld liesse sich die Regel „nur Massives bekommt einen eigenen Eintrag"
+      nicht prüfen und im Reader nicht zeigen.
+    * `fakt_ids` ist der Beleg: welche Fakten in dieser Phase aufgehen. Die
+      `source_refs` bleiben daneben bestehen — sie zeigen auf Blöcke, nicht
+      auf Fakten, und tragen den Lücken-Marker.
+    * `zeit_bezug` hält, was Jack über die Reihenfolge gesagt hat
+      (`nach`/`vor`/`gleichzeitig_mit`/`absolut`/`isoliert`). Der `rang` ist
+      das Ergebnis, das `Worker.Jack.Chronik.Ordnung` daraus rechnet —
+      gespeichert, weil sonst jeder Lesevorgang den ganzen Graphen neu
+      sortieren müsste.
+
+  Alle fünf sind `nil` für Bestandszeilen. Ein Eintrag ohne `rang` sortiert
+  wie bisher über `in_game_day` und `source_pos`; die Chronik einer Kampagne,
+  die nie durch den Chronik-Jack gelaufen ist, sieht damit unverändert aus.
+  """
+  def migrate_chronik_entries_add_phasen! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :wichtigkeit in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs,
+        :markdown_body,
+        :in_game_day,
+        :precision,
+        :generation,
+        :source_pos,
+        :wichtigkeit,
+        :fakt_ids,
+        :zeit_bezug,
+        :rang,
+        :in_game_day_bis,
+        :sitzungen
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen, pos} ->
+        {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen, pos, nil, nil,
+         nil, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
   # Issue #1092: trailing `precision` an session_anchors — die Genauigkeit der
   # GM-Angabe, abgeleitet aus dem Roh-String (`Resolver.infer_precision/2`).
   #

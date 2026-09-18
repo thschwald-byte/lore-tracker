@@ -169,7 +169,8 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
 
       {:ok, h} = Halter.start_link(s)
       w = Map.new(Werkzeuge.fuer(h), &{&1.name, &1})
-      assert Enum.sort(Map.keys(w)) == Enum.sort(Werkzeuge.namen(s))
+      # `hilfe` kommt aus `Resuemee.Werkzeuge.aus/3` und gilt für jeden Jack.
+      assert Enum.sort(Map.keys(w)) == Enum.sort(["hilfe" | Werkzeuge.namen(s)])
 
       assert w["notiz"].parameter["required"] == ["eintraege"]
       items = w["notiz"].parameter["properties"]["eintraege"]["items"]
@@ -416,17 +417,20 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
       assert Abschluss.hindernisse(s) == []
     end
 
-    test "Zahlenabgleich: welche Zahl nicht stimmt, ohne den richtigen Wert; der dritte geht durch" do
+    test "Zahlenabgleich: welche Zahl nicht stimmt und wie sie gezählt ist; der dritte geht durch" do
       s = bereit()
 
       {s, {:error, a}} = fertig(s, 4, 3)
       a = j(a)
 
       assert a["abweichung"] == [
-               "fakten: du sagst 4 — das stimmt nicht mit der Buchhaltung überein"
+               "fakten: du sagst 4 — gezählt sind 5"
              ]
 
-      refute Jason.encode!(a) =~ "5"
+      # Seit 18.09.2026 nennt die Ablehnung die gezählte Zahl: die Arbeit ist
+      # durch, nur der Zähler stimmt nicht — sie zu verschweigen kostete nur
+      # Runden (an einem echten Chronik-Lauf gesehen).
+      assert Jason.encode!(a) =~ "gezählt sind 5"
 
       {s, {:error, _}} = fertig(s, 4, 3)
       {s, {:halt, a}} = fertig(s, 4, 3)

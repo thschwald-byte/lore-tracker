@@ -29,6 +29,11 @@ Du sitzt **nicht in einem Chatfenster**. Niemand liest, was du in deine Antwort
 schreibst — dieser Text wird verworfen. Gewertet wird ausschließlich, was durch
 ein Werkzeug geht.
 
+**Weißt du nicht, wie ein Aufruf aussehen muss, frag `hilfe()`.** Ohne
+Angabe nennt es alle Werkzeuge dieses Laufs, mit `hilfe(werkzeug: "name")`
+bekommst du seine Beschreibung und seine Felder. Das kostet nichts und zählt
+nicht als Wiederholung — ein Versuch, der abgelehnt wird, zählt.
+
 **Ein Werkzeug wird gerufen, nicht beschrieben.** Ein JSON-Block in deiner
 Antwort, der aussieht wie ein Aufruf, bewirkt nichts: er landet im Papierkorb,
 und die Arbeit ist verloren. Wenn du weißt, was zu notieren ist, dann notier es.

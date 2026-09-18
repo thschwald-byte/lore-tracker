@@ -715,16 +715,19 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       assert grund =~ "für „#{@salz}“ fehlt der Grund"
     end
 
-    test "falsche Zahlen: die Ablehnung verrät die richtigen nicht, der dritte Versuch geht durch" do
+    test "falsche Zahlen: die Ablehnung NENNT die gezählten, der dritte Versuch geht durch" do
       s = geschrieben()
 
       {s, {:error, a}} = fertig(s, 1, 3)
 
       assert m(a)["abweichung"] == [
-               "saetze: du sagst 3 — das stimmt nicht mit der Buchhaltung überein"
+               "saetze: du sagst 3 — gezählt sind 2"
              ]
 
-      refute Jason.encode!(a) =~ "2"
+      # Seit 18.09.2026 nennt die Ablehnung die gezählte Zahl: die Arbeit ist
+      # durch, nur der Zähler stimmt nicht — sie zu verschweigen kostete nur
+      # Runden (an einem echten Chronik-Lauf gesehen).
+      assert Jason.encode!(a) =~ "gezählt sind 2"
 
       {s, {:error, _}} = fertig(s, 1, 3)
       {s, {:halt, a}} = fertig(s, 1, 3)

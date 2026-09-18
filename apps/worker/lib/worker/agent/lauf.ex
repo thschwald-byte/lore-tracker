@@ -144,6 +144,11 @@ defmodule Worker.Agent.Lauf do
                 ohne_aufruf: 0,
                 kompaktierungen: 0,
                 abbruch: nil,
+                # Wie oft ein Werkzeug an sich selbst gescheitert ist, je Name
+                # (`Worker.Agent.Aufruf`): ein innerer Fehler ist kein
+                # Hindernis, und nach dem Deckel endet der Lauf, statt ihn in
+                # die Wiederholung zu schicken.
+                innere_fehler: %{},
                 nutzung: %{eingabe: 0, ausgabe: 0}
               ]
 

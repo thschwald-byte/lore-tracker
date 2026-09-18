@@ -1,255 +1,50 @@
 defmodule Worker.Recording.PipelineTimelineRepublishTest do
   @moduledoc """
-  Issue #724 Slice F: `Pipeline.republish_timeline_for_session/1` — der
-  deterministische (kein LLM) Zeitstrahl-Republish nach einer GM-Korrektur in
-  der Review-Queue, plus der Author-Worker-Trigger (`handle_info` auf
-  `SessionFactDateSet`).
+  Issue #1211 (J7): der deterministische Zeitstrahl-Republish ist
+  **stillgelegt** — und dieser Wächter hält fest, dass das Absicht war.
 
-  Abgedeckt:
-  - Datierter, verifizierter Fakt landet im Zeitstrahl.
-  - Doppel-Lauf ist idempotent (#698-Watermark, keine Duplikate).
-  - Fehlende Extraktion → `{:error, :no_facts}`, bestehende Chronik bleibt
-    unangetastet (kein Irrläufer-Wipe).
-  - Dismisster, aber datierter Fakt taucht NICHT im Zeitstrahl auf (Design D
-    — `dismissed` schließt auch aus dem Republish-Build aus, nicht nur aus
-    der Review-Anzeige).
-  - Election-Gate (Muster `pipeline_election_test.exs`): nur der Author-
-    Worker triggert; kein Skip bei `dismissed` (Republish läuft trotzdem —
-    nachgewiesen über den `pipeline_status`-Broadcast von `with_status`, der
-    unabhängig vom Chronik-Ergebnis feuert).
+  Was hier bis #1211 geprüft wurde (#724 Slice F): `republish_timeline_for_session/1`
+  baute nach einer Datumskorrektur in der Review-Queue die Chronik einer
+  Sitzung neu — datierter Fakt landet im Zeitstrahl, Doppel-Lauf idempotent
+  über den #698-Watermark, fehlende Extraktion ohne Wipe, `dismissed`
+  ausgeschlossen, Election-Gate.
+
+  **Warum das weg ist.** Die Chronik schreibt seit J7 der Chronik-Jack:
+  gebündelte Phasen über Sitzungsgrenzen, Reihenfolge statt gerechneter Tage.
+  Einen deterministischen Weg zurück gibt es nicht mehr — und ein Modelllauf
+  ist nichts, was man als Nebenwirkung einer Kuration startet (der
+  Resümee-Jack brauchte auf der Teststage 10 bis 72 Minuten, und eine
+  Kuration ist ein Batch-Vorgang). Die Review-Liste, die diesen Pfad
+  auslöste, entfällt mit demselben Ticket.
+
+  **Die ehrliche Folge steht im Code und hier:** Nach einer Lücken-Kuration
+  oder einer Neu-Extraktion ziehen die Fakten sofort nach, die Chronik erst
+  beim nächsten regulären Pipeline-Lauf. Bis dahin kann sie Fakten zitieren,
+  die inzwischen anders lauten.
   """
 
-  use ExUnit.Case, async: false
-
-  import ExUnit.CaptureLog
-  import Worker.TestHelper
+  use ExUnit.Case, async: true
 
   alias Worker.Recording.Pipeline
-  alias Worker.Repo
-  alias Worker.Schema.Builder
-  alias Worker.Schema.Mnesia, as: S
 
-  @cid "camp-724-republish"
-  @sid "sess-724-republish"
-  @ext "ext-01"
-
-  setup do
-    clear_all_tables!()
-    mat = ensure_materializer!()
-    on_exit(fn -> if mat && Process.alive?(mat), do: Process.exit(mat, :kill) end)
-
-    Builder.write!(Builder.campaign(@cid))
-    Builder.write!(Builder.session(@sid, @cid, number: 1))
-    :ok
+  test "der Republish tut nichts mehr und sagt :ok" do
+    # Kein Repo-Zugriff, keine Ereignisse: die Funktion ist ein Stummel, damit
+    # ihre drei Aufrufer in `Pipeline.Dirty` nicht ins Leere greifen.
+    assert Pipeline.republish_timeline_for_session("beliebige-session") == :ok
   end
 
-  defp fact(id, opts \\ []) do
-    %{
-      "id" => id,
-      "claim" => "Claim #{id}",
-      "entity_id" => "e",
-      "character_alias" => "Figur",
-      # Issue #911/#958: Chronik-kind-Filter — ohne Thread-Label würde der
-      # Fakt jetzt aus der Chronik fallen (Repo.filter_arc_kind/2). Default-
-      # kind eines neuen Labels ist "arc" (keine Registry/Override nötig).
-      "thread" => Keyword.get(opts, :thread, "der Testbogen"),
-      "source_refs" => ["u-#{id}"],
-      "verified?" => Keyword.get(opts, :verified?, true),
-      "in_game_date" => Keyword.get(opts, :in_game_date, "1888")
-    }
-  end
+  test "der alte Pfad ist aus der Pipeline verschwunden" do
+    # Quelltext-Wächter: `Zeit.publiziere/3` rechnete aus jedem verifizierten
+    # Fakt einen datierten Eintrag. Käme der Aufruf zurück, entstünde neben
+    # der Jack-Chronik eine zweite, nach anderen Regeln gebaute — und die
+    # jüngere Generation gewänne, ohne dass etwas rot würde.
+    quelle = File.read!("lib/worker/recording/pipeline.ex")
 
-  defp put_facts(facts, extraction_event_id \\ @ext) do
-    # Issue #783 Phase 2 (Design E): verify_backend/verify_model trailing
-    # (Provenance, hier irrelevant → nil).
-    Builder.write!(
-      {S.session_facts(), @sid, @cid, Jason.encode!(facts), DateTime.utc_now(),
-       extraction_event_id, nil, nil, nil}
-    )
-  end
+    refute quelle =~ "Zeit.publiziere(",
+           "Der deterministische Chronik-Pfad ist zurück — siehe #1211: die Chronik " <>
+             "schreibt der Chronik-Jack, sonst entstehen zwei Chroniken nebeneinander."
 
-  defp put_override(fact_id, dismissed, extraction_event_id \\ @ext) do
-    Builder.write!(
-      {S.session_fact_overrides(), "#{@sid}:#{fact_id}", @sid, @cid, fact_id, extraction_event_id,
-       "", dismissed, "ov-01"}
-    )
-  end
-
-  describe "republish_timeline_for_session/1 (deterministisch, kein LLM)" do
-    test "datierter, verifizierter Fakt landet im Zeitstrahl" do
-      put_facts([fact("f1")])
-
-      capture_log(fn ->
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-      end)
-
-      assert [entry] = Repo.list_chronik_entries(@cid)
-      assert entry.in_game_date == "1888"
-      assert is_integer(entry.in_game_day)
-    end
-
-    test "Doppel-Lauf ist idempotent (kein Duplikat, #698-Watermark)" do
-      put_facts([fact("f1")])
-
-      capture_log(fn ->
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-      end)
-
-      assert length(Repo.list_chronik_entries(@cid)) == 1
-    end
-
-    test "fehlende Extraktion → {:error, :no_facts}, bestehende Chronik bleibt unangetastet" do
-      put_facts([fact("f1")])
-
-      capture_log(fn ->
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-      end)
-
-      assert length(Repo.list_chronik_entries(@cid)) == 1
-
-      # Irrläufer-Trigger auf eine Session ohne (mehr) Extraktion — z.B. Race
-      # mit einem parallelen Cascade-Delete. Darf die bestehende Chronik NICHT
-      # wipen (kein Clear ohne Facts-Row).
-      :mnesia.dirty_delete(S.session_facts(), @sid)
-
-      assert {:error, :no_facts} = Pipeline.republish_timeline_for_session(@sid)
-      assert length(Repo.list_chronik_entries(@cid)) == 1
-    end
-
-    test "dismisster, aber datierter Fakt taucht NICHT im Zeitstrahl auf (Design D)" do
-      put_facts([fact("f1"), fact("f2", in_game_date: "1889")])
-      put_override("f1", true)
-
-      capture_log(fn ->
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-      end)
-
-      assert [entry] = Repo.list_chronik_entries(@cid)
-      assert entry.in_game_date == "1889"
-    end
-
-    test "unverifizierter Fakt fließt nicht ein (regulärer Verify-Filter bleibt gültig)" do
-      put_facts([fact("f1", verified?: false)])
-
-      capture_log(fn ->
-        assert :ok = Pipeline.republish_timeline_for_session(@sid)
-      end)
-
-      assert Repo.list_chronik_entries(@cid) == []
-    end
-  end
-
-  # #866 (Slice F): die SessionFactDateSet-Kante lebt jetzt im generischen
-  # Dirty-Mechanismus (@dependency_graph) — der Trigger-Empfänger ist
-  # Worker.Recording.Pipeline.Dirty, das Verhalten ist identisch geblieben.
-  describe "handle_info SessionFactDateSet — Election-Gate + Immer-Republish (Design D)" do
-    setup do
-      # Issue #571: Task.Supervisor.start_child braucht den Supervisor.
-      ensure_started(Worker.TaskSupervisor, fn ->
-        Task.Supervisor.start_link(name: Worker.TaskSupervisor)
-      end)
-
-      pid =
-        case Worker.Recording.Pipeline.Dirty.start_link([]) do
-          {:ok, pid} -> pid
-          {:error, {:already_started, pid}} -> pid
-        end
-
-      prev_level = Logger.level()
-      Logger.configure(level: :info)
-
-      on_exit(fn ->
-        Logger.configure(level: prev_level)
-        if Process.alive?(pid), do: Process.exit(pid, :kill)
-      end)
-
-      Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
-      Repo.put_state(:worker_id, "w-self")
-
-      %{pid: pid}
-    end
-
-    defp date_set_event(author, extra \\ %{}) do
-      payload =
-        Map.merge(
-          %{
-            "kind" => "SessionFactDateSet",
-            "session_id" => @sid,
-            "campaign_id" => @cid,
-            "fact_id" => "f1",
-            "extraction_event_id" => @ext,
-            "in_game_date_raw" => "1888-03-20"
-          },
-          extra
-        )
-
-      {:applied, %{"author_worker_id" => author, "payload" => payload}}
-    end
-
-    # Pollt kurz auf eine Bedingung — der Republish läuft in einem gespawnten
-    # Task (fire-and-forget), kein Sync-Signal an den Test-Prozess nötig für
-    # den Chronik-Content-Check.
-    defp wait_until(fun, tries \\ 20) do
-      cond do
-        fun.() ->
-          true
-
-        tries <= 0 ->
-          false
-
-        true ->
-          Process.sleep(10)
-          wait_until(fun, tries - 1)
-      end
-    end
-
-    test "Producer (elected) triggert den Republish — Chronik-Eintrag erscheint", %{pid: pid} do
-      # Simuliert nur den `:applied`-Broadcast, den der Materializer NACH dem
-      # echten Fold sendet — der Fold selbst (Override-Merge) ist in
-      # `materializer_fact_date_set_test.exs`/`repo_review_facts_test.exs`
-      # getestet. Hier zählt nur: der Trigger liest den AKTUELLEN
-      # session_facts-Stand und republisht ihn — daher bereits datiert.
-      put_facts([fact("f1")])
-
-      send(pid, date_set_event("w-self"))
-      _ = :sys.get_state(pid)
-
-      assert wait_until(fn -> Repo.list_chronik_entries(@cid) != [] end)
-      republish_abgeschlossen!()
-      assert [entry] = Repo.list_chronik_entries(@cid)
-      assert entry.in_game_date == "1888"
-    end
-
-    test "Empfänger (nicht elected) triggert NICHTS", %{pid: pid} do
-      put_facts([fact("f1")])
-
-      send(pid, date_set_event("w-other"))
-      _ = :sys.get_state(pid)
-
-      refute_receive {:pipeline_stage, %{"stage" => "timeline"}}, 100
-      assert Repo.list_chronik_entries(@cid) == []
-    end
-
-    test "kein Skip bei dismissed — with_status(timeline) läuft trotzdem (Design D)", %{pid: pid} do
-      put_facts([fact("f1")])
-
-      send(pid, date_set_event("w-self", %{"dismissed" => true, "in_game_date_raw" => ""}))
-      _ = :sys.get_state(pid)
-
-      assert_receive {:pipeline_stage, %{"stage" => "timeline", "status" => "started"}}, 500
-      republish_abgeschlossen!()
-    end
-
-    # Der Republish läuft in einem gespawnten Task weiter, wenn der Test schon
-    # fertig ist. Ohne dieses Warten schrieb er seinen Chronik-Eintrag in den
-    # NÄCHSTEN Test (nach dessen clear_all_tables!) — je nach Seed scheiterte
-    # dann „dismisster … Fakt“ (Z. 120) oder „Empfänger triggert NICHTS“.
-    # `with_status` meldet ended/failed erst nach dem letzten Schreibvorgang.
-    defp republish_abgeschlossen! do
-      assert_receive {:pipeline_stage, %{"stage" => "timeline", "status" => status}}
-                     when status in ["ended", "failed"],
-                     1000
-    end
+    assert quelle =~ "chronik_jack(session, campaign, run_id",
+           "Der Chronik-Jack wird nicht mehr aufgerufen — dann entsteht gar keine Chronik."
   end
 end

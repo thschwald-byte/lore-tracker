@@ -76,7 +76,15 @@ defmodule Worker.Jack.Sicht.Lage do
       "kompaktierungen" => 0,
       "ende" => nil,
       "letzte" => [],
-      "bestand_start" => nil
+      "bestand_start" => nil,
+      # Bezugspunkt der Kachel „neu in diesem Lauf": der Bestand zu Beginn des
+      # AKTUELLEN Durchgangs, nicht des ganzen Laufs. Gegen `bestand_start`
+      # gerechnet zeigte sie im Erstlauf zwangsläufig dieselbe Zahl wie die
+      # Kachel daneben (Maintainer, 18.09.2026). Je Durchgang gerechnet ist sie
+      # die Zahl, an der die Sättigung hängt: zwei Durchgänge ohne neue Aussage
+      # beenden die Verifikation (#1207).
+      "durchgang_start" => nil,
+      "durchgang_nr" => nil
     }
   end
 
@@ -103,14 +111,44 @@ defmodule Worker.Jack.Sicht.Lage do
   @spec stand(t(), map()) :: {t(), [map()]}
   def stand(%__MODULE__{} = l, abbild) do
     l = %{l | stand: abbild}
+    bestand? = Map.has_key?(abbild, "bestand")
 
-    if l.lauf["start"] && is_nil(l.lauf["bestand_start"]) && Map.has_key?(abbild, "bestand") do
-      l = put_in(l.lauf["bestand_start"], abbild["bestand"])
+    l =
+      cond do
+        l.lauf["start"] && is_nil(l.lauf["bestand_start"]) && bestand? ->
+          lauf_setzen(l, %{
+            "bestand_start" => abbild["bestand"],
+            "durchgang_start" => abbild["bestand"],
+            "durchgang_nr" => abbild["durchgang"]
+          })
+
+        bestand? && durchgang_neu?(l, abbild) ->
+          lauf_setzen(l, %{
+            "durchgang_start" => abbild["bestand"],
+            "durchgang_nr" => abbild["durchgang"]
+          })
+
+        true ->
+          l
+      end
+
+    if l.lauf["durchgang_nr"] == abbild["durchgang"] && bestand? &&
+         l.lauf["durchgang_start"] == abbild["bestand"] do
       stempeln(l, [%{"art" => "stand", "stand" => abbild}, lauf_nachricht(l, false)])
     else
       stempeln(l, [%{"art" => "stand", "stand" => abbild}])
     end
   end
+
+  # Ein Durchgang ist neu, sobald der Halter eine andere Nummer meldet. `nil`
+  # zählt nicht: Resümee-, Epos- und Chronik-Jack führen keinen Durchgang, ihr
+  # Abbild darf den Bezugspunkt nicht verschieben.
+  defp durchgang_neu?(l, abbild) do
+    nr = abbild["durchgang"]
+    is_integer(nr) and nr != l.lauf["durchgang_nr"]
+  end
+
+  defp lauf_setzen(l, werte), do: %{l | lauf: Map.merge(l.lauf, werte)}
 
   @doc "Ein Ereignis der Laufzeit."
   @spec ereignis(t(), map()) :: {t(), [map()]}
@@ -219,7 +257,18 @@ defmodule Worker.Jack.Sicht.Lage do
   end
 
   defp anwenden(l, "ergebnis", d) do
-    fehler? = d["art"] in ["error", "abbruch"]
+    # `verify` kommt als `{:error, …}` zurück, damit das MODELL merkt, dass
+    # seine Aussage nicht eingetragen wurde — für den Beobachter ist es aber
+    # der gewünschte Ausgang: eine Kollision mit dem Bestand IST die
+    # Verifikation (#1207). Es rot zu zeigen und im Fehlerzähler zu führen,
+    # lässt einen gesunden Lauf fehlerhaft aussehen (Maintainer, 18.09.2026).
+    #
+    # Gelesen wird das `outcome` aus der Antwort, nicht am Tupel-Tag geraten
+    # und nicht per Teilstring gesucht — ein Teilstring-Treffer im freien Text
+    # einer Aussage würde sonst einen echten Fehler grün färben (die
+    # #1109-Klasse).
+    vorlage? = outcome(d["text"]) == "verify"
+    fehler? = d["art"] in ["error", "abbruch"] and not vorlage?
 
     lauf =
       l.lauf
@@ -229,9 +278,16 @@ defmodule Worker.Jack.Sicht.Lage do
     l = %{l | lauf: lauf}
 
     l =
-      if fehler?,
-        do: konsole(l, "fehler", "✗ #{d["name"]}: #{String.slice(to_string(d["text"]), 0, 400)}"),
-        else: l
+      cond do
+        fehler? ->
+          konsole(l, "fehler", "✗ #{d["name"]}: #{String.slice(to_string(d["text"]), 0, 400)}")
+
+        vorlage? ->
+          konsole(l, "vorlage", "✓ #{d["name"]}: zur Verifikation vorgelegt")
+
+        true ->
+          l
+      end
 
     spur(l, if(fehler?, do: "fehler", else: "ergebnis"), "#{d["name"]}: #{d["text"]}", d)
   end
@@ -329,6 +385,18 @@ defmodule Worker.Jack.Sicht.Lage do
   end
 
   # ─── Konsole ──────────────────────────────────────────────────────────
+
+  # Das `outcome` der Werkzeug-Antwort (`Worker.Jack.Antwort`), strukturiert
+  # gelesen. Kein Treffer, kein JSON, kein Text: `nil` — die Sicht ist reine
+  # Anzeige, ein unlesbares Ergebnis darf sie nie zum Absturz bringen.
+  defp outcome(text) when is_binary(text) do
+    case Jason.decode(text) do
+      {:ok, %{"outcome" => o}} when is_binary(o) -> o
+      _ -> nil
+    end
+  end
+
+  defp outcome(_), do: nil
 
   defp konsole(l, was, text) do
     t = %{"was" => was, "text" => to_string(text)}

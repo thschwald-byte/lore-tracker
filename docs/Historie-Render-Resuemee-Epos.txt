@@ -1,0 +1,960 @@
+HISTORIE — ÜBERHOLT SEIT J5 (#1209) UND J6 (#1210)
+==================================================
+
+Dieser Text beschreibt, wie Resümee und Epos-Kapitel VOR den beiden Jacks
+entstanden: über `Render.render_summary/…` und `Render.render_epos/…`. Beide
+Funktionen gibt es nicht mehr — seit J5 schreibt der Resümee-Jack, seit J6
+der Epos-Jack, und es gibt keinen Rückfall auf den alten Weg.
+
+Er bleibt erhalten, weil er den abgelösten Zustand belegt (die Prompts, das
+Render-Gate, die Stage-4/5-Aufteilung) und damit erklärt, wogegen die Jacks
+gebaut wurden. **Als Beschreibung des heutigen Verhaltens ist er falsch.**
+Aktuell sind `docs/Jack-Resuemee.txt`, CLAUDE.md → „Resümee durch den
+Resümee-Jack" und „Epos-Kapitel durch den Epos-Jack".
+
+--- ab hier der Text vom 12.09.2026, unverändert ---
+
+WIE ZUR ZEIT RESÜMEE UND EPOS-KAPITEL ENTSTEHEN
+===============================================
+
+Code-Stand: Worktree /home/tom/Projekte/lore_tracker_j4, Branch issue-1197-j4,
+Commit a59563b2 (12.09.2026). Stufe 2 der Pipeline ist Jack, Stufe 3
+(Verify) gibt es nicht mehr.
+
+Abkürzungen für Pfade (alle relativ zum Worktree):
+
+  W/  = apps/worker/lib/worker/
+  H/  = apps/hub/lib/hub_web/
+  S/  = apps/shared/lib/shared/
+
+Jede technische Aussage trägt eine Fundstelle (Datei:Zeile oder Funktion).
+Was ich im Code nicht gefunden oder nicht nachgelesen habe, steht als „nicht
+geprüft“ da oder im letzten Abschnitt. CLAUDE.md diente nur als Wegweiser;
+wo sie vom Code abweicht, steht das dabei (Abschnitt 9).
+
+Beispiele sind erfunden bzw. aus der Romeo-und-Julia-Demo.
+
+
+1. WO IM ABLAUF
+===============
+
+1.1 Auslöser
+------------
+
+Ein Pipeline-Lauf für eine Session startet auf zwei Wegen:
+
+- Automatisch nach der Transkription: `Worker.Recording.Pipeline` hört auf
+  das Event `UtterancesTranscribed` (W/recording/pipeline.ex:188–204). Es
+  läuft nur auf dem Worker, der das Event selbst produziert hat
+  (`elected?/2`, pipeline.ex:240–242), und nur, wenn der Admin des Workers
+  Mitglied der Kampagne ist (`maybe_run/3`, pipeline.ex:249).
+- Manuell über `run_for_session/2` (pipeline.ex:99–104) — das nutzen
+  „neu generieren“, „Pipeline für alle Sessions“ und „noch N Iterationen“
+  (Abschnitt 7).
+
+Der ganze Lauf — Glättung, Jack, Registries, Resümee, Chronik, Epos,
+Bogen-Progressionen — ist EIN Auftrag in der GPU-Warteschlange
+(`Worker.GpuQueue.run/2`, pipeline.ex:266–273).
+
+1.2 Reihenfolge
+---------------
+
+`run_stages/3` (pipeline.ex:320–333) vergibt eine `run_id` und wählt
+zwischen dem ganzen Lauf (`ganzer_lauf/3`, pipeline.ex:335–367) und
+„noch N Iterationen“ (`jack_weiter/4`, pipeline.ex:374–382). Der ganze
+Lauf liest alle Utterances der Session (`limit: :all`, pipeline.ex:340),
+glättet sie (Stufe `smooth`, pipeline.ex:351–357) und ruft dann mit den
+Kontext-Blöcken `run_wahrheitsbild/4` auf (pipeline.ex:361).
+
+`run_wahrheitsbild/4` (pipeline.ex:510–652) ist eine `with`-Kette
+(pipeline.ex:576–639). Die Schritte nach Jacks Extraktion:
+
+  1. Jack-Extraktion: `Worker.Jack.Pipeline.extract_facts/4`
+     (pipeline.ex:532–544). Publiziert EIN `SessionFactsExtracted` mit
+     `facts`, `extraction_saw`, `verify_backend: "jack"` und Jacks Modell
+     (W/jack/pipeline.ex:77–92). Jede Aussage bekommt pauschal
+     `grounded?`, `attributed?`, `verified?` = true (W/jack/pipeline.ex:54
+     und :145).
+  2. Entity-Registry: `EntityRegistry.resolve_campaign_entities/1`
+     (pipeline.ex:546–547), eingewickelt in `resolve_entities_best_effort/3`
+     (pipeline.ex:662–677). Clustert Aliase kampagnenweit und schreibt die
+     Fakten jeder Session per `SessionFactsExtracted` neu zurück
+     (W/recording/pipeline/entity_registry.ex:222–257, Payload
+     feldkonservativ: :266–276).
+  3. Thread-Registry: `ThreadRegistry.resolve_campaign_threads/1`
+     (pipeline.ex:551–557, inkrementell), eingewickelt in
+     `resolve_threads_best_effort/3` (pipeline.ex:685–706).
+  4. Bestand zurücklesen: `Worker.Jack.Pipeline.geprueft/1`
+     (pipeline.ex:562, Implementierung W/jack/pipeline.ex:244–249) über
+     `bestand_lesen/3` (pipeline.ex:718–727). Das ist KEINE eigene Stufe
+     mehr und KEIN Modellaufruf — es liest nur die gespeicherten Fakten der
+     Session, wie sie nach den Registries stehen. Das Ergebnis heißt im
+     Code weiterhin `verified`.
+  5. Resümee: `Render.render_summary/2` in `with_status(…, "render", …)`
+     (pipeline.ex:581–588), danach `publish_wahrheitsbild_summary/4`
+     (pipeline.ex:589, 748–775).
+  6. Zeitstrahl/Chronik: `Zeit.publiziere/3` als `best_effort_artifact`
+     unter Stufe `timeline` (pipeline.ex:595–603).
+  7. Epos-Kapitel: `publish_wahrheitsbild_epos/5` als `best_effort_artifact`
+     unter Stufe `render_epos` (pipeline.ex:605–620). Bekommt die
+     Chronik-Einträge aus Schritt 6 für den Kapitelkopf (`timeline_entries
+     || []`, pipeline.ex:615).
+  8. Bogen-Progressionen: `ArcProgressions.publish/3` als
+     `best_effort_artifact` unter Stufe `render_arc_progressions`
+     (pipeline.ex:627–636).
+
+Die Reihenfolge der drei Geschwister ist fest: Chronik vor Epos (weil der
+Kapitelkopf die Chronik-Einträge braucht), dann die Bögen.
+
+1.3 Pflicht und best-effort
+---------------------------
+
+Was die `with`-Kette abbricht, stoppt alles Nachfolgende:
+
+- Jack-Fehler → Lauf endet, kein Resümee, keine Chronik, kein Epos.
+- `bestand_lesen/3` scheitert (`{:error, :no_facts}`, wenn keine
+  Fakten-Row existiert) → Lauf endet (pipeline.ex:718–727).
+- Resümee scheitert → Lauf endet. Chronik, Epos und Bögen stehen im
+  `do`-Block der `with`-Kette (pipeline.ex:589–638) und laufen dann
+  NICHT. Das Resümee ist damit faktisch Voraussetzung für die drei
+  Geschwister.
+
+Nicht abbrechend (best-effort):
+
+- Beide Registries: Fehler landen in /admin/errors, der Lauf bleibt `:ok`
+  (pipeline.ex:662–706). Die Fakten behalten dann ihre ungemergten
+  Entitäten bzw. Roh-Labels.
+- Chronik, Epos-Kapitel, Bogen-Progressionen: `best_effort_artifact/6`
+  (pipeline.ex:733–746) fängt auch Exceptions ab und liefert bei Fehler
+  `nil`. Ein Fehler des einen reißt die anderen nicht mit. Die
+  Bogen-Progressionen isolieren zusätzlich jeden Bogen einzeln
+  (W/recording/pipeline/arc_progressions.ex:83–93).
+
+Dieselbe Einteilung steht als Daten in `Shared.PipelineStufen`
+(S/pipeline_stufen.ex:74–81): `render` ist `:pflicht`, `timeline`,
+`render_epos` und `render_arc_progressions` sind `:best_effort`.
+
+1.4 Wie Fehler gemeldet werden
+------------------------------
+
+- `with_status/5` (pipeline.ex:870–876) meldet Beginn und Ende einer
+  Stufe: `notify_status/5` schickt ein `pipeline_stage`-Payload an den Hub
+  und lokal auf PubSub (pipeline.ex:956–976), `Fortschritt.stufe/3`
+  pflegt das Laufband. Bei `{:error, _}` publiziert `stufe_endet/3`
+  zusätzlich ein `PipelineErrorLogged` (pipeline.ex:901–917, 922–938) —
+  das ist /admin/errors.
+- Die Fehlerklasse kommt aus `Worker.Recording.ErrorClass.classify/1`
+  (Delegation pipeline.ex:948). Die Schritt-Tags `:render`, `:render_epos`,
+  `:timeline`, `:render_arc_progressions` werden abgestreift und der innere
+  Grund klassifiziert (W/recording/error_class.ex:39–48), z.B.
+  `no_verified_facts` (:55) oder `render_prompt_too_large` (:122).
+- Die lesbare Meldung baut `format_error/1` (pipeline.ex:991–1010), für
+  den Größen-Guard z.B. „Render-Prompt zu groß: ~N Tokens > num_ctx=M
+  (ctx_stage4/5 erhöhen oder Fakten kuratieren)“ (pipeline.ex:1005–1007).
+- Ein fehlschlagender Bogen meldet sich selbst per
+  `Pipeline.publish_pipeline_error/5` unter Stufe `render_arc_progressions`,
+  mit der Bogen-ID im Meldungstext (arc_progressions.ex:117–130).
+
+
+2. EINGABE: WELCHE FAKTEN IN DIE PROSA GEHEN
+============================================
+
+2.1 Woher die Fakten kommen
+---------------------------
+
+Resümee und Epos bekommen die Liste aus `geprueft/1`
+(W/jack/pipeline.ex:244–249), also `Worker.Repo.get_session_facts/1`
+(W/repo/artifacts.ex:178–209): die Fakten-Row der Session, dekodiert, mit
+dem Datums-Overlay der Review-Queue (`merge_override/3`, artifacts.ex:190
+und 423–445).
+
+`Render.render_prose/5` (W/recording/pipeline/render.ex:193–217) filtert
+davon genau eine Sache: `verified? == true` (render.ex:194). Ist danach
+nichts übrig, Fehler `:no_verified_facts` (render.ex:197–198). Da Jack
+jeden Fakt mit `verified? = true` ablegt (W/jack/pipeline.ex:54, :145),
+passiert dieser Filter im regulären Lauf praktisch alles.
+
+2.2 Was NICHT gefiltert wird (Befund aus dem Code)
+--------------------------------------------------
+
+Das habe ich aus dem Code gelesen, nicht durch einen Lauf bestätigt. Eine
+Testabdeckung für diesen Pfad habe ich nicht gefunden.
+
+- Fakt-Kuration aus der Fakten-Spalte (`FactCurationSet`: claim-Edit,
+  Figur, Strang, verified?-Override, „löschen/ausblenden“) wird in
+  `get_session_facts/1` NICHT angewandt. Das Overlay
+  `apply_fact_curation/2` (artifacts.ex:289–323) läuft nur im Pfad
+  `campaign_facts_raw/1` (artifacts.ex:273), den `list_campaign_facts/1`
+  (artifacts.ex:231–236) nutzt — und dort filtert auch erst
+  `curation_dismissed` (artifacts.ex:235). Der Render-Pfad geht über
+  `get_session_facts/1`, nicht über `list_campaign_facts/1`.
+  Folge: ein ausgeblendeter Fakt, ein von Hand korrigierter Claim oder ein
+  auf „nicht verifiziert“ gesetzter Fakt geht im regulären Lauf
+  unverändert in Resümee, Epos und Chronik.
+  (CLAUDE.md sagt, `list_campaign_facts/1` filtere `curation_dismissed`
+  für „Render/Verify/Timeline“ — für den Render-Pfad trifft das im
+  j4-Stand nicht zu, weil er diese Funktion nicht aufruft.)
+- `review_dismissed` (Fakt in der Review-Queue dauerhaft ausgeblendet)
+  wird von `merge_override/3` als Flag gesetzt (artifacts.ex:434), aber
+  weder in `render_prose/5` noch in `Zeit.publiziere/3` gefiltert. Nur der
+  deterministische Republish nach einer Review-Korrektur,
+  `republish_timeline_for_session/1`, filtert es (pipeline.ex:135–138).
+- Ein Bogen-Override pro Fakt (`FactArcSet`) wirkt dagegen: er wird in
+  `fact_render_assignments/2` direkt aus der Tabelle gelesen
+  (W/repo/threads.ex:249–255, 261–272).
+
+2.3 Bogen-Annotation: `Repo.fact_render_assignments/2`
+------------------------------------------------------
+
+Bevor der Prompt gebaut wird, annotiert `annotate_boegen/2`
+(render.ex:294–321) die Fakten — aber nur, wenn die Kampagne eine `id` hat
+(render.ex:295–296). Ohne Kampagnen-Kontext (Stil-Vorschau) bleibt die
+Liste unannotiert und der flache Alt-Prompt greift (render.ex:318–320).
+
+Die Zuordnung liefert `Worker.Repo.Threads.fact_render_assignments/2`
+(W/repo/threads.ex:219–305) als `%{fact_id => [%{titel, kind}, …]}`:
+
+- Gibt es für den Fakt einen `FactArcSet`-Override, ERSETZT er die
+  Zuordnung ganz: die arc_ids werden über den Merge-Redirect aufs Ziel
+  umgeleitet, verwaiste fallen fürs Rendern heraus, `[]` heißt „keine
+  Bögen“ (threads.ex:261–272).
+- Sonst die Extraktions-Basis über ALLE Strang-Labels des Fakts
+  (`fact_canonical_keys/3`, threads.ex:311–321: Roh-Label → Cluster-Map der
+  Registry → Identitäts-Merge-Override). Jeder so gefundene Kanon-Schlüssel
+  wird auf seinen Strang abgebildet: Titel = kanonischer Name, `kind` aus
+  dem Strang (threads.ex:274–300).
+- Ein Sekundär-Label ohne eigenen Strang wird synthetisiert: Titel = Kanon,
+  `kind` aus der Registry, Default `"arc"` (threads.ex:288–293).
+- Dedupliziert wird pro arc_id bzw. Titel (threads.ex:299).
+- Fakten ohne Zuordnung stehen nicht in der Map (threads.ex:303) und gelten
+  als strang-los.
+
+N:M und Duplikate: `annotate_boegen/2` legt den Fakt für JEDEN
+zugeordneten Bogen einmal in die Liste, jeweils mit `bogen_titel` und
+`bogen_kind` (render.ex:299–316). Ein Fakt mit zwei Bögen steht also
+zweimal im Prompt.
+
+`kind` ist einer von `arc` (Handlungsbogen), `context` (Weltwissen/Thema)
+oder `rauschen` (Tisch-/Meta-Gerede).
+
+2.4 Wie die annotierten Fakten gruppiert werden
+-----------------------------------------------
+
+`bogen_groups/1` (W/recording/pipeline/prompts.ex:288–322), aufgerufen
+über `bogen_view/1` (prompts.ex:255–257, nur wenn mindestens ein Fakt
+`bogen_kind` trägt):
+
+- `rauschen`-Fakten werden abgetrennt und fließen in keinen Prompt ein
+  (nur ihre Anzahl wird gezählt, prompts.ex:291, 320).
+- `context`-Fakten werden abgetrennt (prompts.ex:292). Das Resümee
+  verwendet sie im Normalfall nicht; das Epos hängt sie als Hintergrund
+  an (Abschnitt 4.2).
+- Übrig bleiben `arc`-Fakten mit Titel und strang-lose Fakten
+  (prompts.ex:294–297).
+- Die `arc`-Fakten werden nach Titel gruppiert. Anti-Fragmentierung:
+  Gruppen mit nur EINEM Fakt lösen sich auf und wandern zusammen mit den
+  strang-losen nach „Weiteres“ (prompts.ex:304–309).
+- Reihenfolge der Bögen: Position des ersten Fakts des Bogens in der
+  Eingabeliste, bei Gleichstand der Titel (prompts.ex:311–314). Innerhalb
+  eines Bogens und in „Weiteres“ gilt die Eingabereihenfolge.
+- Die Leitfrage eines Bogens ist nie Prompt-Eingabe; der Abschnittskopf ist
+  der kanonische Titel aus `fact_render_assignments/2`.
+
+Die Fakten werden als nummerierte Zeilen ausgegeben, durchlaufend über alle
+Abschnitte (`sectioned_facts/1`, prompts.ex:326–334). Eine Zeile ist
+`<Nr>. [<character_alias>] <claim>`; ohne Figur entfällt die Klammer
+(`fact_line/2`, prompts.ex:342–350).
+
+2.5 Fallback-Kaskade
+--------------------
+
+Der Bogen-Prompt wird nur benutzt, wenn es mindestens einen Bogen oder
+„Weiteres“ gibt (prompts.ex:67 bzw. 116). Sonst `fallback_facts/3`
+(prompts.ex:264–278):
+
+- ohne Annotation (`view == nil`): alle Fakten flach;
+- gibt es `context`-Fakten: nur diese, flach (reine Weltbau-Session);
+- sonst (alles `rauschen`): alle Fakten flach, mit `Logger.warning`
+  „Session-Fakten sind ausschließlich rauschen — flacher Voll-Fallback“.
+
+Die Kaskade liefert nie einen Fehler; das würde über die `with`-Kette auch
+Chronik und Epos verhindern (Kommentar prompts.ex:259–263).
+
+
+3. RESÜMEE
+==========
+
+3.1 Aufruf
+----------
+
+`Render.render_summary/2` (render.ex:185–186) → `render_prose/5` mit
+`summary_prompt/2` (= `Prompts.build_summary_render_prompt/2`,
+render.ex:365–366), LLM-Stufe `:render` und `render_opts/0`.
+`render_prose/5` (render.ex:193–217): verifizierte filtern, annotieren,
+Prompt bauen, Größen-Guard, `Worker.LLM.complete(:render, prompt, opts)`,
+Antwort getrimmt als `%{md: …}` zurück (render.ex:212).
+
+3.2 Aufbau des Prompts
+----------------------
+
+`Prompts.build_summary_render_prompt/2` (prompts.ex:61–104). Von oben nach
+unten:
+
+1. Überschrift-Direktive, nur wenn für „summary“ eine Überschrift gesetzt
+   ist (`heading_directive/2`, prompts.ex:374–387, Name aus
+   `stage_heading/2`, prompts.ex:391–398). Wortlaut: „Gestalte diesen
+   Abschnitt als «<Name>» (Textsorte/Gattung): folge ihren Konventionen
+   und beginne mit einer zum INHALT passenden Überschrift bzw. Schlagzeile
+   im Stil dieser Textsorte. Verwende NICHT das Wort «<Name>» selbst als
+   Titel.“
+2. Stil-Vorgabe, nur wenn `base` oder `summary` gesetzt ist
+   (`flavor_preamble/2`, prompts.ex:21–43): Kopfzeile „Stil-Vorgabe für
+   diese Kampagne (oberste Priorität — Wortwahl, Ton, Atmosphäre, NICHT
+   Inhalt oder Format):“, dann die Texte, je eine Zeile.
+3. Der Auftrag, in zwei Fassungen:
+
+   a) Mit Bögen (prompts.ex:70–86): „Verdichte die folgenden GESICHERTEN
+      FAKTEN zu einem Sitzungs-Resümee auf Deutsch, gegliedert nach
+      Handlungsbögen.“ FORM: je Bogen ein Abschnitt, erste Zeile genau die
+      fette Bogen-Überschrift, darunter 1–2 Sätze nur aus den Fakten dieses
+      Bogens; keine Vermischung, keine Einleitung, kein Schlusswort, keine
+      eigenen Überschriften. STRENG (context-faithful): nur diese Fakten,
+      kein neuer Claim, keine Figur, kein Ereignis, keine Deutung oder
+      Ausschmückung; bei dünnen Fakten weniger schreiben. Danach „Fakten
+      nach Handlungsbögen:“ und die Abschnitte.
+
+   b) Flach (prompts.ex:91–102): „… zu einem zusammenhängenden Resümee auf
+      Deutsch (3-6 Sätze)“, dieselbe STRENG-Klausel, dann „Fakten:“ und die
+      nummerierte Liste.
+
+Schematisch, mit erfundenen Fakten aus der Romeo-und-Julia-Demo, sähe der
+Faktenteil der Bogen-Fassung so aus:
+
+    Fakten nach Handlungsbögen:
+    **Die Fehde der Häuser**
+    1. [Tybalt] Tybalt fordert Romeo zum Zweikampf.
+    2. [Mercutio] Mercutio fällt im Kampf gegen Tybalt.
+
+    **Weiteres**
+    3. [Julia] Julia wartet vergeblich auf die Amme.
+
+(Fakt 3 steht unter „Weiteres“, weil sein Bogen nur diesen einen Fakt
+hätte, oder weil er keinem Bogen zugeordnet ist.)
+
+Das Resümee sieht nur Fakten mit `kind == "arc"` und strang-lose. Fakten
+eines `context`-Strangs fehlen ihm, außer es gibt gar nichts anderes
+(Fallback 2.5).
+
+3.3 Stil setzen (Hub: „Stil“-Tab)
+--------------------------------
+
+Der Editor lebt in `HubWeb.CampaignLive.Stil` (H/live/campaign_live/
+stil.ex). Speichern (`save/2`, stil.ex:102–135) publiziert:
+
+- `CampaignFlavorSet` je geändertem Slot (`base` bzw. die Stufe),
+  getrimmt und auf 2000 Zeichen gekappt (`maybe_flavor_event/5`,
+  `clean_flavor/1`, stil.ex ab 137). Fold: W/materializer/apply1.ex:180–238.
+- `CampaignVorgabeSet` mit `name` und `darstellungsform` (stil.ex:116–129).
+  Fold: apply1.ex ab 241, Tabelle `campaign_vorgaben`.
+
+Der Worker liest beides über `Worker.Repo.get_campaign/1`
+(W/repo.ex:111–116, Vorgaben über `vorgaben_for/1`, repo.ex:121–129) und
+reicht die Kampagne an die Prompt-Builder (pipeline.ex:564–567).
+
+Was davon im Resümee-Prompt wirkt:
+
+- `base` + `summary` als Stil-Vorgabe (3.2, Punkt 2). Ein leerer Slot fällt
+  auf `default_flavor/1` zurück, das derzeit immer `nil` liefert
+  (prompts.ex:356–366).
+- `vorgaben["summary"].name` als Überschrift-Direktive (3.2, Punkt 1) und
+  im Hub als Spaltentitel (`output_label/2`, H/live/campaign_live/
+  components.ex:31–36, Default „Resümee“, :26).
+- Die Darstellungsform wirkt NICHT: Das Formular schickt fest
+  `darstellungsform = "fliesstext"` als verstecktes Feld
+  (H/live/campaign_live/editors.ex:496), und kein Prompt-Builder im Worker
+  liest das Feld (grep über W/ findet es nur in Fold, Schema, RPC und
+  Backfill).
+
+Die Live-Vorschau im Stil-Editor holt den Prompt vom Worker
+(`Prompts.preview_prompt/2`, prompts.ex:476–501) mit denselben Buildern,
+aber mit drei gekürzten Beispiel-Fakten ohne Bogen-Annotation
+(`sample_facts/1`, prompts.ex:506–526). Die Vorschau zeigt also immer die
+FLACHE Fassung, nie die Bogen-Gliederung (so auch benannt in
+prompts.ex:51–53).
+
+3.4 Modell, Backend, Einstellungen (Stufe 4)
+--------------------------------------------
+
+- Backend: `backend_stage4`, Default `:local` (W/settings.ex:144). Die
+  Zuordnung `:render` → `backend_stage4` steht in W/llm.ex:21–25.
+- Modell: `model_stage4_<backend>` über `Worker.Settings.model_for(4, b)`
+  (settings.ex:648–653). Alle Modell-Keys stehen auf `:no_default`
+  (settings.ex:145, 172–174); ungesetzt scheitert der Aufruf laut
+  (Kommentar settings.ex bei model_for).
+- Kontextfenster: `ctx_stage4`, Default 8192 (settings.ex:175), gelesen in
+  `render_opts/0` (render.ex:341).
+- Sampling: `temperature_stage4` 0.15, `top_p_stage4` 0.7,
+  `repeat_penalty_stage4` 1.1 (settings.ex:179–181), gelesen über
+  `Prompts.sampling_opts(4)` (prompts.ex:406–412).
+- Ausgabe-Deckel: `num_predict_stage4`, Default `nil` = aus
+  (settings.ex:186); nur gesetzt, wenn eine positive Zahl eingetragen ist
+  (`num_predict_opt/1`, prompts.ex:431–437).
+- Lokal zusätzlich: `model_stage4_local_endpoint` (`:generate` oder
+  `:chat`, settings.ex:156) und `model_stage4_think` (`:auto` oder
+  `:low/:medium/:high`, settings.ex:167); gelesen in W/llm/local.ex
+  (`endpoint_for_stage/1`, `think_mode_for_stage/1`, ab Zeile ~80). An
+  Ollama gehen `num_ctx`, `temperature`, `num_predict`, `top_p`, `top_k`,
+  `repeat_penalty`, soweit gesetzt (`build_options/1`, local.ex:460–472).
+  HTTP-Timeout: `http_timeout_ms`, Default 1 200 000 ms = 20 min
+  (settings.ex:82, local.ex:271).
+- Cloud: `num_ctx` wird nicht gelesen; `max_tokens` ist
+  `num_predict` oder sonst 4096 (`CloudHelper.run_completion/5`,
+  `@default_max_tokens`, W/llm/cloud_helper.ex:28). Vor jedem Cloud-Aufruf
+  prüft `check_spend_cap/4` das Ausgabelimit (llm.ex:74–77).
+
+3.5 Prompt-Größen-Guard (#889)
+------------------------------
+
+`Render.check_prompt_size/3` (render.ex:276–282): nur beim Backend
+`:local` und nur, wenn `num_ctx` eine Zahl ist. Schätzung
+`Parsing.estimate_tokens/1` = Bytes durch 3
+(W/recording/pipeline/parsing.ex:490). Liegt die Schätzung über `num_ctx`,
+gibt es `{:error, {:prompt_too_large, est, num_ctx}}` statt eines Aufrufs,
+Klasse `render_prompt_too_large` in /admin/errors. Zweck (Kommentar
+render.ex:267–275): Ollama schneidet einen zu langen Prompt sonst still ab,
+und das Modell antwortet mit einer Entschuldigung, die als Resümee
+gespeichert würde. Cloud-Backends sind bewusst nicht geprüft.
+
+3.6 Was veröffentlicht wird
+---------------------------
+
+`publish_wahrheitsbild_summary/4` (pipeline.ex:748–775) publiziert
+`SessionSummaryGenerated` mit:
+
+- `session_id`, `campaign_id`
+- `content_md` = die getrimmte Modellantwort
+- `source` = `"llm"`
+- `source_refs` = Vereinigung der `source_refs` ALLER übergebenen Fakten
+  (pipeline.ex:749) — das sind Block-IDs; es sind auch die Blöcke von
+  Fakten dabei, die im Prompt gar nicht vorkamen (rauschen, context)
+- `render_backend` = aktueller `backend_stage4`, `render_model` = aktuelles
+  Stufe-4-Modell (pipeline.ex:756, 770–771) — reine Herkunftsangabe
+- `flagged_claims` wird seit #1124 nicht mehr gesetzt (pipeline.ex:758–761)
+
+Fold: `RenderSlots.summary_generated/3` (W/materializer/render_slots.ex:
+202–228, eingehängt in W/materializer/apply2.ex:252–253). Er schreibt den
+GENERIERT-Slot (`generated_md`, `generated_version_id` = event_id,
+`generated_at`, `source_refs`, Herkunft) und berechnet dann `content_md`
+neu (`recompute/1`, render_slots.ex:322–326) über
+`Worker.Repo.Render.displayed/1` (W/repo/render.ex:59–81):
+
+- Ist die letzte Freigabe (`RenderReleaseSet`) genau die aktuelle
+  generierte Fassung → angezeigt wird die generierte.
+- Sonst, wenn es einen kuratierten (handbearbeiteten) Text gibt → der
+  kuratierte bleibt angezeigt.
+- Sonst → die generierte.
+
+3.7 Wie es in die Spalte kommt
+------------------------------
+
+Im Hub löst `SessionSummaryGenerated` (wie `SessionSummaryEdited`) einen
+schmalen Nachlade-Read des Scopes `campaign_summaries` aus
+(H/live/campaign_live/updates.ex, `scope_reload_kinds/0` und
+`scope_for_event/1` bei Zeile 217). Der Worker liefert dort
+`list_session_summaries/1` (W/repo/snapshots.ex:229–232; Liste in
+W/repo/artifacts.ex:518–548), sortiert nach Session-Nummer, nicht nach
+Erzeugungszeit.
+
+Die Spalte (H/live/campaign_live.html.heex ab Zeile 964, `name=
+"summaries"`, Titel aus `output_label/2`, Untertitel „Was letztes Mal
+geschah“) zeigt je Session: Zeitstempel, eine Pille mit der Herkunft
+(`llm` bzw. `manual` nach Handbearbeitung, render_slots.ex:324), die
+Session, ggf. den Lücken-Marker 🕳 (heex:998–1003; die Marker-Menge rechnet
+der Worker in `Worker.Repo.GlattQuellen.marker/2`, W/repo/glatt_quellen.ex:
+128–146), einen 📎-Knopf mit der Zahl der Quell-Blöcke, „⚠ melden“ und im
+Bearbeitenmodus Stift, „neu generieren“ und „noch N Iterationen“. Der Text
+wird über `render_md_safe/1` als Markdown gerendert (heex:1095). Während
+die Stufe `render` läuft, zeigt die Spalte einen Busy-Punkt (heex:968–970).
+
+3.8 Bearbeiten von Hand
+-----------------------
+
+Stift → `summary_edit_start/2`, Speichern → `summary_edit_save/2`
+(H/live/campaign_live/stage_edits.ex:20–58). Recht: `can_edit_meta?`
+(stage_edits.ex:34), Längendeckel über `InputCaps.check(:summary_body, …)`.
+Publiziert `SessionSummaryEdited` mit `session_id`, `campaign_id`,
+`new_md`, `edited_by` (stage_edits.ex:40–46).
+
+Fold: `RenderSlots.summary_edited/3` (render_slots.ex:231–254) schreibt den
+KURATIERT-Slot und leert `flagged_claims`. Ab dann gilt 3.6: jeder spätere
+Neulauf schreibt nur noch in den generiert-Slot, angezeigt bleibt der
+handbearbeitete Text. Die Worker-Seite kennt eine Freigabe
+(`RenderReleaseSet`, render_slots.ex:257–285) und ein Signal „neue Fassung
+verfügbar“ (`rebuild_available?`, artifacts.ex:155–173). Im Hub-Code
+(H/ und apps/hub/lib) habe ich weder einen Erzeuger von `RenderReleaseSet`
+noch eine Anzeige von `rebuild_available?` gefunden (grep). Praktisch
+heißt das im j4-Stand: nach einer Handbearbeitung sieht niemand mehr eine
+neu generierte Fassung dieses Resümees.
+
+
+4. EPOS-KAPITEL
+===============
+
+4.1 Prinzip (#752)
+------------------
+
+Pro Session entsteht EIN Kapitel, gerendert ausschließlich aus den Fakten
+dieser Session — kein Vorkapitel und kein Resümee im Prompt (Kommentar
+pipeline.ex:797–802). Kontinuität zwischen Kapiteln kommt nur aus dem
+deterministischen Kapitelkopf (render.ex:113–115).
+
+Datenmodell: `entry_id` = session_id, `parent_id` = campaign_id. Die
+Legacy-Row des alten Gesamtbuchs hat `entry_id` = campaign_id und keinen
+Parent; `list_epos_chapters/1` nimmt nur Rows mit `parent_id ==
+campaign_id` und `entry_id != campaign_id` (W/repo/artifacts.ex:72–96,
+sortiert nach Session-Nummer).
+
+4.2 Prompt
+----------
+
+`Render.render_epos/2` (render.ex:190–191) → `render_prose/5` mit
+`epos_prompt/2` (= `Prompts.build_epos_render_prompt/2`, prompts.ex:
+111–162), LLM-Stufe `:epos`, `epos_opts/0`. Eingabe und Annotation wie
+beim Resümee (Abschnitt 2).
+
+Aufbau:
+
+1. Stil-Vorgabe aus `base` + `epos` (prompts.ex:112). KEINE
+   Überschrift-Direktive — der Kopf kommt aus Daten (prompts.ex:106–110).
+2. Mit Bögen (prompts.ex:129–143): „Erzähle die folgenden GESICHERTEN
+   FAKTEN als zusammenhängende, atmosphärische Geschichte auf Deutsch. Die
+   Fakten sind nach Handlungsbögen gruppiert — nutze die Bögen als rote
+   Fäden, aber erzähle EINE fließende Geschichte ohne
+   Zwischenüberschriften.“ Dann „Handlung treu, Erzählweise frei: Das WIE
+   (Stimmung, Schauplätze, Erzählstimme) darfst du ausmalen — das WAS ist
+   bindend.“ Nur Figuren, Orte, Ereignisse, Ausgänge aus den Fakten; keine
+   neuen Plot-Fakten, keine zusätzlichen benannten Figuren, keine
+   Wendungen. Danach die Abschnitte wie beim Resümee (gleiche
+   Gruppierung inklusive „Weiteres“).
+3. `context`-Fakten hängen, falls vorhanden, als eigener Block an:
+   „Hintergrund/Weltwissen (nur Farbe — NICHT als Ereignisse dieser
+   Sitzung erzählen):“ mit je einer Zeile „- <claim>“ (prompts.ex:119–127).
+   `rauschen` fehlt auch hier.
+4. Flache Fassung (prompts.ex:148–160): gleicher Auftrag ohne
+   Bogen-Hinweis, nummerierte Liste.
+
+Der Unterschied zum Resümee liegt also in der Erlaubnis: Resümee
+„STRENG … keine Ausschmückung“, Epos „Erzählweise frei“.
+
+4.3 Kapitelkopf (#752, Datum seit #1092)
+----------------------------------------
+
+`Render.chapter_header/3` (render.ex:132–155), aufgerufen in
+`render_and_publish_chapter/5` mit den Chronik-Einträgen dieser Session
+und dem Kampagnen-Kalender (pipeline.ex:835–840):
+
+- Grundform `## Kapitel <Session-Nummer>` (render.ex:133).
+- Nur Einträge mit ganzzahligem `in_game_day` zählen (render.ex:135–138).
+- Keine solchen Einträge ODER kein Kalender → nur die Grundform
+  (render.ex:141–145).
+- Sonst Minimum und Maximum der Tage, formatiert über
+  `Worker.Timeline.Calendar.format/3` mit der GRÖBSTEN Präzision der
+  beteiligten Einträge (`coarsest_precision/1`, render.ex:161–170;
+  `:unknown` zählt nicht, ohne Angabe `:day`). Gleicher Tag →
+  `## Kapitel N — <Datum>`, sonst `## Kapitel N — <von>–<bis>`.
+
+Da die Chronik nur arc-Fakten mit eigenem Zeitsignal aufnimmt
+(Abschnitt 5.1), kann der Kopf auch bei vielen Fakten nackt bleiben.
+Scheitert die Chronik-Stufe, bekommt das Epos `[]` und damit ebenfalls den
+nackten Kopf (pipeline.ex:615).
+
+Das veröffentlichte Kapitel ist `header <> "\n\n" <> Modellantwort`
+(pipeline.ex:855).
+
+4.4 Einstellungen (Stufe 5)
+---------------------------
+
+Spiegelbild von Stufe 4 (settings.ex:192–206): `backend_stage5` (Default
+`:local`), `model_stage5_<backend>` (alle `:no_default`),
+`model_stage5_local_endpoint` `:generate`, `model_stage5_think` `:auto`,
+`ctx_stage5` 8192, `temperature_stage5` 0.15, `top_p_stage5` 0.7,
+`repeat_penalty_stage5` 1.1, `num_predict_stage5` `nil`. Gelesen in
+`epos_opts/0` (render.ex:354–359) und `sampling_opts(5)`
+(prompts.ex:414–420); Backend-Zuordnung `:epos` → `backend_stage5`
+(llm.ex:24). Der Größen-Guard prüft gegen `ctx_stage5` (render.ex:203,
+286). Für Cloud gilt wie in 3.4: ohne `num_predict_stage5` höchstens 4096
+Ausgabe-Token.
+
+4.5 Handbearbeitete Kapitel werden nicht neu gerendert (#753)
+-------------------------------------------------------------
+
+`publish_wahrheitsbild_epos/5` (pipeline.ex:803–820) prüft VOR dem
+Modellaufruf `chapter_user_edited?/1` (pipeline.ex:824–826): gibt es in
+der Epos-Historie dieses Kapitels irgendeine Row mit `source == :manual`,
+wird das Kapitel übersprungen (`{:ok, :chapter_skipped_user_edit}`, mit
+Log-Zeile). Ein einmal von Hand bearbeitetes Kapitel wird von der Pipeline
+also nie wieder angefasst. Einen „trotzdem neu erzeugen“-Weg über die
+Pipeline gibt es nicht (Kommentar pipeline.ex:809–810).
+
+Handbearbeitung im Hub: `chapter_edit_save/3`
+(H/live/campaign_live/stage_edits.ex:832–872), Recht `:edit_epos`, nur für
+bekannte Kapitel-IDs (stage_edits.ex:836). Publiziert `EposEntryEdited`
+mit `entry_id`, `campaign_id`, `parent_id` = campaign_id (sonst fiele das
+Kapitel aus der Liste, Kommentar :851–854), `new_md`, `edited_by`,
+`source: "manual"` (stage_edits.ex:848–859).
+
+4.6 Was veröffentlicht wird
+---------------------------
+
+`render_and_publish_chapter/5` (pipeline.ex:828–868) publiziert
+`EposEntryEdited` mit:
+
+- `entry_id` = session_id, `campaign_id`, `parent_id` = campaign_id
+- `new_md` = Kapitelkopf + Leerzeile + Modellantwort
+- `edited_by` = `"llm"`, `source` = `"llm"`
+- `source_refs` = Vereinigung der `source_refs` aller übergebenen Fakten
+  (pipeline.ex:842), wie beim Resümee
+- `epos_backend`, `epos_model` = aktuelles Stufe-5-Backend und -Modell
+  (pipeline.ex:847, 859–860)
+
+Fold: `apply_kind("EposEntryEdited", …)` (W/materializer/apply2.ex ab 517).
+Bei fehlenden `source_refs` bzw. Herkunftsfeldern bleiben die alten
+erhalten; der Text geht über `RenderSlots.epos_content/2`
+(render_slots.ex:127–157) nach `source` in den generiert-Slot (`"llm"`)
+oder kuratiert-Slot (`"manual"`), `content_md` wird wie beim Resümee über
+`Render.displayed/1` abgeleitet (render_slots.ex:329). Zusätzlich hängt
+der Fold eine Historien-Row an (apply2.ex, History-Write nach
+`epos_content`), die als `:manual`-Marker für 4.5 dient.
+
+4.7 Alt-Epos und Anzeige
+------------------------
+
+Die Pipeline schreibt das Alt-Epos (Row `entry_id` = campaign_id) nicht:
+sie publiziert nur mit `entry_id` = session_id (pipeline.ex:852). Das
+Alt-Epos ändert sich nur noch per Handbearbeitung (`epos_edit_save/2`,
+stage_edits.ex:768–798, `entry_id` = campaign_id, `source: "manual"`).
+
+Die Epos-Spalte (`epos_column/1`, H/live/campaign_live/components.ex:185
+ff., eingebunden heex:945–962, Titel aus `output_label(…, "epos")`,
+Default „Epos“):
+
+- Gibt es ein Alt-Epos mit Inhalt, steht es OBEN. Existieren daneben
+  Kapitel, trägt es die Zeile „Buch I (Alt-Epos)“ (components.ex:249–257).
+- Darunter die Kapitel in Session-Reihenfolge, je mit 🕳-Marker, falls die
+  Worker-Marker-Menge `epos_chapter:<id>` enthält, und im Bearbeitenrecht
+  einem Stift pro Kapitel (components.ex:263–313). Das Alt-Epos trägt nie
+  einen Marker (glatt_quellen.ex:123–126).
+- Darunter die Versionsliste (`epos_history_section/1`).
+- Der Stift im Spaltenkopf bearbeitet das Alt-Epos, nicht ein Kapitel.
+
+Kapitel und Alt-Epos kommen mit dem Kampagnen-Snapshot bzw. dem Scope
+`campaign_epos` (W/repo/snapshots.ex:141–144, 364–374), nachgeladen nach
+jedem `EposEntryEdited` (updates.ex:219).
+
+
+5. DIE GESCHWISTER IM SELBEN SCHRITT
+====================================
+
+5.1 Chronik / Zeitstrahl (deterministisch, kein LLM)
+----------------------------------------------------
+
+`Zeit.publiziere/3` (W/recording/pipeline/zeit.ex:39–109):
+
+1. Liest Kampagnen-Kalender, Session-Anker (Tag und Präzision) und den
+   Session-Zeitrahmen des Vorlaufs (zeit.ex:40–51).
+2. Drei Vorfilter auf die übergebenen Fakten (zeit.ex:53–61):
+   `Graph.time_signal?/2` (eigenes Zeitsignal oder belegter Rahmen),
+   `Graph.datierbar?/2` (hat eine Position auf dem Tageszähler),
+   `Repo.filter_arc_kind/2` (mindestens eine Zuordnung mit `kind == "arc"`,
+   dieselbe Zuordnung wie Resümee/Epos, W/repo/threads.ex:331–341).
+3. `Graph.resolve/4` datiert, `Render.timeline/2` formt Einträge
+   (zeit.ex:69–72; render.ex:49–108). Ein Eintrag ist der Claim selbst
+   (`summary: f["claim"]`, `label` = Figur, render.ex:95–107) — keine
+   Prosa. `source_pos` = früheste Quell-Block-Position im geglätteten
+   Transkript, als Sortierung innerhalb eines Tages (render.ex:73–83,
+   `block_positions/1` zeit.ex:111–121).
+4. Veröffentlicht erst `chronik_cleared_for_session` mit einer neuen
+   `generation`, dann je Eintrag `chronik_entry_changed` mit derselben
+   `generation` und einer ID aus Session, Tag, Label und Text
+   (zeit.ex:77–104, `derive_timeline_id/2` :127–133). Ein Lauf ohne
+   datierbare Fakten leert die Chronik der Session trotzdem.
+5. Gibt die Einträge an das Epos zurück (zeit.ex:108).
+
+Die Graph-Interna (`time_signal?`, `datierbar?`, `resolve`) habe ich nicht
+nachgelesen.
+
+5.2 Bogen-Progressionen (#838)
+------------------------------
+
+`ArcProgressions.publish/3` (W/recording/pipeline/arc_progressions.ex:
+24–54):
+
+- Welche Bögen: `Repo.touched_arcs_for_session/2` (W/repo/threads.ex:
+  358–365) — alle Fakt-Einträge der Stränge aus `campaign_threads/1`, deren
+  effektiver Bogen gesetzt ist und deren Session-Nummer die aktuelle ist.
+  `campaign_threads/1` liest über `list_campaign_facts/1`, also MIT
+  Fakt-Kuration und ohne ausgeblendete, nur verifizierte und nicht
+  review-verworfene Fakten (threads.ex:136–142) — anders als der Resümee-
+  und Epos-Pfad (2.2).
+- Pro Bogen EIN Modellaufruf (`render_one/6`, arc_progressions.ex:64–96),
+  gezählt fürs Laufband (:43, :49). Bögen ohne Metadaten (gerade gemergt
+  oder verwaist) werden still übersprungen (:59–62).
+- Vorheriger Eintrag: `get_prior_arc_entry/3` — der Eintrag mit der
+  größten Session-Nummer kleiner als die aktuelle, zur Lesezeit bestimmt
+  (W/repo/arc_progressions.ex:30–36).
+- Eingabe-Fakten: die berührten Claims dieser Session; im Backfill-Fall
+  (kein Vor-Eintrag und Bogen älter als diese Session) alle Claims des
+  Bogens (arc_progressions.ex:72–77).
+- Prompt: `Prompts.build_arc_progression_prompt/4` (prompts.ex:190–241).
+  Stil-Vorgabe aus `base` + `summary`. Ohne Vor-Eintrag: „Schreibe den
+  BEGINN der Verlaufs-Prosa … 2-4 Sätze“. Mit Vor-Eintrag: dessen Text als
+  Kontext, Auftrag „Schreibe diesen Stand FORT … Gib NUR den neuen Absatz
+  zurück“, keine Widersprüche zu Etabliertem. Die Leitfrage ist nie
+  Eingabe (Begründung prompts.ex:183–187).
+- Modell: Stufe 4 — `complete_fn.(:render, …)` mit `render_opts/0` und
+  Größen-Guard gegen `ctx_stage4` (render.ex:241–264).
+- Veröffentlicht `ArcProgressionGenerated` mit `campaign_id`, `arc_id`,
+  `session_id`, `session_number`, `content_md`, `render_backend`,
+  `render_model` (arc_progressions.ex:98–115). Fold:
+  `ArcFolds.arc_progression_generated/3` (W/materializer/arc_folds.ex:
+  190–227), Tabelle `worker_arc_progressions`, Schlüssel
+  `<campaign>:<arc>:<session>`, LWW pro Schlüssel. Ein Neulauf einer
+  Session ersetzt also nur deren Einträge, nie die anderer Sessions.
+- Angezeigt werden die Einträge in der Nachlese (`list_arc_progression_
+  entries/2`, W/repo/arc_progressions.ex:40–45); die Nachlese-Seite selbst
+  habe ich nicht nachgelesen.
+
+
+6. WAS BEWUSST NICHT GEPRÜFT WIRD (#1124)
+=========================================
+
+Nach dem Modellaufruf wird die Antwort nur getrimmt und veröffentlicht
+(render.ex:204–212). Bis #1124 lief an dieser Stelle ein NLI-Gate, das
+jeden erzeugten Satz auf die Fakten zurückzuführen versuchte; es ist
+ersatzlos entfallen (Moduledoc render.ex:16–21, Kommentar render.ex:
+205–211). Dasselbe gilt für die Bogen-Progressionen (render.ex:231–232,
+arc_progressions.ex:79–82).
+
+Die Linie (CLAUDE.md, Abschnitt „Wo Wahrheit erzwungen wird“): Die Fakten
+müssen echt sein, dort sitzt die Prüfung — seit J4 als Jacks Belegprüfung
+(jede Aussage braucht ein wörtliches Zitat je genanntem Block). Die Prosa
+darf abgestuft frei sein: Resümee leicht, Epos etwas mehr. Im Code sieht man
+die Abstufung nur in den Prompts: das Resümee soll „STRENG
+(context-faithful)“ bleiben (prompts.ex:79–82), das Epos darf das WIE
+ausmalen (prompts.ex:135–139). Ob die Modelle sich daran halten, prüft
+nichts.
+
+Was davon übrig bleibt, ist rein anzeigend:
+
+- der Lücken-Marker 🕳 an Resümee und Kapitel, wenn deren `source_refs`
+  einen Block mit unkuratierter ASR-Lücke berühren
+  (glatt_quellen.ex:128–146);
+- das Falsifikations-Flag „⚠ melden“ pro Session (heex:1017–1035).
+
+`Prompts.mark_flagged/2` markiert im Fortsetzungs-Prompt der Bögen noch
+Claims mit „[unbelegt]“ (prompts.ex:243–250). Da neue Einträge kein
+`flagged_claims` mehr mitbringen (arc_progressions.ex:102–112, der Fold
+speichert dann `[]`, arc_folds.ex:218), wirkt das nur noch für alte
+Einträge.
+
+
+7. NEU ERZEUGEN
+===============
+
+Alle drei Wege sitzen in der Resümee-Spalte bzw. im Kampagnen-Kopf, die
+Session-Knöpfe nur im Bearbeitenmodus (Klasse `nur-bearbeiten`,
+heex:1045–1056).
+
+7.1 „neu generieren“ pro Session
+--------------------------------
+
+Knopf in der Resümee-Spalte (heex:1044–1053), Bestätigung „Diese Session
+komplett neu auswerten? Das Transkript wird neu geglättet, die Aussagen
+werden neu gesammelt, danach Resümee, Chronik und Epos neu geschrieben.“
+Weg: `rerun_pipeline/2` (H/live/campaign_live/recording.ex:146–178, Recht
+`:regenerate_session`) → `Hub.Commands.request_session_regenerate/3`
+(apps/hub/lib/hub/commands.ex:187–198) → Kanal-Push
+`start_session_regenerate` (H/channels/worker_channel.ex:221–229) →
+`Worker.HubClient.Replay.on_session_regenerate/2`
+(W/hub_client/replay.ex:18–33) → `Pipeline.run_for_session(sid)`.
+Das ist der ganze Lauf aus 1.2, inklusive neuer Glättung und vollem
+Jack-Durchgang.
+
+7.2 „Pipeline für alle Sessions neu starten“
+--------------------------------------------
+
+Tab „pipeline“ im Kampagnen-Kopf, Knopf „Jetzt neu starten“
+(heex:181–196; Hinweistext „Resumées / Epos / Chronik werden
+überschrieben“, heex:186; die Dauerschätzung „~2 min“ je Session im
+selben Text ist eine feste Annahme im Template, keine Messung). Weg:
+`rerun_campaign/1` (recording.ex:226–252, Recht `:regenerate_campaign`) →
+`request_campaign_replay/2` (commands.ex:147–158) →
+`Replay.on_campaign_replay/2` (replay.ex:60–80) →
+`Worker.Recording.CampaignReplay.start/2`
+(W/recording/campaign_replay.ex:70–73).
+
+CampaignReplay nimmt alle Sessions mit Utterances, ruft für jede
+`run_for_session/1` (campaign_replay.ex:164) und wartet, bis sie fertig
+ist (`wait_pipeline_idle/2`, :166, :244). Nur ein Replay pro Worker
+gleichzeitig. Meldet eine Session zu lange keinen Fortschritt
+(`replay_stage_timeout_ms`, :58; Default laut CLAUDE.md 3 h, im
+Settings-Code nicht nachgesehen), bricht der Replay ab.
+
+7.3 „noch N Iterationen“
+------------------------
+
+Formular neben „neu generieren“ (heex:1054–1077): Zahl 1–8, Knopf
+„Iterationen“. Weg: `jack_iterationen/3` (recording.ex:182–209, Recht
+`:regenerate_session`, Zahl über `iterationen_zahl/1` auf 1..8 begrenzt,
+:216–221) → `request_jack_iterationen/4` (commands.ex, Doku ab ca. 200) →
+Push `start_jack_iterationen` (worker_channel.ex:231–240) →
+`Replay.on_jack_iterationen/2` (replay.ex:39–52, begrenzt noch einmal auf
+8) → `Pipeline.run_for_session(sid, jack_weiter: n)`.
+
+In der Pipeline: `jack_weiter/4` (pipeline.ex:374–382) holt die
+Kontextliste aus der GESPEICHERTEN Glättung
+(`Worker.Jack.Pipeline.gespeicherter_kontext/1`, W/jack/pipeline.ex:
+225–235) — keine neue Glättung — und ruft `run_wahrheitsbild/4` mit
+`jack: [weiter: n]`. Jack setzt auf seinem abgelegten Stand auf
+(`abgelegter_stand/2`, W/jack/pipeline.ex:208–217); hat sich die
+Blockliste seitdem geändert, scheitert es laut
+(`:blockliste_geaendert`, `:blockliste_unbekannt`, `:kein_stand`). Jack
+fährt dann höchstens n Verifikationen und hört früher auf, wenn zwei in
+Folge nichts Neues bringen (W/jack/pipeline.ex:62–63, `iterieren/6` ab
+533). Die Fakten danach sind der ganze Bestand, alt und neu (Doku
+W/jack/pipeline.ex:102–105).
+
+Danach läuft alles wie in 1.2: Registries, Bestand zurücklesen, Resümee,
+Chronik, Epos, Bögen. Die Flash-Meldung sagt das auch („danach werden
+Resümee, Chronik und Epos neu geschrieben“, recording.ex:198).
+
+7.4 Was bei einem Neulauf überschrieben wird
+--------------------------------------------
+
+- Fakten der Session: neues `SessionFactsExtracted`.
+- Resümee: neue Fassung im generiert-Slot. Angezeigt wird sie nur, wenn
+  es keinen handbearbeiteten Text gibt (3.6, 3.8).
+- Epos-Kapitel: neu, außer das Kapitel wurde je von Hand bearbeitet — dann
+  wird es übersprungen (4.5).
+- Alt-Epos: nie (4.7).
+- Chronik der Session: alle maschinellen Einträge werden per neuer
+  `generation` ersetzt (5.1). Handbearbeitete Chronik-Einträge liegen in
+  einem eigenen Overlay (`RenderSlots.chronik_curated/2`,
+  render_slots.ex:50–70) und bleiben angezeigt, solange keine Freigabe
+  existiert. Ob ein Overlay nach dem Neulauf noch auf einen Eintrag passt,
+  hängt an der Eintrags-ID (Tag, Label, Text); das habe ich nicht weiter
+  verfolgt.
+- Bogen-Progressionen: die Einträge dieser Session für die JETZT
+  berührten Bögen werden ersetzt. Einträge dieser Session für Bögen, die
+  beim Neulauf nicht mehr berührt sind, werden nicht gelöscht — im
+  gelesenen Code gibt es dafür keinen Pfad (`publish/3` schreibt nur).
+
+7.5 Was NICHT automatisch neu entsteht
+--------------------------------------
+
+Eine Kuration (Lücken-Kuration, Datums-Korrektur) löst über
+`Worker.Recording.Pipeline.Dirty` eine Neuableitung der Fakten bzw. der
+Chronik aus, aber KEIN neues Resümee und kein neues Epos: „die
+Prosa-Renders (Resümee/Epos) werden NICHT automatisch neu gerendert —
+Fakten + Timeline schon; die Prosa zieht beim nächsten Regenerate nach“
+(W/recording/pipeline/dirty.ex:48–51, Kanten-Tabelle :65–68).
+
+
+8. EHRLICHE GRENZEN
+===================
+
+Belegt im Code:
+
+- Gewichtsverzerrung durch N:M: ein Fakt mit mehreren Bögen steht mehrfach
+  im Prompt und wiegt entsprechend mehr; Prosa-Dedup gibt es nicht
+  (render.ex:300–306).
+- Kuration wirkt nicht auf Resümee und Epos (2.2): ausgeblendete,
+  korrigierte oder auf „nicht verifiziert“ gesetzte Fakten und
+  review-verworfene Fakten gehen im regulären Lauf mit. Die
+  Bogen-Progressionen sehen die Kuration dagegen (5.2) — die drei
+  Geschwister arbeiten also auf leicht verschiedenen Faktenmengen.
+- `source_refs` von Resümee und Kapitel enthalten auch Blöcke von Fakten,
+  die gar nicht im Prompt standen (rauschen, beim Resümee context)
+  (pipeline.ex:749, 842). Der 📎-Zähler und der 🕳-Marker rechnen damit.
+- Das Resümee ist Voraussetzung für Chronik, Epos und Bögen (1.3). Scheitert
+  es (z.B. Größen-Guard, Modell nicht gesetzt), fehlt auch alles andere
+  dieses Laufs.
+- Handbearbeitete Resümees verdecken jede neue Fassung, und im Hub fehlt
+  der Weg, eine neue Fassung zu übernehmen (3.8). Handbearbeitete Kapitel
+  werden gar nicht mehr neu erzeugt (4.5).
+- Die Stil-Vorschau zeigt nur die flache Prompt-Fassung (3.3).
+- Die Darstellungsform im Stil-Editor hat keine Wirkung (3.3).
+- Das Epos-Kapitel kennt kein Vorkapitel; Wiederholungen oder Brüche
+  zwischen Kapiteln verhindert nur der Kopf (4.1).
+- Der Kapitelkopf hängt an der Chronik und bleibt nackt, wenn die Chronik
+  nichts Datierbares findet oder scheitert (4.3).
+- Größen-Guard nur lokal und nur als Schätzung (Bytes/3); Cloud-Backends
+  laufen ungeprüft, ihre Ausgabe ist ohne `num_predict_stage{4,5}` auf
+  4096 Token gedeckelt (3.4, 3.5). Ob das ein langes Kapitel abschneidet,
+  habe ich nicht gemessen.
+- Lokal gibt es ohne `num_predict_stage{4,5}` keinen Ausgabe-Deckel
+  (settings.ex:182–186); bei Reasoning-Modellen zählen Denk-Token mit.
+- Nach einer Kuration bleibt die Prosa bis zum nächsten Neulauf alt (7.5).
+
+Aus CLAUDE.md, im Code nur teilweise nachvollzogen:
+
+- Modell-Neuladen: Resümee, Epos und Bögen schicken `num_ctx` mit
+  (render.ex:341, 356; local.ex:460–472). Jack und die Registries arbeiten
+  mit anderem bzw. ohne `num_ctx` (CLAUDE.md, Abschnitt „Stufe 2 ist
+  Jack“: „ein abweichendes `num_ctx` ließe Ollama das Modell neu laden“).
+  Wenn Stufe 4/5 dasselbe Modell wie Jack nutzen, ist daher mit einem
+  Neuladen beim Wechsel zum Render zu rechnen; bei `ctx_stage4 ≠ ctx_stage5`
+  und gleichem Modell zusätzlich zwischen Resümee (4), Epos (5) und Bögen
+  (wieder 4). Das Verhalten von Ollama selbst habe ich nicht geprüft.
+- Die Wirkung der Prompts auf die Qualität (Treue, Länge, Ausschmückung)
+  ist nicht gemessen; einen automatischen Treue-Test gibt es seit J4 nicht
+  mehr (CLAUDE.md, Abschnitt zu den entfernten Eval-Gates).
+
+
+9. VERALTETE KOMMENTARE UND DOKU (beim Lesen aufgefallen)
+=========================================================
+
+- `@doc` von `Render.render_summary/2` (render.ex:174–183) verspricht
+  `%{md, flagged, clean?}` und ein Gate; der Code liefert nur `%{md}`.
+- `@doc` von `render_arc_progression/5` (render.ex:219–233) beschreibt noch
+  `gate_facts` im Hauptteil, erst der Nachsatz sagt, dass es entfallen ist.
+- Moduledoc von `ArcProgressions` sagt „nach Verify“
+  (arc_progressions.ex:6–7); Verify gibt es nicht mehr.
+- `publish_wahrheitsbild_arc_progressions/3` wird im Pipeline-Moduledoc
+  und in einem Kommentar genannt (pipeline.ex:18, 625), existiert aber
+  nicht mehr; der Schritt heißt `ArcProgressions.publish/3`.
+  CLAUDE.md nennt dazu noch `render_with_gate` — im Code nicht mehr
+  vorhanden (grep).
+- In pipeline.ex:792 steht ein verwaistes `@doc false` ohne Funktion
+  dahinter (der Kommentar davor beschreibt `block_positions`, das in
+  zeit.ex liegt).
+- Der Event-Kommentar zu `CampaignVorgabeSet` (S/events.ex:426–431) sagt,
+  die Darstellungsform schalte „den Stage-3-Prompt-Branch“ — es gibt weder
+  Stufe 3 noch einen Leser.
+- Leere Resümee-Spalte: „Stufe-2-LLM erzeugt sie nach jeder Session“
+  (heex:978) — das Resümee ist Stufe 4.
+- Die Warnung beim Wiederholen der Kampagne („Resumées / Epos / Chronik
+  werden überschrieben“, heex:186) stimmt für handbearbeitete Resümees und
+  Kapitel nicht (7.4).
+- Der Kommentar zu `http_timeout_ms` (settings.ex:76–81) begründet den
+  Default mit „langem Stage-3-Prompt (alle Resümees aneinandergehängt)“ —
+  diesen Prompt gibt es nicht mehr.
+
+
+10. NICHT GEPRÜFT
+=================
+
+- Laufzeiten, echte Prompt-Größen, Ausgabelängen; kein Lauf gefahren.
+- Verhalten von Ollama beim Neuladen und bei `think`/`:chat` (nur die
+  Settings-Kommentare und `build_options/1` gelesen).
+- Interna von `Worker.Timeline.Graph` (`time_signal?/2`, `datierbar?/2`,
+  `resolve/4`) und `Worker.Timeline.Calendar.format/3`.
+- Die Dispatch-Zeile für `start_jack_iterationen` in `Worker.HubClient`
+  (nur `Replay.on_jack_iterationen/2` und die Kette laut CLAUDE.md
+  gelesen).
+- Default von `replay_stage_timeout_ms` im Settings-Code.
+- Die Nachlese-Seite, auf der die Bogen-Progressionen erscheinen.
+- Ob das Nicht-Anwenden der Fakt-Kuration im Render-Pfad (2.2) gewollt ist;
+  eine Stelle, die es begründet, habe ich nicht gefunden.
+- Die Serialisierung der Snapshot-Scopes an den Hub im Einzelnen und die
+  Gap-Marker-Berechnung jenseits von `GlattQuellen.marker/2`.

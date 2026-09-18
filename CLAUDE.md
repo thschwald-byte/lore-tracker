@@ -1554,7 +1554,11 @@ Seit J4 extrahiert kein einzelner Prompt mehr, sondern **Jack**: ein Agent mit W
 
 **Entity- und Thread-Registry laufen auf Jacks Modell und Endpunkt** (`complete(:summary, …)` ist fest lokal) und schicken **kein** `num_ctx` — so nutzen sie dieselbe geladene Instanz; ein abweichendes `num_ctx` ließe Ollama das Modell neu laden, mit 98 304 womöglich über den Grafikspeicher hinaus (CPU-Ausweichen). `ctx_jack` dient dort nur der Größenprüfung. Ein Quelltext-Wächter hält das fest, weil ein falsches `num_ctx` keinen Fehler erzeugt, nur einen langsamen Lauf.
 
-**Sichtbar** ist Jack im Laufband (Gedächtnis → Extraktion → Verifikation, s. #1122 unten; seit J5 auch die drei Läufe des Resümee-Jack) und in der **lokalen Laufsicht** des Workers auf `127.0.0.1:8099` (`Worker.Jack.Sicht`, `config :worker, jack_sicht_port`; in Tests aus). Sie bindet nur an Loopback, weil ein Lauf den Mitschnitt der echten Runde enthält; ein belegter Port — ein zweiter Worker auf derselben Maschine — ist eine Warnung, kein Startfehler. Eine Laufsicht im Hub für alle Mitglieder ist eigenes Ticket (#1208).
+**Sichtbar** ist Jack im Laufband (Gedächtnis → Extraktion → Verifikation, s. #1122 unten; seit J5 auch die drei Läufe des Resümee-Jack) und in der **lokalen Laufsicht** des Workers (`Worker.Jack.Sicht`, `config :worker, jack_sicht_port`, Default `127.0.0.1:8099`; in Tests aus). Sie bindet nur an Loopback, weil ein Lauf den Mitschnitt der echten Runde enthält. Eine Laufsicht im Hub für alle Mitglieder ist eigenes Ticket (#1208).
+
+**Jede Teststage bekommt ihren eigenen Port: Stage-Port + 10** (#1211), je weiterer Worker eine Dekade darüber — Stage 4001 also 4011, ihr zweiter Worker 4021. `mix lore.pr_test` gibt ihn als `LORE_JACK_SICHT_PORT` mit, `runtime.exs` liest ihn wie die übrigen Per-BEAM-Overrides; ohne die Variable bleibt es bei 8099, also bei `worker_prod`. Der Versatz von 10 hält Abstand zu den Stage-Ports selbst (4001..4007), die Dekade trennt zwei Worker derselben Stage, ohne in den Bereich der Nachbar-Stage zu laufen.
+
+**Ein belegter Port ist eine Warnung, kein Startfehler — und das ist teurer, als es klingt.** Im Betrieb schreibt niemand ein `protokoll.jsonl`; das Denken eines Laufs existiert ausschliesslich im Strom der Laufsicht. Startet sie nicht, ist es **unwiederbringlich weg**, und es gibt keinen zweiten Weg, es nachzulesen. Am 18.09.2026 lief ein ganzer Pipeline-Lauf so: die Teststage arbeitete blind, während auf 8099 die **leere** Sicht von `worker_prod` antwortete und Beobachtbarkeit vortäuschte. Wer einen Lauf beobachten will, prüft deshalb **im Worker-Log**, auf welchem Port die Sicht wirklich läuft (`Jack-Laufsicht: http://127.0.0.1:<port>`), statt sich darauf zu verlassen, dass ein Port antwortet.
 
 **Ehrliche Grenzen.**
 
@@ -1579,7 +1583,327 @@ Die CampaignLive hat **einen Layout mit einem Lesen|Bearbeiten-Toggle** (Header,
 
 Jeder Schritt läuft in `with_status` → eigene Fehlerklassen in `/admin/errors` (#716); Jack, der Resümee-Jack und der Epos-Jack melden ihre je drei Stufen selbst (`Pipeline.stufen_melder/3`). **Seit #783 Phase 2 (+ Nachtrag) haben die Render-Schritte je ein eigenes Backend + Modell**: `backend_stage4`/`model_stage4_<backend>` (bis J5 das Render-Resümee, seit J5 #1209 nur noch die Bogen-Progressionen), bis J6 (#1210) `backend_stage5`/`model_stage5_<backend>` (Render-Epos-Kapitel — Nachtrag, war anfangs Teil von Stage 4). **Stage 5 ist mit J6 entfallen:** alle `*_stage5`-Keys (Backend, Modelle, Endpunkt, Denk-Schalter, Kontextfenster, Sampling, `num_predict`), der Einstellungsblock „Render — Epos-Kapitel“, die Migration `migrate_stage4_to_stage5_if_unset!/0` und der `Worker.LLM`-Slot `:epos` (ein Aufruf damit ist ein `KeyError`, `CloudHelper.model_for_stage/3` raist) — sie hatten nach dem Einbau des Epos-Jack keinen Leser mehr. Ein gespeicherter Stage-5-Wert bleibt im `worker_state` liegen, wird aber weder gelesen noch geschrieben (nicht mehr in der Whitelist; ein alter Hub, der ihn pusht, trifft auf `:error`). Das Resümee wählt sein Modell seit J5 im Jack-Block (`resuemee_jack_model`), das Epos seit J6 ebenda (`epos_jack_model`). **Stufe 2 ist seit J4 (#1207) immer lokal** (Jack, s. „Stufe 2 ist Jack“); `backend_stage2`, die Cloud-Modelle der Stufe 2 und alle Stufe-3-Keys (`backend_stage3`/`model_stage3_<backend>` …) sind entfernt, ein gespeichertes `backend_stage2` wird ignoriert (ein Cloud-Wert erzeugt beim Boot eine Warnung). Bis J4 hatte auch der Verify-Judge ein eigenes Backend, damit er gezielt stärker sein konnte als der Extraktor („fox guarding henhouse“-Vermeidung, der #783-Ursprungs-Usecase); diese Trennung ist mit dem Judge entfallen. Die früheren Phase-1-Overrides `judge_model`/`render_model` (gleiches Backend, nur anderes Modell) sind mit der vollen Trennung entfernt. **Provenance-Stempel:** `SessionFactsExtracted` trägt `verify_backend`/`verify_model` (seit J4 `"jack"` und Jacks Modell), `SessionSummaryGenerated` trägt `render_backend`/`render_model` (seit J5 `"jack"` und das Modell des Resümee-Jack), `EposEntryEdited` trägt `epos_backend`/`epos_model` (seit J6 `"jack"` und das Modell des Epos-Jack; additiv, reine Persistenz — macht einen Backend-Wechsel zwischen zwei Sessions sichtbar, ist aber kein Pin-Mechanismus; der bleibt Phase 4 der Multi-Worker-Architektur-Arbeit). **Migration für Bestandsworker:** `Worker.Application.migrate_stage2_to_stage4_if_unset!/0` kopiert beim ersten Boot nach dem Update die alten Stage-2-Werte einmalig nach Stage 4 (bis J4 `migrate_stage2_to_stage34_if_unset!/0`, auch nach Stage 3; die Stage-2-Werte kommen per rohem Store-Read, weil ihre Keys nicht mehr in den Defaults stehen), bis J6 `migrate_stage4_to_stage5_if_unset!/0` (Nachtrag) analog Stage 4 nach Stage 5 — mit Stage 5 entfallen; die übrige Migration ist idempotent, gated auf einem rohen `backend_stage4`-Store-Read — ohne sie würde ein Bestandsworker mit `:no_model_configured` brechen. **Stil-Flavors (#787):** die Campaign-Flavors (`base` + `summary`/`epos`) wirken beim **Resümee-Jack** und beim **Epos-Jack**, die Grundton und den Ton ihrer Spalte vor dem Schreiben bekommen (beides hinter der Extraktion — Stil kann keine Fakten einschleusen; Dazudichtung in der Prosa wird seit #1124 bewusst nicht mehr geprüft); die Extraktion ist stilfrei, die Timeline deterministisch (kein Ton-Slot). Der Stil-Editor in der CampaignLive hat Tabs Resümee/Epos/Chronik; **eine Live-Prompt-Vorschau gibt es seit J6 (#1210) nicht mehr** (bis J5 für Resümee und Epos, bis J6 nur noch für das Epos). Der Epos-Tab erklärt stattdessen, dass Jack das Kapitel frei schreibt, die Überschrift die Form bestimmt, der Epos-Ton die Erzählhaltung und der Weg aus dem Resümee kommt; `Hub.PromptPreview` samt Kanal-Handler ist entfernt. Der Worker beantwortet eine Vorschau-Anfrage weiter (`Prompts.preview_prompt/2` mit `build_summary_render_prompt`/`build_epos_render_prompt`, `Worker.HubClient.Rpc.on_preview/2`) — nur für einen zurückgerollten Hub. Der Resümee-Tab erklärt, dass Jack schreibt, die Überschrift die Form bestimmt und die Töne ihm vor dem Schreiben mitgegeben werden; seit #1209 hat er zusätzlich das Zahlfeld **„Länge des Resümees (Wörter)“** (das **Ziel**, Standard 150; Hilfetext und Hinweis im Tab sagen, dass das Resümee bis zum Doppelten wachsen darf, wenn der Weg der Gruppe es braucht, und nennen die Obergrenze; leer = Standard, gespeichert als `CampaignResuemeeLaengeSet`, nur bei Änderung; eine ungültige Eingabe speichert nichts und lässt den Editor offen — s. „Resümee durch den Resümee-Jack“), und die „gesetzt“-Plakette des Tabs zählt eine eigene Länge mit. Die Überschrift (`vorgaben[stage].name`) setzt bei allen drei den **Spaltentitel**; beim Resümee und beim Epos bestimmt sie zusätzlich die **Form** — die Jacks leiten sie im Überblick daraus ab (FORM-Notiz). Die frühere **„Darstellungsform“ ist entfallen** (Feld, Hub-Leser, Payload — der Hub schickt nur noch den Namen); Fold und Tabellenspalte lesen Alt-Events weiter, gelesen wird die Spalte nicht mehr. Epos-Kapitel-Köpfe sind deterministisch (#752), die Timeline hat keinen Prompt. Historie: Default-Flip auf Wahrheitsbild 2026-07-08 nach dem Free-Seattle-Real-Lauf; Retention: historische Chain-Events/-Artefakte bleiben lesbar (Materializer-Folds + Event-Schemas unangetastet, nur die Producer sind weg).
 
-**Zeitstrahl / Datums-Auflösung (#724).** Der Timeline-Publish ist verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (primärer Sort-Schlüssel) + `precision` + seit #1092 `source_pos` (Zweitschlüssel innerhalb eines Tages, s.u.). UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Seit #911/#958 filtert der Timeline-Publish VOR `Graph.resolve` Vorstufen weg** (zwei damals, seit #1068 E3 drei — der Typ-Filter `Graph.datierbar?/2` kam dazu), die die Chronik sonst zum Fakten-Dump machten (Free-Seattle-Befund: 544 von 548 verifizierten Fakten wurden Chronik-Einträge): `Graph.time_signal?/1` (pure) verlangt ein EIGENES Zeit-Signal des Fakts (Anker/Offset/`in_game_date`-Bridge #676/#729) statt des reinen Präsens-Fallbacks (`narration_time == "present"` ohne jedes Signal sitzt sonst automatisch am Session-Anker-Tag), und `Repo.filter_arc_kind/2` lässt nur `kind == "arc"`-Fakten durch (gleiche Zuordnung wie Resümee/Epos seit #909, `fact_render_assignments/2`) — die Chronik ist ein Bogen-Zeitstrahl, kein Protokoll-Abzug.
+### Die Chronik schreibt Jack — Phasen statt Einzelereignisse (Issue #1211, J7)
+
+**Die Chronik entsteht seit J7 in einem Agentenlauf**, nicht mehr
+deterministisch. Der frühere Weg (`Pipeline.Zeit.publiziere/3`) liess jeden
+verifizierten Fakt durch drei Filter laufen und machte aus jedem Überlebenden
+einen Eintrag mit gerechnetem Tag. Das trug nicht, und zwar belegt: 543 von
+544 Einträgen einer echten Kampagne lagen auf demselben Tag (#1092), 49 von 70
+Einträgen einer Sitzung waren Zustände statt Ereignisse (#1119), und die
+Zeitfelder, auf die sich die Rechnung stützt, bleiben praktisch leer (#1140).
+
+**Die Arbeitsteilung: Jack urteilt, Elixir rechnet.** Ein Sprachmodell kann
+Tage nicht verlässlich addieren. Es kann aber sagen, was vor, nach oder
+gleichzeitig mit etwas anderem geschah, und es kann bündeln.
+
+**Die Flughöhe ist die Produktentscheidung** (Maintainer, 17.09.2026): Ein
+ganzer Auftrag — von der Annahme über die Anfahrt bis zur Abrechnung — ist
+**eine Phase**, nicht zwölf Einträge; das geht regelmässig über
+Sitzungsgrenzen. Einen eigenen Eintrag (`wichtigkeit: "schluesselszene"`)
+bekommt nur, was die Kampagne oder die Welt verändert: der Tod einer
+Spielerfigur, ein Krieg, eine Seuche, ein Epochenereignis. Ein erschossener
+Wachmann ist Teil der Phase. Aus mehreren hundert Fakten sollen **etwa zwanzig
+Einträge** werden.
+
+**Zwei Betriebsarten, und die zweite ist der Normalfall.** Ist die Chronik
+leer, läuft der volle Aufbau (Überblick → Schreiben → Durchsicht) — genau
+einmal je Kampagne. Sobald eine Chronik existiert, läuft nur noch die
+**Verfeinerung**: lesen, ergänzen, einordnen. Auch bei „neu generieren" und
+beim Replay. Eine halb entstandene Chronik zählt als vorhanden; nichts wird
+weggeworfen. **Geleert wird nie** — `ChronikClearedForSession` bleibt lesbar,
+wird aber nicht mehr geschrieben.
+
+**Der Chronik-Jack sieht als einziger die ganze Kampagne.** Resümee (#1209)
+und Epos (#1210) lesen nichts aus späteren Sitzungen; ihr Gegenstand ist eine
+Sitzung. Die Chronik ist kampagnenweit — ohne den Blick nach vorn liesse sich
+eine Einordnung nicht prüfen. Bezüge über Sitzungsgrenzen sind erlaubt.
+
+**Die Reihenfolge** (`Worker.Jack.Chronik.Ordnung`) rechnet aus den Bezügen
+(`nach` / `vor` / `gleichzeitig_mit` / `absolut` / `isoliert`) eine Ordnung.
+Drei Entscheidungen darin: „gleichzeitig" ist **keine Kante, sondern eine
+Klasse** (zwei gegenläufige Kanten wären ein Zyklus, und die Ordnung meldete
+einen Widerspruch, wo Jack etwas Zulässiges gesagt hat); ein Widerspruch ist
+ein **Befund** (`{:zyklus, ids}`) statt eines stillen Rückfalls auf `unknown`,
+wie ihn `Timeline.Graph` für Einzelfakten macht; und bei Gleichstand
+entscheidet die **ID**, damit zwei Worker dieselbe Reihenfolge zeigen (die
+#1092-Lehre).
+
+**Das Datum entsteht nur, wo ein Anker es trägt**
+(`Worker.Jack.Chronik.Datierung`). Ein im Spiel genannter Zeitpunkt datiert
+seine Stelle; der Session-Anker datiert den **ersten** Eintrag, nicht alle —
+ihn auf jeden zu legen war der alte Fehler. Ein Eintrag zwischen zwei festen
+Punkten bekommt die Mitte, aber mit **gröberer Präzision** (bis zwei Tage
+Abstand taggenau, bis ein Vierteljahr monatsgenau, darüber das Jahr). Bleibt
+ein Eintrag ohne Anker in Reichweite, bleibt er **ohne Tag** — lieber keine
+Angabe als eine gerechnete, die niemand nachprüfen kann.
+
+**Die Regeln stehen in den Werkzeugen**, nicht im Auftrag: Fakten müssen
+existieren, ein Fakt liegt in höchstens einer Phase, das Ziel eines Bezugs
+muss existieren, Kuratiertes wird nicht gestrichen (ergänzen und einordnen
+aber schon — sein Text bleibt vollständig stehen), und ein Eintrag, auf den
+sich andere beziehen, wird nicht entfernt. `fertig()` lehnt ab, solange ein
+**ereignisförmiger** Fakt in keinem Eintrag liegt; Zustände zählen nicht mit
+(#1119).
+
+**Der Überblick hat eigene Notizen** (`Worker.Jack.Chronik.Notizen`,
+Abschnitte PHASEN, SCHLUESSELSZENEN, OFFEN). Der **Abschnitt IST die
+Wichtigkeit** des Eintrags, den das Schreiben daraus anlegt — deshalb trägt
+`notiz` kein eigenes Feld dafür. Dieselbe Regel wie beim Schreiben: ein
+Geschehen liegt in höchstens einer Gruppe, und `fertig()` lehnt ab, solange
+eines in keiner liegt. Keine FORM, kein Deckel: wie viele Abschnitte eine
+Kampagne hat, entscheidet die Kampagne; die Flughöhe steht im Auftrag, nicht
+als Schranke im Werkzeug.
+
+**Das war der Defekt des ersten echten Laufs** (18.09.2026, seattleV5 S1):
+Der Überblick brach nach 638 s mit `{:wiederholung, "notiz"}` ab und konnte
+unter keinen Umständen gelingen. Drei Ursachen, die zusammenwirkten — `notiz`
+war unverändert das Werkzeug des Resümee-Jack (es sprach vom Resümee und
+erzwang FORM/GLIEDERUNG/OFFEN), `Stand.abschnitte(:chronik)` fiel über einen
+**Auffangzweig** still auf ebendiese zurück, und `Abschluss.hindernisse/1`
+prüfte gegen die Chronik-**Einträge**, die es im Überblick noch nicht gibt:
+Es verwies auf `chronik_eintrag()`, ein Werkzeug, das dieser Lauf gar nicht
+hat. Jack wiederholte, bis die Sperre (#1174) den Lauf beendete.
+
+Zwei Lehren daraus, beide im Code verankert: **`Stand.abschnitte/1` hat
+keinen Auffangzweig mehr** — eine unbekannte Art wirft, statt still die
+falschen Abschnitte zu liefern. Und ein Test darf einen Agentenlauf nicht
+nur mit einem geskripteten Modell fahren, das `fertig` aufruft: Geprüft wird
+seitdem der **ganze Weg** (notieren → Ablehnung → vollständig zuordnen →
+Abschluss, `chronik/notizen_test.exs`). Kein bestehender Test hat die
+Ablehnung je erreicht.
+
+**Drei Korrekturen aus dem ersten Review der gerenderten Aufträge (18.09.2026),
+alle vor dem zweiten Lauf gebaut:**
+
+- **Der Eintrag speichert die ECHTEN Fakt-IDs.** Jack kennt Fakten nur als
+  `S1-F12` (Position im Bestand); bis zum Review speicherten die Werkzeuge
+  genau diese kurze Form — entgegen dem Moduledoc der Eingabe, das das
+  Gegenteil behauptete, und ohne einen Test, der die Formen unterschied. Nach
+  einem Regenerate hätte jeder Eintrag stumm auf andere Fakten gezeigt (die
+  K6-Klasse). Jetzt übersetzt `Entwurf.fakt_ids/2` an genau EINER Stelle in
+  die inhaltsadressierte ID; zurück in die kurze übersetzen nur die Anzeige
+  der Durchsicht und die Ablehnungen (das Modell kennt nur die kurze). Die
+  Eintrags-ID (`chr-<sha1 der sortierten echten IDs>`) ist damit über Läufe
+  stabil, solange die Fakten es sind.
+- **`zeit_bezug` ist eine LISTE.** „Gleichzeitig mit A und nach B" war mit
+  einem Bezug nicht sagbar. `Ordnung.bezuege/1` ist die eine Lesestelle für
+  beide Formen (eine gespeicherte Map wird zur Ein-Element-Liste, `isoliert`
+  zur leeren Liste) — Bestand bleibt lesbar, geschrieben wird die Liste.
+  Der Sortierer war schon ein Graph (Union-Find + Kahn), die Liste ändert
+  nur den Kantenbau; weil dadurch mehr Kreise möglich sind, meldet
+  `{:zyklus, ids}` seitdem nur den **Kern** (Knoten auf einem Kreis), nicht
+  den Anhang dahinter. Permutationstest: dieselben Bezüge in anderer
+  Reihenfolge ergeben dieselbe Ordnung.
+- **`NICHT_ZEITLEISTE`** (Notiz-Abschnitt, in allen drei Läufen): Geschehen,
+  das in keine Zeitleiste gehört (Würfelmechanik, Tischgespräch ohne
+  Handlungsfolge), legt Jack mit Begründung dort ab; es gilt als behandelt,
+  wird nie ein Eintrag, und der Trichter zählt es als `fakten_ausserhalb` —
+  getrennt von `fakten_ohne_eintrag`, damit „bewusst draussen" von
+  „verschluckt" unterscheidbar bleibt. Ohne den Abschnitt zwang `fertig()`
+  Jack, alles irgendwo unterzubringen — also auch das, was nicht hineingehört
+  (Maintainer-Anweisung). Dazu haben die **geteilten Werkzeugbeschreibungen**
+  (`bloecke`, `block`, `boegen`) jetzt Chronik-Klauseln — vorher nannten sie
+  dem Chronik-Jack das Resümee und ein `fertig(ausgelassen)`, das er nicht
+  hat: dieselbe Klasse wie der `notiz`-Defekt.
+
+**Was der erste durchgelaufene Lauf lehrte (18.09.2026, seattleV5 S1).** Er
+kam durch — Überblick fünf Gruppen, Schreiben vier Einträge, `fertig`
+angenommen, 15 Runden, 31 Minuten — und **die Chronik blieb leer**: Die
+Durchsicht starb an `{:badmap, nil}` im Stand-Abbild, die Exception riss den
+Prozess mit, veröffentlicht wurde nichts. Vier Befunde, alle gebaut:
+
+- **Jeder Jack braucht sein eigenes Abbild für Beobachter.** Der Chronik-Jack
+  hatte keins, also fiel der Halter auf das des Resümee-Jack zurück — die
+  Laufsicht zeigte `jack: "resuemee"` mit Wörtern und Gliederung, und in der
+  Durchsicht wurde daraus ein Absturz. `Chronik.Notizen.abbild/1` trägt jetzt
+  die Zahlen dieses Jacks (Phasen, Schlüsselszenen, `ausserhalb`, offene
+  Geschehen, Zyklen, Durchsicht-Stand); `Chronik.jack/0` gibt es mit.
+  Dieselbe Auffangzweig-Klasse wie `abschnitte(:chronik)` und die geteilten
+  Werkzeugbeschreibungen — dreimal am selben Tag.
+- **Die Durchsicht ist best-effort auch gegen ein RAISE**, nicht nur gegen
+  ein Fehler-Tupel (`durchsehen/5` hat ein `rescue`, Quelltext-Wächter in
+  `chronik/kette_test.exs`). Ein Fehler in der letzten, verzichtbaren Stufe
+  darf die Arbeit der vorigen nicht vernichten. Für die Kette gab es bis
+  dahin **keinen** Test, nur für ihre Bausteine.
+- **Werkzeug `offen()`** in allen drei Läufen: die Geschehen, die noch in
+  keinem Eintrag liegen, **mit ihrer Aussage**. Im Denkstrom war zu sehen,
+  wie Jack sich sonst durch 112 Fakten hakt („✓ F73: in Entry 3 … Wait, what
+  about F81?"). Dazu nennt jede Antwort eines schreibenden Werkzeugs den
+  Reststand (`Entwurf.reststand/1`), und `Abschluss.offene/1` ist die eine
+  Stelle, die weiss, wogegen geprüft wird — im Überblick gegen die Notizen,
+  beim Schreiben gegen die Einträge. Beide Verwechslungen sind an diesem Tag
+  passiert.
+- **`optional:` für die Bezugsliste.** Nach der Umstellung auf die Liste
+  fehlten die Pfade `zeit_bezug.ziel`/`.zeit`, also verlangte das strenge
+  Schema beide in jedem Element — `eintrag_einordnen` wurde viermal abgelehnt
+  und war unbenutzbar. Der Schema-Pfad kennt keinen Index.
+
+**Jedes Werkzeug ist erklärbar: `hilfe()`** (Maintainer-Anweisung, 18.09.2026;
+`Resuemee.Werkzeuge.hilfe/1`, in `aus/3` vor allen anderen, gilt damit für
+alle Jacks). Ohne Angabe die Liste mit erstem Satz, mit `werkzeug:` die
+vollständige Beschreibung samt Feldern, Pflicht und Optional. `:frei`, ändert
+nichts. **Alle 13 Auftragsvorlagen nennen es** — die Beschreibungen tragen
+die Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
+der Wortlaut weg, und Fragen muss billiger sein als ein Probeaufruf, den die
+Wiederholungssperre mitzählt.
+
+**Die Ablehnung nennt die gezählte Zahl** (`Resuemee.Abschluss`, gilt für
+alle drei Jacks). Bis dahin hiess es nur „das stimmt nicht mit der
+Buchhaltung überein" — die Zahl blieb verborgen, damit Jack nachzählt statt
+abzuschreiben. Am echten Lauf gesehen, was das kostet: Die Arbeit war
+vollständig, Jack hatte sich um ein paar Fakten verzählt, und die Ablehnung
+schickte ihn ins Nachzählen von 112 Fakten. Der Zweck des Abgleichs hängt an
+den **Hindernissen**; sind die leer, trägt das Verschweigen nichts bei.
+
+**Zustände: die Regel gilt für EINTRÄGE, nicht für Zugehörigkeit.** Die
+frühere Formulierung („gehören nicht in den Zeitstrahl") hat der Maintainer
+als grenzwertig benannt — zu Recht: Ein Zustand hat meist einen Anfang, und
+das Etikett kommt aus der Extraktion, die laufzeit-ungegated ist; ein falsch
+gelabeltes Geschehen fiele still heraus. Ein Zustand bekommt keinen **eigenen
+Eintrag**, darf aber in einer Phase aufgehen, wenn er sie erklärt — und
+`fertig()` verlangt ihn nicht. Die Aufträge sagen jetzt zusätzlich:
+**entscheide am Inhalt, nicht am Etikett**.
+
+**Zwei Werkzeuge gegen das Zählen und das Umschreiben** (beide
+Maintainer-Wort, 18.09.2026, am Lauf beobachtet):
+
+- **`fakt_umhaengen(fakt, von, nach)`** hängt EINEN Fakt um — im Überblick
+  zwischen Notiz-Gruppen, beim Schreiben zwischen Einträgen, ohne die Texte
+  anzufassen. `notiz` kennt nur „derselbe Schlüssel ersetzt", und
+  `eintrag_ergaenzen` hängt nur an; wer einen Fakt umhängen wollte, musste
+  Quell- und Zielgruppe mit ihrer **ganzen** Faktenliste neu schreiben — bei
+  einer Phase mit 36 Fakten eine Wiederholung, die die Sperre mitzählt. Im
+  Denkstrom stand es wörtlich: „I need to reorganize the groups by removing
+  S1-F80 from weltbild and reapplying the seattle key without it." Der letzte
+  Fakt wandert nicht heraus (eine Gruppe ohne Fakt trägt nicht, und die
+  Eintrags-ID hängt an den Fakten); Ablehnungen nennen, wo der Fakt
+  tatsächlich liegt.
+- **`zahlen()`** nennt die Zähler des Laufs, auch die, die `fertig` als
+  Quittung verlangt. Jack hat sie in **jedem** der drei Läufe falsch gezählt
+  (108 statt 27 bewertete Fakten, 9 statt 8 Gruppen, dazu die Durchsicht);
+  jede Fehlzahl kostet eine Runde, eine schickte ihn ins Nachzählen von 112
+  Fakten. **Ehrlich dazu:** Der Zahlenabgleich ist damit keine Selbstprüfung
+  mehr, sondern eine Bestätigung — geprüft wird inhaltlich über die
+  Hindernisse, und die sind deterministisch. Der Abgleich hat in drei Läufen
+  keinen einzigen inhaltlichen Fehler gefunden, aber vier Runden gekostet.
+
+**Ein Name, eine Definition.** `Resuemee.Werkzeuge.aus/3` baut die Liste über
+`Map.new(definitionen)` — zwei Definitionen gleichen Namens entscheidet die
+Reihenfolge, also der Zufall. `fakt_umhaengen` gibt es zweimal (Gruppen und
+Einträge), deshalb steht die Notizen-Variante nur im Überblick, und
+`chronik/werkzeuge_test.exs` bewacht beides: kein Name doppelt, und jeder
+Name aus `namen/1` hat eine Definition (sonst bricht `aus/3` mit `KeyError`).
+Derselbe Test prüft, dass **jedes** Werkzeug jedes Laufs über `hilfe()`
+erklärbar ist.
+
+**Ein Werkzeugfehler ist kein Hindernis** (`Worker.Agent.Aufruf`, gilt für
+alle Jacks). Eine Ausnahme im Werkzeug kam bis zum 18.09.2026 als
+gewöhnliches `{:error, text}` zurück — für das Modell nicht von „dir fehlt
+noch etwas" zu unterscheiden. Der Abschluss der Chronik-Durchsicht warf bei
+JEDEM Aufruf `key :absaetze not found` (`Chronik.Abschluss.fertig` rief die
+Resümee-Hindernisse, die `s.durchsicht.absaetze` lesen — die Chronik führt
+`vorgelegt`/`erledigt`), und Jack verbrannte **28 von 51 Runden**: erst
+Diagnose, dann der Versuch, das Feld zu erfinden, dann ein kompletter zweiter
+Durchgang. Er hatte den Bug sogar richtig erkannt („This isn't something I
+can fix by changing my parameters") und konnte trotzdem nicht aufhören — ein
+Lauf endet nur über `fertig()`, und `fertig` ist `:frei`, läuft also nie in
+die Wiederholungssperre. Seitdem sagt die Antwort, dass es **nicht an den
+Angaben liegt**, und nach drei inneren Fehlern desselben Werkzeugs endet der
+Lauf (`@innere_fehler_deckel`) — der Bestand bleibt, weil jeder Jack
+veröffentlicht, was bis dahin steht. Der Rundendeckel liegt bei 5000; ohne
+diesen Riegel liefe ein Bug im Abschluss stundenlang.
+
+**Offen aus demselben Review:** `eintrag_ergaenzen` hängt Text an; werden
+die Fakten einer Sitzung neu extrahiert und umformuliert, gelten sie als
+offen, und die Phase wird ein zweites Mal geschrieben. Provenienz je
+Textsegment ist eigene Arbeit. **Kein Eval gegen synthetische Seeds**
+(Maintainer, 18.09.2026): Referenz ist seattleV5 bzw. der gesicherte
+Teststage-Stand.
+
+**Gemessene Laufzeit der Pipeline** (seattleV5 S1, 2.168 Utterances, 746
+Blöcke, 112 Fakten, `qwen3.8:27b-text`, Teststage): **5,78 h** für den ganzen
+Lauf. Davon Jacks Verifikation 2,6 h (6 Durchgänge, 46 %), Extraktion 47 min,
+Resümee-Überblick 71 min, Epos zusammen 26 min, Jacks Gedächtnis 9 min. Die
+Glättung samt Gap-Fill braucht **98 Sekunden** — sie ist entgegen der
+#1062-Erfahrung auf dieser Kampagne kein Zeitposten. Die Zahlen samt
+Mitschrift liegen unter `~/.local/share/lore-jack/laufzeiten/`; der
+Fortschritt-Prozess hält sie nur im Arbeitsspeicher (#1122).
+
+**Der Trichter wird gezählt** (#1111): Fakten hinein, Einträge hinaus, wie
+viele Geschehen in keinem Eintrag liegen, dazu Zyklen und verwaiste Bezüge.
+Bei einer gebündelten Chronik ist das die entscheidende Zahl — „gebündelt" und
+„verschluckt" sehen im Ergebnis gleich aus. Genau dieser Zähler fehlte, als
+wochenlang „16 → 175 Einträge" als belegter Erfolg in der Doku stand, während
+die Wirkung null war.
+
+**Gepflichtet ist die BEWERTUNG, nicht die Zuordnung** (Maintainer,
+18.09.2026: „es darf keine pflicht geben — pflicht ist das sie bewertet
+werden — also jedes ding anschauen — und wenn alle NICHT_ZEITLEISTE sind —
+dann ist das ok"). Jeder Fakt muss entschieden sein: in einem Eintrag oder
+mit Begründung unter `NICHT_ZEITLEISTE`. Was herauskommt, ist frei — stehen
+am Ende alle Fakten ausserhalb, ist das ein gültiges Ergebnis, und die
+Chronik bleibt zu Recht leer (eine Sitzung, die nur am Tisch stattfand, hat
+keine Zeitleiste). Die Pflicht ist das Anschauen: Ein Fakt, den niemand
+entschieden hat, ist unbemerkt verschwunden, und von aussen sieht das aus wie
+ein gut gebündelter Abschnitt.
+
+**Das gilt für ALLE Fakten, auch für Zustände.** Die frühere Regel nahm
+`fact_type: "zustand"` von der Prüfung aus. An echten Daten ist das die
+Mehrheit — **85 von 112 Fakten** an seattleV5 S1 (14 `ereignis`, 10
+`absicht`, 2 `beziehung`, 1 `zustandsänderung`) —, und damit entschied ein
+laufzeit-ungegatetes Extraktions-Etikett darüber, was die Zeitleiste
+überhaupt sehen darf; Jack hat es im Lauf mehrfach selbst angezweifelt („F77
+ereignis? No, it says zustand — wait"). Jetzt sieht er jeden Fakt, `offen()`
+nennt die unbewerteten **mit Art und Aussage**, und die Aufträge sagen:
+entscheide am Inhalt, nicht am Etikett. Ohne eigenen Eintrag bleibt ein
+dauerhafter Zustand weiterhin (#1119) — das ist eine Regel über die Flughöhe,
+keine über die Bewertung.
+
+**Vorbereitung am Tisch gehört nach `NICHT_ZEITLEISTE`** (Maintainer-Wort):
+Charaktererstellung, Regelerklärung, Weltvorstellung, Terminabsprachen. Im
+Lauf plante Jack „Character creation 2080 (meta)" als Chronik-Eintrag und
+nannte es selbst „meta"; zwei solche Einträge banden **73 der 112 Fakten**.
+Nicht zu verwechseln mit dem, WAS dabei erzählt wird: Schildert die
+Spielleitung die Vitas-Plage, ist der Inhalt Weltgeschichte und gehört in
+eine Phase — nur der Akt des Vorstellens nicht.
+
+**Keine Code-Prüfung gegen verschluckte Einschnitte** (Maintainer-Wort): der
+Fakt-Typ `zustandsänderung` ist zu fein (jede Verletzung trägt ihn), und ein
+Wortabgleich auf Todesfälle wäre das Verfahren, das #1109 abgeschaltet hat.
+Die Regel steht im Auftrag, mit Beispielen.
+
+**Datenmodell:** `worker_chronik_entries` trägt sechs Felder mehr
+(`wichtigkeit`, `fakt_ids`, `zeit_bezug`, `rang`, `in_game_day_bis`,
+`sitzungen`). Der `rang` hat beim Lesen Vorrang vor dem Tag — er IST die
+Reihenfolge. Die Eintrags-ID hängt an den **Fakten**, nicht am Text (Muster
+#916): Formuliert ein späterer Lauf denselben Abschnitt um, bleibt es derselbe
+Eintrag, und Kuration wie Bezüge überleben. **Die Gestalt der Row steht an
+EINER Stelle** (`Materializer.Chronik.row/2` und `aus_row/1`) — sie war an
+sechs Stellen nachgebaut, und die neuen Spalten brachen 18 Tests mit einer
+Meldung, die auf die Schreibstelle zeigt statt auf den Grund.
+
+**Die Review-Liste ist abgebaut.** Sie sammelte, was der Rechner nicht
+platzieren konnte; diese Kategorie gibt es nicht mehr. Ereignis
+`SessionFactDateSet`, Fold und Tabelle bleiben lesbar (gesetzte Daten alter
+Sitzungen, harte Anker für Jack), ebenso der Worker-Scope
+`campaign_review_facts` für einen zurückgerollten Hub. Das Ausblenden eines
+Fakts kann die Fakten-Spalte (#916).
+
+**Ehrliche Grenzen.** `republish_timeline_for_session/1` ist stillgelegt: Es
+gibt keinen deterministischen Weg zurück, und ein Modelllauf ist nichts, was
+man als Nebenwirkung einer Kuration startet. Nach einer Kuration ziehen die
+Fakten sofort nach, die Chronik erst beim nächsten Pipeline-Lauf. Die Spanne
+einer Phase (Beginn und Ende) wird nicht gerechnet — dafür bräuchte es Tage an
+den einzelnen Fakten, und genau die gibt es nicht. Der Epos-Kapitelkopf (#752)
+nimmt sein Datum aus der Tagesspanne der Chronik-Einträge und bleibt ohne
+Datum, wo keiner einen Tag trägt. **Und vor allem: ob die Flughöhe auf echten
+Daten stimmt, ist nicht gemessen** — das zeigt erst ein Lauf mit dem echten
+Modell.
+
+**Einstellung:** `chronik_jack_model`, leer = Jacks Modell.
+
+**Zeitstrahl / Datums-Auflösung (#724) — HISTORIE, mit #1211 ersetzt.** Der folgende Absatz beschreibt den deterministischen Pfad, den der Chronik-Jack abgelöst hat (s. Abschnitt darüber). Er bleibt stehen, weil Kalender, Session-Anker und die Tageszähler-Rechnung weiterleben — nur der Weg von den Fakten zur Chronik ist ein anderer. Der Timeline-Publish war verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (primärer Sort-Schlüssel) + `precision` + seit #1092 `source_pos` (Zweitschlüssel innerhalb eines Tages, s.u.). UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Seit #911/#958 filtert der Timeline-Publish VOR `Graph.resolve` Vorstufen weg** (zwei damals, seit #1068 E3 drei — der Typ-Filter `Graph.datierbar?/2` kam dazu), die die Chronik sonst zum Fakten-Dump machten (Free-Seattle-Befund: 544 von 548 verifizierten Fakten wurden Chronik-Einträge): `Graph.time_signal?/1` (pure) verlangt ein EIGENES Zeit-Signal des Fakts (Anker/Offset/`in_game_date`-Bridge #676/#729) statt des reinen Präsens-Fallbacks (`narration_time == "present"` ohne jedes Signal sitzt sonst automatisch am Session-Anker-Tag), und `Repo.filter_arc_kind/2` lässt nur `kind == "arc"`-Fakten durch (gleiche Zuordnung wie Resümee/Epos seit #909, `fact_render_assignments/2`) — die Chronik ist ein Bogen-Zeitstrahl, kein Protokoll-Abzug.
 
 **#1069 (E7) ist mit #1213 wieder entfernt — gemessen wirkungslos.** Bis dahin leitete ein deterministischer Zeit-Vorlauf (`Worker.Timeline.Vorlauf`) nach der Glättung aus den geglätteten Blöcken einen Session-Zeitrahmen ab (Tageszeit, Tagesgrenzen, Jahres-Kandidaten), legte ihn als `SessionZeitrahmenSet` ab, und `Graph.time_signal?/2` liess bei belegtem Rahmen **jeden** Fakt der Session durch den ersten Vorfilter.
 
