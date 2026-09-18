@@ -189,7 +189,39 @@ defmodule Worker.Jack.Chronik.Pipeline do
         end
 
       {:ok, _} = Worker.Intents.publish(payload)
-      payload
+      fuer_leser(payload)
     end)
+  end
+
+  # Das Ereignis trägt String-Schlüssel und lässt ein fehlendes Datum ganz weg
+  # (s.o.) — für den NÄCHSTEN LESER ist beides falsch. `Render.chapter_header/3`
+  # greift mit `&1.in_game_day` zu, und `Epos.Pipeline.kopf/3` bekommt je nach
+  # Zweig entweder diese Liste oder die des Repos: derselbe Parameter in zwei
+  # Formen. Am 18.09.2026 kostete das das Epos-Kapitel von seattleV5 S2
+  # (`KeyError key :in_game_day`) — und es hätte JEDEN Lauf mit nicht-leerer
+  # Chronik getroffen; bei S1 blieb es nur verborgen, weil die Liste dort leer
+  # war und `Enum.map([])` nichts anfasst.
+  #
+  # Die Rückgabe hat deshalb die Gestalt des Repo-Lesers: Atom-Schlüssel, und
+  # ein fehlendes Datum steht als `nil` statt gar nicht. Im Ereignis bleibt es
+  # weggelassen — dort ist das Absicht.
+  @spec fuer_leser(map()) :: map()
+  def fuer_leser(payload) do
+    %{
+      id: payload["id"],
+      campaign_id: payload["campaign_id"],
+      session_id: payload["session_id"],
+      label: payload["label"],
+      summary: payload["summary"],
+      markdown_body: payload["markdown_body"],
+      wichtigkeit: payload["wichtigkeit"],
+      fakt_ids: payload["fakt_ids"],
+      zeit_bezug: payload["zeit_bezug"],
+      rang: payload["rang"],
+      in_game_day: payload["in_game_day"],
+      in_game_date: payload["in_game_date"],
+      precision: payload["precision"],
+      source_refs: payload["source_refs"] || []
+    }
   end
 end

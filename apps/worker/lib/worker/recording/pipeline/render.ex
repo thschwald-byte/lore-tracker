@@ -142,7 +142,10 @@ defmodule Worker.Recording.Pipeline.Render do
 
     days =
       entries
-      |> Enum.map(& &1.in_game_day)
+      # `Map.get`, nicht `&1.in_game_day`: ein Eintrag OHNE Tag ist seit #1211
+      # der Normalfall („lieber keine Angabe als eine gerechnete"), und wer das
+      # Feld weglässt, darf den Kapitelkopf nicht umbringen.
+      |> Enum.map(&Map.get(&1, :in_game_day))
       |> Enum.filter(&is_integer/1)
 
     case {days, calendar} do
