@@ -33,6 +33,9 @@ streichen und nicht ersetzen. Der Text gehört dem Spielleiter.
 
 **Du hast höchstens drei Durchgänge.** Danach steht die Chronik, wie sie ist.
 
+**Zähl nichts selbst:** `zahlen()` nennt dir die Zähler dieses Laufs, auch
+die, die `fertig()` als Quittung verlangt. Lies sie dort ab.
+
 **Weißt du nicht, wie ein Aufruf aussehen muss, frag `hilfe()`.** Ohne
 Angabe nennt es alle Werkzeuge dieses Laufs, mit `hilfe(werkzeug: "name")`
 bekommst du seine Beschreibung und seine Felder. Das kostet nichts und zählt

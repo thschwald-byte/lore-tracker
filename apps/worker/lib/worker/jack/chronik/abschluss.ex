@@ -257,10 +257,90 @@ defmodule Worker.Jack.Chronik.Abschluss do
     )
   end
 
+  @doc """
+  Das Werkzeug `zahlen` — die Zähler des Laufs, damit Jack sie nicht selbst
+  zählen muss.
+
+  **Warum** (Maintainer, 18.09.2026: „jack zählt ständig verschiedene sachen —
+  könnten wir ihm dafür tools geben?"): `fertig` verlangt Zahlen als Quittung,
+  und Jack hat sie in **jedem** der drei Läufe falsch gezählt — 108 statt 27
+  bewertete Fakten, 9 statt 8 Gruppen, dazu die Durchsicht. Jede Fehlzahl
+  kostet eine Runde, und in einem Fall schickte sie ihn ins Nachzählen von
+  112 Fakten.
+
+  **Was das für den Zahlenabgleich bedeutet, ehrlich gesagt:** Er ist damit
+  keine Selbstprüfung mehr, sondern eine Bestätigung — Jack kann die Zahlen
+  ablesen. Das ist gewollt: Geprüft wird inhaltlich über die **Hindernisse**
+  (welcher Fakt ist unbewertet, welcher Eintrag noch nicht durchgesehen), und
+  die sind deterministisch. Der Abgleich hat in drei Läufen keinen einzigen
+  inhaltlichen Fehler gefunden, aber vier Runden gekostet.
+  """
+  @spec zahlen_werkzeug(Stand.t()) :: map()
+  def zahlen_werkzeug(%Stand{lauf: lauf}) do
+    %{
+      name: "zahlen",
+      beschreibung:
+        "Nennt die Zähler dieses Laufs — genau die, die fertig() als Quittung verlangt, " <>
+          "und dazu den Zusammenhang. Lies sie hier ab, statt selbst zu zählen: " <>
+          case lauf do
+            :ueberblick ->
+              "gruppen (Phasen und Schlüsselszenen zusammen) und fakten_zugeordnet."
+
+            :durchsicht ->
+              "bestaetigt und ersetzt."
+
+            _ ->
+              "eintraege und fakten_zugeordnet."
+          end,
+      parameter: %{"type" => "object", "properties" => %{}},
+      wiederholung: :bis_aenderung,
+      ausfuehren: fn s, _p -> {s, {:ok, zahlen_text(s)}} end
+    }
+  end
+
+  @doc "Die Zähler eines Laufs als Antwort, mit den Zahlen von `fertig` obenan."
+  @spec zahlen_text(Stand.t()) :: map()
+  def zahlen_text(%Stand{lauf: :ueberblick} = s) do
+    {phasen, szenen} = Enum.split_with(Notizen.gruppen(s), &(&1.abschnitt == "PHASEN"))
+
+    Worker.Jack.Antwort.geordnet([
+      {"fuer_fertig", ist_ueberblick(s)},
+      {"phasen", length(phasen)},
+      {"schluesselszenen", length(szenen)},
+      {"fakten_gesamt", length(s.fakten)},
+      {"fakten_ausserhalb", length(ausserhalb(s))},
+      {"fakten_unbewertet", length(offene(s))},
+      {"gelesen", MapSet.size(s.gelesen)}
+    ])
+  end
+
+  def zahlen_text(%Stand{lauf: :durchsicht} = s) do
+    Worker.Jack.Antwort.geordnet([
+      {"fuer_fertig", Durchsicht.zaehler(s)},
+      {"durchgang", Durchsicht.durchgang(s)},
+      {"eintraege", length(s.eintraege)},
+      {"noch_offen", Durchsicht.offen(s)}
+    ])
+  end
+
+  def zahlen_text(%Stand{} = s) do
+    {phasen, szenen} = Enum.split_with(s.eintraege, &(&1.wichtigkeit == "phase"))
+
+    Worker.Jack.Antwort.geordnet([
+      {"fuer_fertig", ist_schreiben(s)},
+      {"phasen", length(phasen)},
+      {"schluesselszenen", length(szenen)},
+      {"fakten_gesamt", length(s.fakten)},
+      {"fakten_ausserhalb", length(ausserhalb(s))},
+      {"fakten_unbewertet", length(offene(s))}
+    ])
+  end
+
   @doc "Das Werkzeug `fertig` für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
-  def werkzeuge(%Stand{lauf: :durchsicht}) do
+  def werkzeuge(%Stand{lauf: :durchsicht} = s) do
     [
+      zahlen_werkzeug(s),
       %{
         name: "fertig",
         beschreibung:
@@ -276,8 +356,9 @@ defmodule Worker.Jack.Chronik.Abschluss do
     ]
   end
 
-  def werkzeuge(%Stand{lauf: :ueberblick}) do
+  def werkzeuge(%Stand{lauf: :ueberblick} = s) do
     [
+      zahlen_werkzeug(s),
       %{
         name: "fertig",
         beschreibung:
@@ -295,8 +376,9 @@ defmodule Worker.Jack.Chronik.Abschluss do
     ]
   end
 
-  def werkzeuge(%Stand{}) do
+  def werkzeuge(%Stand{} = s) do
     [
+      zahlen_werkzeug(s),
       %{
         name: "fertig",
         beschreibung:

@@ -75,78 +75,116 @@ defmodule Worker.Jack.Chronik.Notizen do
   @doc "Die Werkzeuge dieses Moduls für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
   def werkzeuge(%Stand{} = s) do
-    [
-      %{
-        name: "notiz",
-        beschreibung:
-          "Deine Notizen zur Chronik. Sie überleben, was dein Kontext vergisst, und sind " <>
-            "alles, was das Schreiben von diesem Lauf noch hat. Jeder Eintrag hat einen " <>
-            "Abschnitt und einen Schlüssel; derselbe Schlüssel ERSETZT den alten Eintrag, " <>
-            "zeile=null streicht ihn. Abschnitte: PHASEN (ein Abschnitt der Handlung, aus " <>
-            "dem EIN Chronik-Eintrag wird — ein ganzer Auftrag von der Annahme bis zur " <>
-            "Abrechnung, nicht zwölf Ereignisse), SCHLUESSELSZENEN (was die Kampagne oder " <>
-            "die Welt verändert und deshalb einen eigenen Eintrag bekommt: Tod einer " <>
-            "Spielerfigur, Krieg, Seuche, Epochenereignis), NICHT_ZEITLEISTE (Geschehen, das in " <>
-            "keine Zeitleiste gehört — Würfelmechanik, Tischgespräch ohne Handlungsfolge und " <>
-            "Vorbereitung am Tisch: Charaktererstellung, Regelerklärung, Weltvorstellung " <>
-            "durch die Spielleitung. Der INHALT einer erzählten Rückblende gehört dagegen in " <>
-            "eine Phase, nur der Akt des Vorstellens nicht. Die Zeile ist die Begründung; " <>
-            "diese Fakten gelten als behandelt und werden nie ein Eintrag), OFFEN (wo die Fakten zum Verstehen nicht reichen; braucht keine " <>
-            "Fakten). Der Abschnitt ist zugleich die Wichtigkeit des späteren Eintrags. Jedes " <>
-            "Geschehen gehört in höchstens eine Gruppe — oder unter NICHT_ZEITLEISTE, nicht " <>
-            "beides.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "eintraege" => %{
-              "type" => "array",
-              "minItems" => 1,
-              "items" => %{
-                "type" => "object",
-                "properties" => %{
-                  "abschnitt" => %{
-                    "type" => "string",
-                    "enum" => Stand.abschnitte(:chronik),
-                    "description" => "PHASEN, SCHLUESSELSZENEN, NICHT_ZEITLEISTE oder OFFEN"
-                  },
-                  "schluessel" => %{
-                    "type" => "string",
-                    "description" =>
-                      "woran du den Abschnitt wiedererkennst: \"insel-auftrag\", \"tod-kodex\""
-                  },
-                  "zeile" => %{
-                    "type" => ["string", "null"],
-                    "description" => "worum es geht; null streicht den Eintrag"
-                  },
-                  "fakten" => %{
-                    "type" => "array",
-                    "items" => %{"type" => "string"},
-                    "description" =>
-                      "die IDs der Fakten, die dazugehören (erste Spalte von fakten())"
-                  },
-                  "boegen" => %{
-                    "type" => "array",
-                    "items" => %{"type" => "string"},
-                    "description" =>
-                      "die Titel der Bögen, zu denen er gehört (aus boegen_kampagne() " <>
-                        "oder straenge())"
+    umhaengen =
+      if s.lauf == :ueberblick do
+        # Nur im Überblick: Im Schreiben und in der Durchsicht hängt derselbe
+        # Name am Eintrags-Werkzeug (`Worker.Jack.Chronik.Entwurf`). Zwei
+        # Definitionen gleichen Namens in einer Liste entscheidet `Map.new`
+        # nach Reihenfolge — also zufällig; `chronik/werkzeuge_test.exs`
+        # bewacht, dass es dazu nicht kommt.
+        [umhaengen_werkzeug()]
+      else
+        []
+      end
+
+    umhaengen ++
+      [
+        %{
+          name: "notiz",
+          beschreibung:
+            "Deine Notizen zur Chronik. Sie überleben, was dein Kontext vergisst, und sind " <>
+              "alles, was das Schreiben von diesem Lauf noch hat. Jeder Eintrag hat einen " <>
+              "Abschnitt und einen Schlüssel; derselbe Schlüssel ERSETZT den alten Eintrag, " <>
+              "zeile=null streicht ihn. Abschnitte: PHASEN (ein Abschnitt der Handlung, aus " <>
+              "dem EIN Chronik-Eintrag wird — ein ganzer Auftrag von der Annahme bis zur " <>
+              "Abrechnung, nicht zwölf Ereignisse), SCHLUESSELSZENEN (was die Kampagne oder " <>
+              "die Welt verändert und deshalb einen eigenen Eintrag bekommt: Tod einer " <>
+              "Spielerfigur, Krieg, Seuche, Epochenereignis), NICHT_ZEITLEISTE (Geschehen, das in " <>
+              "keine Zeitleiste gehört — Würfelmechanik, Tischgespräch ohne Handlungsfolge und " <>
+              "Vorbereitung am Tisch: Charaktererstellung, Regelerklärung, Weltvorstellung " <>
+              "durch die Spielleitung. Der INHALT einer erzählten Rückblende gehört dagegen in " <>
+              "eine Phase, nur der Akt des Vorstellens nicht. Die Zeile ist die Begründung; " <>
+              "diese Fakten gelten als behandelt und werden nie ein Eintrag), OFFEN (wo die Fakten zum Verstehen nicht reichen; braucht keine " <>
+              "Fakten). Der Abschnitt ist zugleich die Wichtigkeit des späteren Eintrags. Jedes " <>
+              "Geschehen gehört in höchstens eine Gruppe — oder unter NICHT_ZEITLEISTE, nicht " <>
+              "beides.",
+          parameter: %{
+            "type" => "object",
+            "properties" => %{
+              "eintraege" => %{
+                "type" => "array",
+                "minItems" => 1,
+                "items" => %{
+                  "type" => "object",
+                  "properties" => %{
+                    "abschnitt" => %{
+                      "type" => "string",
+                      "enum" => Stand.abschnitte(:chronik),
+                      "description" => "PHASEN, SCHLUESSELSZENEN, NICHT_ZEITLEISTE oder OFFEN"
+                    },
+                    "schluessel" => %{
+                      "type" => "string",
+                      "description" =>
+                        "woran du den Abschnitt wiedererkennst: \"insel-auftrag\", \"tod-kodex\""
+                    },
+                    "zeile" => %{
+                      "type" => ["string", "null"],
+                      "description" => "worum es geht; null streicht den Eintrag"
+                    },
+                    "fakten" => %{
+                      "type" => "array",
+                      "items" => %{"type" => "string"},
+                      "description" =>
+                        "die IDs der Fakten, die dazugehören (erste Spalte von fakten())"
+                    },
+                    "boegen" => %{
+                      "type" => "array",
+                      "items" => %{"type" => "string"},
+                      "description" =>
+                        "die Titel der Bögen, zu denen er gehört (aus boegen_kampagne() " <>
+                          "oder straenge())"
+                    }
                   }
                 }
               }
             }
-          }
+          },
+          aendert_bestand: true,
+          ausfuehren: &notiz/2
         },
-        aendert_bestand: true,
-        ausfuehren: &notiz/2
+        %{
+          name: "notizen_lesen",
+          beschreibung: lesen_beschreibung(s),
+          parameter: %{"type" => "object", "properties" => %{}},
+          wiederholung: :frei,
+          ausfuehren: &notizen_lesen/2
+        }
+      ]
+  end
+
+  defp umhaengen_werkzeug do
+    %{
+      name: "fakt_umhaengen",
+      beschreibung:
+        "Hängt EINEN Fakt von einer Gruppe in eine andere um — ohne die Gruppen neu zu " <>
+          "schreiben. fakt: die kurze ID (S1-F12). von: der Schlüssel der Gruppe, in der " <>
+          "er jetzt liegt. nach: der Schlüssel der Gruppe, in die er gehört; das darf " <>
+          "auch eine NICHT_ZEITLEISTE-Gruppe sein. Beide Gruppen müssen es geben, und in " <>
+          "„von\" muss der Fakt wirklich liegen — sonst sagt die Ablehnung, wo er " <>
+          "steckt. Nimm das, statt eine Gruppe mit ihrer ganzen Faktenliste erneut zu " <>
+          "schreiben.",
+      parameter: %{
+        "type" => "object",
+        "properties" => %{
+          "fakt" => %{"type" => "string", "description" => "die kurze Fakt-ID, etwa S1-F12"},
+          "von" => %{"type" => "string", "description" => "Schlüssel der Gruppe, in der er liegt"},
+          "nach" => %{"type" => "string", "description" => "Schlüssel der Gruppe, in die er soll"}
+        },
+        "required" => ~w(fakt von nach)
       },
-      %{
-        name: "notizen_lesen",
-        beschreibung: lesen_beschreibung(s),
-        parameter: %{"type" => "object", "properties" => %{}},
-        wiederholung: :frei,
-        ausfuehren: &notizen_lesen/2
-      }
-    ]
+      aendert_bestand: true,
+      ausfuehren: &umhaengen/2
+    }
   end
 
   # Im Schreiben und in der Durchsicht sind die Notizen nur noch zu lesen;
@@ -305,6 +343,93 @@ defmodule Worker.Jack.Chronik.Notizen do
         ids -> "noch #{length(ids)} Geschehen ohne Gruppe."
       end
   end
+
+  # ─── fakt_umhaengen ───────────────────────────────────────────────────
+
+  @doc """
+  Einen Fakt von einer Gruppe in eine andere umhängen (Werkzeug
+  `fakt_umhaengen`).
+
+  **Warum es das braucht:** `notiz` kennt nur „derselbe Schlüssel ersetzt".
+  Wer einen einzelnen Fakt umhängen wollte, musste die Zielgruppe **und** die
+  Quellgruppe mit ihrer ganzen Faktenliste neu schreiben — bei einer Phase mit
+  36 Fakten eine lange, fehleranfällige Wiederholung, die die
+  Wiederholungssperre mitzählt. Im Lauf vom 18.09.2026 war genau das zu
+  sehen: „I need to reorganize the groups by removing S1-F80 from weltbild and
+  reapplying the seattle key without it."
+
+  Beide Gruppen müssen existieren, und der Fakt muss in `von` liegen. Die
+  letzte Fakt-ID einer Gruppe wandert nicht heraus: Eine Gruppe ohne Fakt
+  liesse sich nie tragen — wer sie loswerden will, streicht sie mit
+  `notiz(zeile: null)`.
+  """
+  @spec umhaengen(Stand.t(), map()) :: ergebnis()
+  def umhaengen(%Stand{} = s, p) do
+    fakt = p["fakt"]
+    von = String.trim(p["von"] || "")
+    nach = String.trim(p["nach"] || "")
+
+    quelle = Enum.find(s.notizen, &(&1.schluessel == von))
+    ziel = Enum.find(s.notizen, &(&1.schluessel == nach))
+
+    cond do
+      Stand.fakt(s, fakt) == nil ->
+        {s,
+         {:error,
+          "Den Fakt #{fakt} gibt es nicht. Die IDs stehen in der ersten Spalte von fakten()."}}
+
+      quelle == nil ->
+        {s,
+         {:error,
+          "Eine Gruppe „#{von}\" gibt es nicht. #{wo_liegt(s, fakt)} " <> schluessel_liste(s)}}
+
+      ziel == nil ->
+        {s, {:error, "Eine Gruppe „#{nach}\" gibt es nicht. " <> schluessel_liste(s)}}
+
+      von == nach ->
+        {s, {:error, "„von\" und „nach\" sind dieselbe Gruppe — dann ist nichts umzuhängen."}}
+
+      fakt not in quelle.fakten ->
+        {s, {:error, "In „#{von}\" liegt #{fakt} nicht. #{wo_liegt(s, fakt)}"}}
+
+      length(quelle.fakten) == 1 ->
+        {s,
+         {:error,
+          "#{fakt} ist der letzte Fakt in „#{von}\" — eine Gruppe ohne Fakt liesse sich " <>
+            "nie tragen. Streich die Gruppe mit notiz(zeile: null) und trag den Fakt in " <>
+            "„#{nach}\" ein, oder schreib „#{nach}\" mit dem Fakt und streich „#{von}\"."}}
+
+      true ->
+        notizen =
+          Enum.map(s.notizen, fn n ->
+            cond do
+              n.schluessel == von -> %{n | fakten: n.fakten -- [fakt]}
+              n.schluessel == nach -> %{n | fakten: Enum.uniq(n.fakten ++ [fakt])}
+              true -> n
+            end
+          end)
+
+        s = %{s | notizen: notizen}
+
+        {s,
+         {:ok,
+          "#{fakt} von „#{von}\" nach „#{nach}\" umgehängt. " <>
+            "„#{von}\" hat jetzt #{length(quelle.fakten) - 1} Fakten, " <>
+            "„#{nach}\" #{length(ziel.fakten) + 1}." <> hinweis(s)}}
+    end
+  end
+
+  defp wo_liegt(s, fakt) do
+    case Enum.find(s.notizen, &(fakt in &1.fakten)) do
+      nil -> "Er liegt in keiner Gruppe — trag ihn mit notiz() ein."
+      n -> "Er liegt in „#{n.schluessel}\" (#{n.abschnitt})."
+    end
+  end
+
+  defp schluessel_liste(%Stand{notizen: []}), do: "Es gibt noch keine Gruppen."
+
+  defp schluessel_liste(%Stand{notizen: notizen}),
+    do: "Vorhanden: " <> Enum.map_join(notizen, ", ", &"„#{&1.schluessel}\"") <> "."
 
   # ─── notizen_lesen ────────────────────────────────────────────────────
 

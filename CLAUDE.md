@@ -1761,6 +1761,38 @@ Eintrag**, darf aber in einer Phase aufgehen, wenn er sie erklärt — und
 `fertig()` verlangt ihn nicht. Die Aufträge sagen jetzt zusätzlich:
 **entscheide am Inhalt, nicht am Etikett**.
 
+**Zwei Werkzeuge gegen das Zählen und das Umschreiben** (beide
+Maintainer-Wort, 18.09.2026, am Lauf beobachtet):
+
+- **`fakt_umhaengen(fakt, von, nach)`** hängt EINEN Fakt um — im Überblick
+  zwischen Notiz-Gruppen, beim Schreiben zwischen Einträgen, ohne die Texte
+  anzufassen. `notiz` kennt nur „derselbe Schlüssel ersetzt", und
+  `eintrag_ergaenzen` hängt nur an; wer einen Fakt umhängen wollte, musste
+  Quell- und Zielgruppe mit ihrer **ganzen** Faktenliste neu schreiben — bei
+  einer Phase mit 36 Fakten eine Wiederholung, die die Sperre mitzählt. Im
+  Denkstrom stand es wörtlich: „I need to reorganize the groups by removing
+  S1-F80 from weltbild and reapplying the seattle key without it." Der letzte
+  Fakt wandert nicht heraus (eine Gruppe ohne Fakt trägt nicht, und die
+  Eintrags-ID hängt an den Fakten); Ablehnungen nennen, wo der Fakt
+  tatsächlich liegt.
+- **`zahlen()`** nennt die Zähler des Laufs, auch die, die `fertig` als
+  Quittung verlangt. Jack hat sie in **jedem** der drei Läufe falsch gezählt
+  (108 statt 27 bewertete Fakten, 9 statt 8 Gruppen, dazu die Durchsicht);
+  jede Fehlzahl kostet eine Runde, eine schickte ihn ins Nachzählen von 112
+  Fakten. **Ehrlich dazu:** Der Zahlenabgleich ist damit keine Selbstprüfung
+  mehr, sondern eine Bestätigung — geprüft wird inhaltlich über die
+  Hindernisse, und die sind deterministisch. Der Abgleich hat in drei Läufen
+  keinen einzigen inhaltlichen Fehler gefunden, aber vier Runden gekostet.
+
+**Ein Name, eine Definition.** `Resuemee.Werkzeuge.aus/3` baut die Liste über
+`Map.new(definitionen)` — zwei Definitionen gleichen Namens entscheidet die
+Reihenfolge, also der Zufall. `fakt_umhaengen` gibt es zweimal (Gruppen und
+Einträge), deshalb steht die Notizen-Variante nur im Überblick, und
+`chronik/werkzeuge_test.exs` bewacht beides: kein Name doppelt, und jeder
+Name aus `namen/1` hat eine Definition (sonst bricht `aus/3` mit `KeyError`).
+Derselbe Test prüft, dass **jedes** Werkzeug jedes Laufs über `hilfe()`
+erklärbar ist.
+
 **Ein Werkzeugfehler ist kein Hindernis** (`Worker.Agent.Aufruf`, gilt für
 alle Jacks). Eine Ausnahme im Werkzeug kam bis zum 18.09.2026 als
 gewöhnliches `{:error, text}` zurück — für das Modell nicht von „dir fehlt

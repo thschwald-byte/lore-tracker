@@ -102,6 +102,78 @@ defmodule Worker.Jack.Chronik.Entwurf do
   end
 
   @doc """
+  Hängt einen Fakt von einem Eintrag in einen anderen um (Werkzeug
+  `fakt_umhaengen`).
+
+  **Warum es das braucht:** `eintrag_ergaenzen` hängt nur an, und Fakten
+  herausnehmen konnte nur `eintrag_ersetzen` — mit der ganzen Faktenliste.
+  Bei einer Phase mit 36 Fakten ist das eine lange Wiederholung, die die
+  Sperre mitzählt; im Lauf vom 18.09.2026 war genau dieser Umweg im Denken zu
+  sehen. Der Text beider Einträge bleibt unberührt, auch bei kuratierten:
+  Umhängen ist eine Frage der Zuordnung, nicht des Textes.
+
+  Der letzte Fakt wandert nicht heraus — ein Eintrag ohne Fakt hätte keine
+  Adresse mehr (die ID hängt an den Fakten); wer ihn loswerden will, nimmt
+  `eintrag_streichen`.
+  """
+  @spec umhaengen([eintrag()], map(), %{String.t() => String.t()}) ::
+          {:ok, [eintrag()], String.t()} | {:error, String.t()}
+  def umhaengen(eintraege, p, karte) do
+    kurz = p["fakt"]
+    von = p["von"]
+    nach = p["nach"]
+    echt = Map.get(karte, kurz)
+    quelle = Enum.find(eintraege, &(&1.id == von))
+    ziel = Enum.find(eintraege, &(&1.id == nach))
+
+    cond do
+      echt == nil ->
+        {:error,
+         "Den Fakt #{kurz} gibt es nicht. Die IDs stehen in der ersten Spalte von fakten()."}
+
+      quelle == nil ->
+        {:error, "Den Eintrag #{von} gibt es nicht. chronik() nennt die vorhandenen."}
+
+      ziel == nil ->
+        {:error, "Den Eintrag #{nach} gibt es nicht. chronik() nennt die vorhandenen."}
+
+      von == nach ->
+        {:error, "„von\" und „nach\" sind derselbe Eintrag — dann ist nichts umzuhängen."}
+
+      echt not in quelle.fakt_ids ->
+        {:error, "In #{von} liegt #{kurz} nicht. " <> wo_liegt(eintraege, echt, karte)}
+
+      length(quelle.fakt_ids) == 1 ->
+        {:error,
+         "#{kurz} ist der letzte Fakt in #{von}. Die Eintrags-ID hängt an den Fakten — ohne " <>
+           "sie hätte der Eintrag keine Adresse. Streich ihn mit eintrag_streichen und trag " <>
+           "den Fakt mit eintrag_ergaenzen in #{nach} ein."}
+
+      true ->
+        neu =
+          Enum.map(eintraege, fn e ->
+            cond do
+              e.id == von -> %{e | fakt_ids: e.fakt_ids -- [echt]}
+              e.id == nach -> %{e | fakt_ids: Enum.uniq(e.fakt_ids ++ [echt])}
+              true -> e
+            end
+          end)
+
+        {:ok, neu,
+         "#{kurz} von #{von} nach #{nach} umgehängt. #{von} hat jetzt " <>
+           "#{length(quelle.fakt_ids) - 1} Fakten, #{nach} #{length(ziel.fakt_ids) + 1}. " <>
+           "Die Texte sind unberührt."}
+    end
+  end
+
+  defp wo_liegt(eintraege, echt, _karte) do
+    case Enum.find(eintraege, &(echt in &1.fakt_ids)) do
+      nil -> "Er liegt in keinem Eintrag — nimm eintrag_ergaenzen."
+      e -> "Er liegt in #{e.id} („#{e.titel}\")."
+    end
+  end
+
+  @doc """
   Schreibt einen Eintrag fort: Text wird **angehängt**, Fakten kommen dazu.
   Ersetzt wird nichts — bei einem kuratierten Eintrag bliebe sonst der Text
   des Spielleiters auf der Strecke, und bei einem eigenen verlöre Jack, was
@@ -489,6 +561,27 @@ defmodule Worker.Jack.Chronik.Entwurf do
         ausfuehren: &w_ergaenzen/2
       },
       %{
+        name: "fakt_umhaengen",
+        beschreibung:
+          "Hängt EINEN Fakt von einem Eintrag in einen anderen um — ohne die Einträge neu " <>
+            "zu schreiben. fakt: die kurze ID (S1-F12). von/nach: die Eintrags-IDs, " <>
+            "wie chronik() sie nennt. In „von\" muss der Fakt wirklich liegen, sonst " <>
+            "sagt die Ablehnung, wo er steckt. Nimm das, statt einen Eintrag mit seiner " <>
+            "ganzen Faktenliste erneut zu schreiben. Der Text beider Einträge bleibt " <>
+            "unangetastet — auch bei kuratierten.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "fakt" => %{"type" => "string", "description" => "die kurze Fakt-ID, etwa S1-F12"},
+            "von" => %{"type" => "string", "description" => "ID des Eintrags, in dem er liegt"},
+            "nach" => %{"type" => "string", "description" => "ID des Eintrags, in den er soll"}
+          },
+          "required" => ~w(fakt von nach)
+        },
+        aendert_bestand: true,
+        ausfuehren: &w_umhaengen/2
+      },
+      %{
         name: "eintrag_einordnen",
         beschreibung:
           "Ändert die Stellung eines Eintrags in der Reihenfolge — und NUR die. Der " <>
@@ -560,6 +653,8 @@ defmodule Worker.Jack.Chronik.Entwurf do
       "required" => ["art"]
     }
   end
+
+  defp w_umhaengen(s, p), do: anwenden(s, &umhaengen(&1, p, karte(s)))
 
   defp w_anlegen(s, p), do: anwenden(s, &anlegen(&1, p, bekannte(s)))
   defp w_ergaenzen(s, p), do: anwenden(s, &ergaenzen(&1, p, bekannte(s)))
