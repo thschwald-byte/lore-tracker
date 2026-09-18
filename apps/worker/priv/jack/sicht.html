@@ -165,7 +165,13 @@ function zeichnen(){
 
 function faktenKacheln(s,l){
   const gel=abdeckung(s), j=s.journal||{};
-  const neuHier=(l.bestand_start!=null&&s.bestand!=null)?s.bestand-l.bestand_start:null;
+  // „neu in diesem Lauf" nur, wenn es einen VORHERIGEN Bestand gab. Sonst ist
+  // bestand_start 0, die Zahl also identisch mit der Kachel daneben — zwei
+  // Kacheln, die synchron hochzählen und dieselbe Sache behaupten
+  // (Maintainer, 18.09.2026). Eine Aussage hat sie nur im Folgelauf
+  // („noch N Iterationen"), wo sie die echten Neufunde vom Mitgebrachten
+  // trennt.
+  const neuHier=(l.bestand_start>0&&s.bestand!=null)?s.bestand-l.bestand_start:null;
   return kachel(s.bestand??0,'Aussagen im Bestand')+
     (s.phase===2&&neuHier!=null?kachel(neuHier,'neu in diesem Lauf',neuHier>0?'ok':''):'')+
     // Wie schauen.py: gezählt wird abgelehnt.jsonl (Felder, Beleg, Gerüst). Der
