@@ -101,7 +101,8 @@ defmodule Worker.Jack.LesenTest do
       assert {_, {:ok, "1 Fundstelle(n):\n6\tFigur0\tNoch ein Kaffee?"}} =
                Lesen.suche(stand(), %{"begriff" => "kaffee", "ab" => 4, "bis" => 9})
 
-      assert {_, {:ok, ~s(Keine Fundstelle fuer "Drache".)}} =
+      # Issue #1238: gesucht wird am Wortanfang; die Antwort sagt das auch.
+      assert {_, {:ok, ~s(Kein Wort faengt mit "Drache" an.)}} =
                Lesen.suche(stand(), %{"begriff" => "Drache"})
     end
 

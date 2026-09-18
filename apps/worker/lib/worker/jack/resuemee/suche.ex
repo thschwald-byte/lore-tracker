@@ -18,7 +18,9 @@ defmodule Worker.Jack.Resuemee.Suche do
   (`Worker.Jack.Resuemee.Mitschnitte`); eine Sitzung ohne Glättung steht als
   Hinweis in der Antwort.
 
-  **Treffer.** Groß-/Kleinschreibung egal, ein Wortteil genügt, Leerraum
+  **Treffer.** Groß-/Kleinschreibung egal; gefunden wird, wo ein Wort mit dem
+  Begriff ANFÄNGT („Kamera" findet „Kameras", „Gang" nicht „Eingang" — #1238),
+  Leerraum
   zählt als ein Leerzeichen (`Worker.Jack.Beleg.norm/1`, wie die Suche des
   Fakten-Jack); mindestens drei Zeichen. Je Quelle gruppiert, je Treffer eine
   Zeile mit der Adresse zum Nachlesen (`S3-F12` für `fakt`, `S3 Block 17` für
@@ -128,7 +130,12 @@ defmodule Worker.Jack.Resuemee.Suche do
   defp epos?(s), do: Map.get(s, :art) == :epos
 
   defp gemeinsam(nachlesen) do
-    "Groß-/Kleinschreibung ist egal, ein Wortteil genügt. Die Treffer kommen je Quelle, " <>
+    "Groß-/Kleinschreibung ist egal. Gefunden wird, wo ein Wort mit deinem Begriff " <>
+      "ANFÄNGT: „Kamera“ findet auch „Kameras“ und „Kamerafeeds“, „Wache“ auch „Wachen“. " <>
+      "Steckt dein Begriff mitten in einem Wort, zählt er nicht: „Gang“ findet nicht " <>
+      "„Eingang“ und nicht „gegangen“. Such also nach dem Wortanfang, nicht nach einer " <>
+      "Silbe. Findet sich nichts, sagt die Antwort, in welchen Wörtern der Begriff " <>
+      "innen vorkommt. Die Treffer kommen je Quelle, " <>
       "höchstens #{@deckel} je Quelle, jeder mit seiner Adresse zum Nachlesen (#{nachlesen}) " <>
       "und einem Ausschnitt. Jede Antwort nennt je Quelle, wie viele Treffer es gibt und wie " <>
       "viele noch folgen; die nächsten holst du mit demselben Begriff und weiter: true — das " <>
@@ -184,7 +191,11 @@ defmodule Worker.Jack.Resuemee.Suche do
       {s, {:error, "Der Begriff ist zu kurz — nimm mindestens drei Zeichen."}}
     else
       {s, kandidaten, hinweise} = quellen(s, werkzeug)
-      gruppen = for {q, k} <- kandidaten, do: {q, Enum.filter(k, &trifft?(&1, nadel))}
+      # Issue #1238: EIN Muster je Suche, nicht je Kandidat — die Quellen
+      # zusammen sind tausende Einträge.
+      muster = Beleg.wortmuster(begriff)
+      gruppen = for {q, k} <- kandidaten, do: {q, Enum.filter(k, &Beleg.wort?(&1.such, muster))}
+      hinweise = hinweise ++ wortteil_hinweis(gruppen, kandidaten, nadel)
       schluessel = {werkzeug, nadel}
       weiter? = p["weiter"] == true
       vorher = if weiter?, do: Map.get(s.suche, schluessel)
@@ -195,7 +206,37 @@ defmodule Worker.Jack.Resuemee.Suche do
     end
   end
 
-  defp trifft?(k, nadel), do: String.contains?(Beleg.norm(k.such), nadel)
+  # Issue #1238: Findet die Wortsuche nichts, sagt das Werkzeug, was es als
+  # Wortteil GEFUNDEN HÄTTE — statt still strenger zu werden als vorher. Die
+  # Entscheidung, ob „Eingang" gemeint war, bleibt beim Modell; ein Werkzeug,
+  # das sie stillschweigend trifft, ist genau der Fehler, den dieses Issue
+  # behebt, nur mit umgekehrtem Vorzeichen.
+  defp wortteil_hinweis(gruppen, kandidaten, nadel) do
+    if Enum.any?(gruppen, fn {_q, treffer} -> treffer != [] end) do
+      []
+    else
+      woerter =
+        for {_q, k} <- kandidaten,
+            kand <- k,
+            wort <- Beleg.wortteile(kand.such, nadel),
+            uniq: true,
+            do: wort
+
+      case woerter do
+        [] ->
+          []
+
+        w ->
+          [
+            "Kein Wort fängt mit #{Jason.encode!(nadel)} an. Mitten im Wort kommt es " <>
+              "in #{length(w)} verschiedenen Wörtern vor" <>
+              if(length(w) <= 8, do: ": ", else: ", darunter: ") <>
+              (w |> Enum.sort() |> Enum.take(8) |> Enum.join(", ")) <>
+              ". Such danach, wenn du eines davon meinst."
+          ]
+      end
+    end
+  end
 
   # ─── Antwort ──────────────────────────────────────────────────────────
 

@@ -131,7 +131,7 @@ defmodule Worker.Jack.WerkzeugeTest do
     assert {:ok, "HINWEIS: suche() durchsucht nur den Mitschnitt" <> rest} =
              suche.ausfuehren.(%{"begriff" => "Satz 3 im Mitschnitt steht hier"})
 
-    assert rest =~ "Keine Fundstelle"
+    assert rest =~ "Kein Wort faengt mit"
     assert {:ok, "1 Fundstelle(n):" <> _} = suche.ausfuehren.(%{"begriff" => "Satz 3"})
 
     assert [{"probieren.jsonl", %{"grund" => "lang"}}] = Stand.journal_liste(Halter.stand(h))
