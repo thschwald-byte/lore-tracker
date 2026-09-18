@@ -5,7 +5,10 @@ defmodule Worker.Jack.Chronik.Werkzeuge do
 
     * **Überblick** (nur im vollen Aufbau): die Lesebasis, `chronik`,
       `notiz`/`notizen_lesen` und `fertig`. Geschrieben wird hier nichts —
-      der Lauf gruppiert.
+      der Lauf gruppiert. `notiz` ist das **eigene** der Chronik
+      (`Worker.Jack.Chronik.Notizen`, Abschnitte PHASEN, SCHLUESSELSZENEN,
+      OFFEN); bis #1211 stand hier das des Resümee-Jack, und der Überblick
+      konnte deshalb nie abschließen.
     * **Schreiben** (voller Aufbau) und **Verfeinerung** (Normalbetrieb):
       dieselben Werkzeuge. Der Unterschied liegt im Auftrag und im Bestand,
       nicht im Werkzeugkasten — die Verfeinerung findet Einträge vor und
@@ -24,8 +27,8 @@ defmodule Worker.Jack.Chronik.Werkzeuge do
   Pflicht, außer es steht in `optional:`.
   """
 
-  alias Worker.Jack.Chronik.{Abschluss, Durchsicht, Entwurf, Lesen}
-  alias Worker.Jack.Resuemee.{Halter, Notizen, Stand}
+  alias Worker.Jack.Chronik.{Abschluss, Durchsicht, Entwurf, Lesen, Notizen}
+  alias Worker.Jack.Resuemee.{Halter, Stand}
   alias Worker.Jack.Resuemee.Lesen, as: Basis
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
 

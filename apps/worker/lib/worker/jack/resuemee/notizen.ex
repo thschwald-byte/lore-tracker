@@ -278,8 +278,12 @@ defmodule Worker.Jack.Resuemee.Notizen do
   @spec aufloesen([String.t()], (String.t() -> term()), (term() -> String.t())) ::
           {[String.t()], [String.t()]}
   def aufloesen(angaben, finden, form) do
+    # `nil` heisst „nichts angegeben", nicht „Absturz": jedes Feld ist zwar
+    # Pflicht (`Worker.Agent.Schema.streng/2`), aber ein Werkzeug, das bei
+    # einem fehlenden Feld wirft statt abzulehnen, bringt dem Modell eine
+    # Meldung, mit der es nichts anfangen kann.
     {da, weg} =
-      angaben
+      (angaben || [])
       |> Enum.map(&{&1, finden.(&1)})
       |> Enum.split_with(fn {_, x} -> x != nil end)
 

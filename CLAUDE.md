@@ -1642,6 +1642,42 @@ sich andere beziehen, wird nicht entfernt. `fertig()` lehnt ab, solange ein
 **ereignisförmiger** Fakt in keinem Eintrag liegt; Zustände zählen nicht mit
 (#1119).
 
+**Der Überblick hat eigene Notizen** (`Worker.Jack.Chronik.Notizen`,
+Abschnitte PHASEN, SCHLUESSELSZENEN, OFFEN). Der **Abschnitt IST die
+Wichtigkeit** des Eintrags, den das Schreiben daraus anlegt — deshalb trägt
+`notiz` kein eigenes Feld dafür. Dieselbe Regel wie beim Schreiben: ein
+Geschehen liegt in höchstens einer Gruppe, und `fertig()` lehnt ab, solange
+eines in keiner liegt. Keine FORM, kein Deckel: wie viele Abschnitte eine
+Kampagne hat, entscheidet die Kampagne; die Flughöhe steht im Auftrag, nicht
+als Schranke im Werkzeug.
+
+**Das war der Defekt des ersten echten Laufs** (18.09.2026, seattleV5 S1):
+Der Überblick brach nach 638 s mit `{:wiederholung, "notiz"}` ab und konnte
+unter keinen Umständen gelingen. Drei Ursachen, die zusammenwirkten — `notiz`
+war unverändert das Werkzeug des Resümee-Jack (es sprach vom Resümee und
+erzwang FORM/GLIEDERUNG/OFFEN), `Stand.abschnitte(:chronik)` fiel über einen
+**Auffangzweig** still auf ebendiese zurück, und `Abschluss.hindernisse/1`
+prüfte gegen die Chronik-**Einträge**, die es im Überblick noch nicht gibt:
+Es verwies auf `chronik_eintrag()`, ein Werkzeug, das dieser Lauf gar nicht
+hat. Jack wiederholte, bis die Sperre (#1174) den Lauf beendete.
+
+Zwei Lehren daraus, beide im Code verankert: **`Stand.abschnitte/1` hat
+keinen Auffangzweig mehr** — eine unbekannte Art wirft, statt still die
+falschen Abschnitte zu liefern. Und ein Test darf einen Agentenlauf nicht
+nur mit einem geskripteten Modell fahren, das `fertig` aufruft: Geprüft wird
+seitdem der **ganze Weg** (notieren → Ablehnung → vollständig zuordnen →
+Abschluss, `chronik/notizen_test.exs`). Kein bestehender Test hat die
+Ablehnung je erreicht.
+
+**Gemessene Laufzeit der Pipeline** (seattleV5 S1, 2.168 Utterances, 746
+Blöcke, 112 Fakten, `qwen3.8:27b-text`, Teststage): **5,78 h** für den ganzen
+Lauf. Davon Jacks Verifikation 2,6 h (6 Durchgänge, 46 %), Extraktion 47 min,
+Resümee-Überblick 71 min, Epos zusammen 26 min, Jacks Gedächtnis 9 min. Die
+Glättung samt Gap-Fill braucht **98 Sekunden** — sie ist entgegen der
+#1062-Erfahrung auf dieser Kampagne kein Zeitposten. Die Zahlen samt
+Mitschrift liegen unter `~/.local/share/lore-jack/laufzeiten/`; der
+Fortschritt-Prozess hält sie nur im Arbeitsspeicher (#1122).
+
 **Der Trichter wird gezählt** (#1111): Fakten hinein, Einträge hinaus, wie
 viele Geschehen in keinem Eintrag liegen, dazu Zyklen und verwaiste Bezüge.
 Bei einer gebündelten Chronik ist das die entscheidende Zahl — „gebündelt" und

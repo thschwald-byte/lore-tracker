@@ -1,0 +1,327 @@
+defmodule Worker.Jack.Chronik.Notizen do
+  @moduledoc """
+  `notiz` und `notizen_lesen` des Chronik-Jack im Überblick (J7, #1211) — mit
+  der Mechanik der Resümee-Notizen (`Worker.Jack.Resuemee.Notizen.eintragen/3`:
+  derselbe Schlüssel im selben Abschnitt ersetzt, `zeile: null` streicht, eine
+  leere Zeile ist kein Eintrag, ein Aufruf ohne Wirkung ist ein Fehler), aber
+  mit eigenen Abschnitten (`Worker.Jack.Resuemee.Stand.abschnitte(:chronik)`):
+
+    * **PHASEN** — ein Abschnitt der Handlung, den das Schreiben zu EINEM
+      Eintrag macht: ein ganzer Auftrag von der Annahme bis zur Abrechnung,
+      nicht zwölf Einzelereignisse. Schlüssel ist, woran Jack ihn
+      wiedererkennt (`insel-auftrag`), die Zeile sagt, worum es geht, und
+      `fakten` nennt, was dazugehört.
+    * **SCHLUESSELSZENEN** — was die Kampagne oder die Welt verändert und
+      deshalb einen eigenen Eintrag bekommt: der Tod einer Spielerfigur, ein
+      Krieg, eine Seuche, ein Epochenereignis. Gleiche Form wie eine Phase.
+    * **OFFEN** — wo die Fakten zum Verstehen nicht reichen; dort schlägt das
+      Schreiben nach. Braucht keine Fakten.
+
+  **Der Abschnitt IST die Wichtigkeit.** Eine Notiz unter PHASEN wird zu
+  `wichtigkeit: "phase"`, eine unter SCHLUESSELSZENEN zu
+  `"schluesselszene"` — deshalb trägt `notiz` kein eigenes Feld dafür. Der
+  Auftrag verlangte bis #1211 eine `wichtigkeit`, die das Werkzeug gar nicht
+  kannte; das war eine der drei Ursachen, an denen der erste echte Lauf
+  gescheitert ist (der Überblick brach nach 638 s mit
+  `{:wiederholung, "notiz"}` ab).
+
+  **Ein Geschehen liegt in höchstens einer Gruppe** — dieselbe Regel, die
+  `Worker.Jack.Chronik.Entwurf` für die Einträge durchsetzt. Ohne sie
+  gruppierte der Überblick denselben Fakt mehrfach, und das Schreiben müsste
+  die Doppelung auflösen, ohne zu wissen, welche Gruppe gemeint war. Die
+  Ablehnung nennt die Gruppe, in der er schon liegt.
+
+  **Keine FORM, kein Deckel.** Anders als Resümee (#1209) und Epos (#1210)
+  leitet der Chronik-Jack keine Form aus einer Überschrift ab, und die Zahl
+  der Phasen ist nicht gedeckelt: Wie viele Abschnitte eine Kampagne hat,
+  entscheidet die Kampagne. Die Flughöhe steht im Auftrag (aus mehreren
+  hundert Fakten sollen etwa zwanzig Einträge werden), nicht als Schranke im
+  Werkzeug — ein Deckel hier machte den Lauf unabschließbar, sobald er zu
+  eng gegriffen wäre.
+
+  **Nur Bekanntes:** eine Fakt-ID muss es in der Kampagne geben, ein Bogen
+  unter den Bögen dieser Sitzung, der Kampagne oder den Strängen; gespeichert
+  wird die Schreibweise des Bestands.
+  """
+
+  alias Worker.Jack.Antwort
+  alias Worker.Jack.Resuemee.{Bisher, Stand}
+  alias Worker.Jack.Resuemee.Notizen, as: Mechanik
+
+  @gruppen ~w(PHASEN SCHLUESSELSZENEN)
+
+  @type ergebnis :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
+
+  @doc "Die Werkzeuge dieses Moduls für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
+  @spec werkzeuge(Stand.t()) :: [map()]
+  def werkzeuge(%Stand{} = s) do
+    [
+      %{
+        name: "notiz",
+        beschreibung:
+          "Deine Notizen zur Chronik. Sie überleben, was dein Kontext vergisst, und sind " <>
+            "alles, was das Schreiben von diesem Lauf noch hat. Jeder Eintrag hat einen " <>
+            "Abschnitt und einen Schlüssel; derselbe Schlüssel ERSETZT den alten Eintrag, " <>
+            "zeile=null streicht ihn. Abschnitte: PHASEN (ein Abschnitt der Handlung, aus " <>
+            "dem EIN Chronik-Eintrag wird — ein ganzer Auftrag von der Annahme bis zur " <>
+            "Abrechnung, nicht zwölf Ereignisse), SCHLUESSELSZENEN (was die Kampagne oder " <>
+            "die Welt verändert und deshalb einen eigenen Eintrag bekommt: Tod einer " <>
+            "Spielerfigur, Krieg, Seuche, Epochenereignis), OFFEN (wo die Fakten zum " <>
+            "Verstehen nicht reichen; braucht keine Fakten). Der Abschnitt ist zugleich die " <>
+            "Wichtigkeit des späteren Eintrags. Jedes Geschehen gehört in höchstens eine " <>
+            "Gruppe.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "eintraege" => %{
+              "type" => "array",
+              "minItems" => 1,
+              "items" => %{
+                "type" => "object",
+                "properties" => %{
+                  "abschnitt" => %{
+                    "type" => "string",
+                    "enum" => Stand.abschnitte(:chronik),
+                    "description" => "PHASEN, SCHLUESSELSZENEN oder OFFEN"
+                  },
+                  "schluessel" => %{
+                    "type" => "string",
+                    "description" =>
+                      "woran du den Abschnitt wiedererkennst: \"insel-auftrag\", \"tod-kodex\""
+                  },
+                  "zeile" => %{
+                    "type" => ["string", "null"],
+                    "description" => "worum es geht; null streicht den Eintrag"
+                  },
+                  "fakten" => %{
+                    "type" => "array",
+                    "items" => %{"type" => "string"},
+                    "description" =>
+                      "die IDs der Fakten, die dazugehören (erste Spalte von fakten())"
+                  },
+                  "boegen" => %{
+                    "type" => "array",
+                    "items" => %{"type" => "string"},
+                    "description" =>
+                      "die Titel der Bögen, zu denen er gehört (aus boegen_kampagne() " <>
+                        "oder straenge())"
+                  }
+                }
+              }
+            }
+          }
+        },
+        aendert_bestand: true,
+        ausfuehren: &notiz/2
+      },
+      %{
+        name: "notizen_lesen",
+        beschreibung: lesen_beschreibung(s),
+        parameter: %{"type" => "object", "properties" => %{}},
+        wiederholung: :frei,
+        ausfuehren: &notizen_lesen/2
+      }
+    ]
+  end
+
+  # Im Schreiben und in der Durchsicht sind die Notizen nur noch zu lesen;
+  # „wo du stehst“ ist dort die Chronik selbst.
+  defp lesen_beschreibung(%Stand{lauf: :ueberblick}),
+    do:
+      "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, wie " <>
+        "viele Phasen und Schlüsselszenen du hast und wie viele Geschehen noch in keiner " <>
+        "Gruppe liegen. Nutze es, wenn du nicht mehr weißt, wo du stehst."
+
+  defp lesen_beschreibung(%Stand{}),
+    do:
+      "Gibt die Notizen aus dem Überblick zurück (PHASEN, SCHLUESSELSZENEN, OFFEN) — die " <>
+        "Gruppierung, aus der die Chronik-Einträge werden. Nutze es, wenn du nicht mehr " <>
+        "weißt, welche Abschnitte du gesehen hast."
+
+  # ─── notiz ────────────────────────────────────────────────────────────
+
+  @doc "Einträge schreiben, ersetzen oder streichen (Werkzeug `notiz`)."
+  @spec notiz(Stand.t(), map()) :: ergebnis()
+  def notiz(%Stand{} = s, %{"eintraege" => eintraege}) do
+    Mechanik.eintragen(s, eintraege, %{
+      pruefen: &pruefen/4,
+      fehlt: &fehlt/1,
+      weg: &hinweis/1
+    })
+  end
+
+  defp fehlt(s) do
+    if gruppen(s) == [], do: ["PHASEN"], else: []
+  end
+
+  defp pruefen(s, a, k, e) do
+    zeile = e["zeile"]
+    {fakten, fakten_weg} = Mechanik.aufloesen(e["fakten"], &Stand.fakt(s, &1), & &1.id)
+    {boegen, boegen_weg} = Mechanik.aufloesen(e["boegen"], &bogen(s, &1), & &1)
+    doppelt = doppelt(s, a, k, fakten)
+
+    cond do
+      String.trim(zeile) == "" ->
+        {:fehler,
+         "#{a}/#{k}: die Zeile ist leer. Schreib hin, worum es in diesem Abschnitt geht, " <>
+           "oder lass ihn weg (`zeile: null` streicht einen bestehenden)."}
+
+      fakten_weg != [] ->
+        {:fehler,
+         "#{a}/#{k}: Fakten gibt es nicht: #{Jason.encode!(fakten_weg)}. Die IDs stehen in " <>
+           "der ersten Spalte von fakten()."}
+
+      boegen_weg != [] ->
+        {:fehler,
+         "#{a}/#{k}: Bögen gibt es nicht: #{Jason.encode!(boegen_weg)}. Nimm die Titel aus " <>
+           "boegen_kampagne() oder straenge(), wie sie dort stehen."}
+
+      a in @gruppen and fakten == [] ->
+        {:fehler,
+         "#{a}/#{k}: der Abschnitt nennt keinen Fakt. Eine Phase fasst Geschehen zusammen " <>
+           "— nenn ihre IDs in `fakten`."}
+
+      doppelt != nil ->
+        {fakt, wo} = doppelt
+
+        {:fehler,
+         "#{a}/#{k}: der Fakt #{fakt} liegt schon in „#{wo}“. Jedes Geschehen gehört in " <>
+           "höchstens eine Gruppe — nimm ihn dort heraus (denselben Schlüssel erneut " <>
+           "schreiben ersetzt den Eintrag) oder lass ihn hier weg."}
+
+      true ->
+        {:ok, %{abschnitt: a, schluessel: k, zeile: zeile, fakten: fakten, boegen: boegen}}
+    end
+  end
+
+  # Der erste Fakt, der schon in einer ANDEREN Gruppe liegt — samt ihrem
+  # Schlüssel. Der Eintrag unter demselben Schlüssel zählt nicht mit: ihn
+  # ersetzt dieser Aufruf gerade.
+  defp doppelt(_s, a, _k, _fakten) when a not in @gruppen, do: nil
+
+  defp doppelt(s, _a, k, fakten) do
+    belegt =
+      for n <- s.notizen,
+          n.abschnitt in @gruppen,
+          n.schluessel != k,
+          id <- n.fakten,
+          into: %{},
+          do: {id, n.schluessel}
+
+    Enum.find_value(fakten, fn id ->
+      case belegt[id] do
+        nil -> nil
+        wo -> {id, wo}
+      end
+    end)
+  end
+
+  @doc """
+  Der Titel eines bekannten Bogens, wie er geschrieben steht: unter den Bögen
+  dieser Sitzung, denen der Kampagne oder den Strängen — sonst `nil`.
+  """
+  @spec bogen(Stand.t(), String.t()) :: String.t() | nil
+  def bogen(%Stand{} = s, titel) when is_binary(titel) do
+    k = Worker.ThreadOverride.normalize(titel)
+
+    (Enum.map(s.boegen, & &1.titel) ++
+       Enum.map(Bisher.alle_boegen(s), & &1.titel) ++ s.mitschnitt.straenge)
+    |> Enum.find(&(Worker.ThreadOverride.normalize(&1) == k))
+  end
+
+  def bogen(_s, _titel), do: nil
+
+  @doc """
+  Die IDs der Fakten, die in einer Gruppe liegen (PHASEN oder
+  SCHLUESSELSZENEN). Öffentlich, weil `Worker.Jack.Chronik.Abschluss` daraus
+  die offenen Geschehen rechnet — dieselbe Menge, gegen die `fertig` prüft.
+  """
+  @spec gruppiert(Stand.t()) :: [String.t()]
+  def gruppiert(%Stand{notizen: notizen}),
+    do: for(n <- notizen, n.abschnitt in @gruppen, id <- n.fakten, uniq: true, do: id)
+
+  @doc "Die Notizen der beiden Gruppen-Abschnitte."
+  @spec gruppen(Stand.t()) :: [map()]
+  def gruppen(%Stand{notizen: notizen}), do: Enum.filter(notizen, &(&1.abschnitt in @gruppen))
+
+  @doc "Der Hinweis nach einer Änderung (Antwort von `notiz`, unter `weg`)."
+  @spec hinweis(Stand.t()) :: String.t()
+  def hinweis(%Stand{} = s) do
+    offen = Worker.Jack.Chronik.Abschluss.offene_geschehen(s)
+    {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
+
+    "#{length(phasen)} Phasen, #{length(szenen)} Schlüsselszenen; " <>
+      case offen do
+        [] -> "jedes Geschehen liegt in einer Gruppe."
+        ids -> "noch #{length(ids)} Geschehen ohne Gruppe."
+      end
+  end
+
+  # ─── notizen_lesen ────────────────────────────────────────────────────
+
+  @doc "Die Notizen zurückgeben, mit Schlüsseln und dem Stand der Arbeit (Werkzeug `notizen_lesen`)."
+  @spec notizen_lesen(Stand.t(), map()) :: ergebnis()
+  def notizen_lesen(%Stand{} = s, _args) do
+    eintraege =
+      Enum.map(s.notizen, fn n ->
+        Antwort.geordnet([
+          {"abschnitt", n.abschnitt},
+          {"schluessel", n.schluessel},
+          {"zeile", n.zeile},
+          {"fakten", n.fakten},
+          {"boegen", n.boegen}
+        ])
+      end)
+
+    notizen =
+      case String.trim(notizen_text(s)) do
+        "" -> "(noch keine Notizen)"
+        t -> t
+      end
+
+    {s,
+     {:ok,
+      Antwort.geordnet([{"stand", stand_text(s)}, {"eintraege", eintraege}, {"notizen", notizen}])}}
+  end
+
+  @doc "Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen."
+  @spec stand_text(Stand.t()) :: String.t()
+  def stand_text(%Stand{lauf: :ueberblick} = s) do
+    n = length(s.fakten)
+    {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
+    offen = Worker.Jack.Chronik.Abschluss.offene_geschehen(s)
+    geschehen = length(Worker.Jack.Chronik.Abschluss.ereignisse(s))
+
+    Enum.join(
+      [
+        "Chronik der Kampagne. Bestand: #{length(s.chronik)} Einträge.",
+        "Fakten: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
+          noch_ungelesen(Stand.ungelesen(s)),
+        "PHASEN: #{length(phasen)}, SCHLUESSELSZENEN: #{length(szenen)}.",
+        "Geschehen in einer Gruppe: #{geschehen - length(offen)} von #{geschehen}."
+      ],
+      "\n"
+    )
+  end
+
+  # Im Schreiben und in der Durchsicht steht die Arbeit an der Chronik selbst;
+  # die Notizen sind dort nur noch Lesestoff.
+  def stand_text(%Stand{} = s) do
+    {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
+
+    "Chronik: #{length(s.eintraege)} Einträge (Bestand vorher: #{length(s.chronik)}). " <>
+      "Aus dem Überblick: #{length(phasen)} Phasen, #{length(szenen)} Schlüsselszenen."
+  end
+
+  defp noch_ungelesen([]), do: ""
+
+  defp noch_ungelesen(bereiche) do
+    mehr = if length(bereiche) > 12, do: " …", else: ""
+    " Noch nicht gelesen: " <> Enum.join(Enum.take(bereiche, 12), ", ") <> mehr <> "."
+  end
+
+  @doc "Die Notizen als Text, je Abschnitt `kopf` + Name (Default `## `)."
+  @spec notizen_text(Stand.t(), String.t()) :: String.t()
+  def notizen_text(%Stand{notizen: n}, kopf \\ "## "),
+    do: Mechanik.text_aus(n, kopf, Stand.abschnitte(:chronik))
+end

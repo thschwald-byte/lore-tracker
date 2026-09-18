@@ -119,8 +119,12 @@ defmodule Worker.Jack.Chronik.Datierung do
   # er deren Spanne als gröbere Angabe — keinen gerechneten Tag. Liegt er am
   # Rand, bleibt er ohne Datum.
   defp zwischen(acc, e, i, geordnet, feste, cal) do
-    vor = letzter_fester(geordnet, feste, 0..(i - 1))
-    nach = erster_fester(geordnet, feste, (i + 1)..(length(geordnet) - 1))
+    # Schrittweite ausdrücklich 1: Ein Eintrag am Rand erzeugt sonst eine
+    # ABSTEIGENDE Range (`0..-1`, `n..n-1`), die Elixir als Schritt -1 liest
+    # und bei jedem Aufruf laut bemängelt — bei hunderten Einträgen flutet
+    # das das Log. Mit `//1` ist sie schlicht leer, und genau das ist gemeint.
+    vor = letzter_fester(geordnet, feste, 0..(i - 1)//1)
+    nach = erster_fester(geordnet, feste, (i + 1)..(length(geordnet) - 1)//1)
 
     case {vor, nach} do
       {%{in_game_day: a}, %{in_game_day: b}} when is_integer(a) and is_integer(b) and a <= b ->
@@ -131,15 +135,11 @@ defmodule Worker.Jack.Chronik.Datierung do
     end
   end
 
-  defp letzter_fester(_geordnet, _feste, first..last//_) when first > last, do: nil
-
   defp letzter_fester(geordnet, feste, bereich) do
     bereich
     |> Enum.reverse()
     |> Enum.find_value(fn i -> geordnet |> Enum.at(i) |> then(&Map.get(feste, &1.id)) end)
   end
-
-  defp erster_fester(_geordnet, _feste, first..last//_) when first > last, do: nil
 
   defp erster_fester(geordnet, feste, bereich),
     do:

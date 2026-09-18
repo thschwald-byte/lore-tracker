@@ -39,10 +39,11 @@ defmodule Worker.Jack.Chronik.Abschluss do
   nicht beim einzelnen Aufruf.
   """
 
-  alias Worker.Jack.Chronik.Entwurf
+  alias Worker.Jack.Chronik.{Entwurf, Notizen}
   alias Worker.Jack.Resuemee.Abschluss, as: Mechanik
   alias Worker.Jack.Resuemee.Stand
 
+  @zahlen_ueberblick ~w(gruppen fakten_zugeordnet)
   @zahlen_schreiben ~w(eintraege fakten_zugeordnet)
   @zahlen_durchsicht ~w(bestaetigt ersetzt)
 
@@ -51,6 +52,32 @@ defmodule Worker.Jack.Chronik.Abschluss do
   die leere Chronik.
   """
   @spec hindernisse(Stand.t()) :: [String.t()]
+  def hindernisse(%Stand{lauf: :ueberblick} = s) do
+    offen = offene_geschehen(s)
+
+    cond do
+      Notizen.gruppen(s) == [] ->
+        [
+          "Du hast noch keinen Abschnitt notiert. Trag mit notiz() unter PHASEN ein, " <>
+            "welche Abschnitte der Handlung du siehst — ein ganzer Auftrag von der Annahme " <>
+            "bis zur Abrechnung ist EINE Phase."
+        ]
+
+      offen != [] ->
+        [
+          "Diese #{length(offen)} Fakten liegen in keiner Gruppe: #{liste(offen)}. " <>
+            "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es eine eigene " <>
+            "Phase bekommt: Nimm es in die Phase auf, zu der es gehört (denselben " <>
+            "Schlüssel erneut schreiben ersetzt den Eintrag), oder leg die fehlende Phase " <>
+            "an. Dauerhafte Zustände gehören nicht in den Zeitstrahl und stehen nicht in " <>
+            "dieser Liste."
+        ]
+
+      true ->
+        []
+    end
+  end
+
   def hindernisse(%Stand{} = s) do
     offen = Entwurf.offene_fakten(s.eintraege, ereignisse(s))
 
@@ -77,6 +104,19 @@ defmodule Worker.Jack.Chronik.Abschluss do
   end
 
   @doc """
+  Die ereignisförmigen Fakten, die im Überblick in keiner Gruppe liegen.
+  Dieselbe Grundmenge wie beim Schreiben (`ereignisse/1`), nur gegen die
+  Notizen statt gegen die Einträge geprüft — im Überblick gibt es noch keine
+  Einträge, und genau diese Verwechslung liess `fertig()` dort bis #1211
+  ausnahmslos ablehnen.
+  """
+  @spec offene_geschehen(Stand.t()) :: [String.t()]
+  def offene_geschehen(%Stand{} = s) do
+    gruppiert = MapSet.new(Notizen.gruppiert(s))
+    for id <- ereignisse(s), not MapSet.member?(gruppiert, id), do: id
+  end
+
+  @doc """
   Die ereignisförmigen Fakten — alles ausser `zustand`. Öffentlich, weil die
   Trichter-Messung (#1111) dieselbe Grundmenge braucht: Was hier nicht
   drinsteht, kann auch nicht verschluckt werden.
@@ -84,6 +124,24 @@ defmodule Worker.Jack.Chronik.Abschluss do
   @spec ereignisse(Stand.t()) :: [String.t()]
   def ereignisse(%Stand{fakten: fakten}),
     do: for(f <- fakten, Map.get(f, :typ) != "zustand", do: f.id)
+
+  @doc "Die Zahlen, die `fertig` im Überblick verlangt."
+  @spec zahlen_ueberblick() :: [String.t()]
+  def zahlen_ueberblick, do: @zahlen_ueberblick
+
+  @doc """
+  Die Ist-Zahlen des Überblicks für den Abgleich: wie viele Gruppen stehen,
+  und wie viele Geschehen in ihnen aufgehen.
+  """
+  @spec ist_ueberblick(Stand.t()) :: map()
+  def ist_ueberblick(%Stand{} = s) do
+    ereignisse = ereignisse(s)
+
+    %{
+      "gruppen" => length(Notizen.gruppen(s)),
+      "fakten_zugeordnet" => length(ereignisse) - length(offene_geschehen(s))
+    }
+  end
 
   @doc "Die Zahlen, die `fertig` im Schreiben verlangt."
   @spec zahlen_schreiben() :: [String.t()]
@@ -160,6 +218,25 @@ defmodule Worker.Jack.Chronik.Abschluss do
     ]
   end
 
+  def werkzeuge(%Stand{lauf: :ueberblick}) do
+    [
+      %{
+        name: "fertig",
+        beschreibung:
+          "Meldet den Überblick als abgeschlossen — der EINZIGE gültige Abschluss. Ein Satz " <>
+            "in der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
+            "solange ein Geschehen in keiner Gruppe liegt; in der Ablehnung stehen die " <>
+            "Fakten beim Namen. Dauerhafte Zustände zählen nicht mit — sie gehören nicht in " <>
+            "den Zeitstrahl. Erwartete Zahlen: gruppen (deine Phasen und Schlüsselszenen " <>
+            "zusammen) und fakten_zugeordnet (Geschehen, die in einer Gruppe aufgehen). " <>
+            "Deine Zahlen und die Buchhaltung werden verglichen.",
+        parameter: schema(@zahlen_ueberblick),
+        wiederholung: :frei,
+        ausfuehren: &fertig/2
+      }
+    ]
+  end
+
   def werkzeuge(%Stand{}) do
     [
       %{
@@ -202,6 +279,16 @@ defmodule Worker.Jack.Chronik.Abschluss do
       zahlen: @zahlen_durchsicht,
       ist: %{},
       weg: fn _ -> nil end,
+      abschluss: fn stand, eintrag -> {stand, eintrag} end
+    })
+  end
+
+  def fertig(%Stand{lauf: :ueberblick} = s, p) do
+    Mechanik.mit_regeln(s, p, %{
+      hindernisse: hindernisse(s),
+      zahlen: @zahlen_ueberblick,
+      ist: ist_ueberblick(s),
+      weg: fn stand -> "#{length(Notizen.gruppen(stand))} Gruppen" end,
       abschluss: fn stand, eintrag -> {stand, eintrag} end
     })
   end
