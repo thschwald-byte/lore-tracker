@@ -112,8 +112,11 @@ defmodule Worker.Discord.ConsentButton do
   @doc """
   Der Nachrichten-Payload für `Nostrum.Api.Message.create/2`. PURE.
 
-  Der Text nennt bewusst **beide** Wege (klicken oder sprechen) und sagt die
-  Konsequenz des Nichtstuns — ohne die wäre die Einwilligung nicht informiert.
+  Der Text nennt **nur den Klick** und sagt die Konsequenz des Nichtstuns —
+  ohne die wäre die Einwilligung nicht informiert. (Bis #1046 stand hier, er
+  nenne „bewusst beide Wege, klicken oder sprechen"; der Text selbst war da
+  längst richtig, nur diese Zeile beschrieb ihn falsch. Der gesprochene Weg
+  ist seit #1005 ausgesetzt, weil Akustik nicht identitätsgebunden ist.)
   Beim Widerruf ist die Formulierung präzise: er beendet die Aufzeichnung, er
   löscht **nicht** rückwirkend bereits Gespeichertes (das wäre ein eigener
   Erasure-Pfad, und „wird gelöscht" wäre hier eine falsche Zusage).
