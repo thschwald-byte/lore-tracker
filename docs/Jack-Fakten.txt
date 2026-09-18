@@ -1,0 +1,1949 @@
+WIE JACK DIE FAKTEN BAUT
+========================
+
+Technische Beschreibung von Stufe 2 der Wahrheitsbild-Pipeline (J4, #1207)
+
+Code-Stand:   Worktree /home/tom/Projekte/lore_tracker_j4,
+              Branch issue-1197-j4, Commit a59563b2
+Pfade:        Wo nichts anderes steht, sind Pfade relativ zu
+              apps/worker/lib/worker/ angegeben (also z. B.
+              jack/pipeline.ex = apps/worker/lib/worker/jack/pipeline.ex).
+              Zeilennummern beziehen sich auf den oben genannten Commit.
+Belege:       Jede technische Aussage trägt eine Fundstelle (Datei:Zeile oder
+              Funktionsname). Was ich im Code nicht gefunden habe, steht als
+              „nicht geprüft“ da oder fehlt.
+Beispiele:    Alle Beispiele sind erfunden oder stammen aus den Demo-Vorlagen
+              in apps/worker/priv/jack/auftraege/ (die Werkstatt am Hafen, der
+              Alte, die Salzmine, die Fabrik). Aus echten Sitzungen stammt
+              keins.
+
+
+== 0. Kurzfassung ==
+
+Jack ist ein Agent mit Werkzeugen. Er liest den geglätteten Mitschnitt einer
+Sitzung mehrmals und trägt „Aussagen“ in einen Bestand ein. Jede Aussage muss
+ein wörtliches Zitat aus jedem Block enthalten, den sie nennt, sonst wird sie
+abgewiesen. Kollidiert eine Aussage mit einer, die schon im Bestand steht, legt
+das Werkzeug ihm die bestehende vor, und er entscheidet: dasselbe, neu oder
+eine bessere Fassung. Ein Durchgang besteht aus drei Teilen:
+
+  1. Gedächtnis (Phase 1): den ganzen Mitschnitt lesen und ein Gedächtnis mit
+     fünf Abschnitten anlegen. Aussagen gibt es hier noch nicht.
+  2. Extraktion (Phase 2): den Mitschnitt noch einmal lesen und die Aussagen
+     eintragen.
+  3. Verifikationen: noch einmal lesen und jede Aussage erneut einreichen,
+     bis zwei Verifikationen in Folge nichts Neues bringen, höchstens acht.
+
+Aus dem Bestand macht der Worker dieselben Pipeline-Fakten wie früher die
+Extraktion. Dafür nimmt er den Parser der Pipeline
+(Parsing.parse_facts_json/2). Veröffentlicht werden sie als ein
+SessionFactsExtracted mit verify_backend "jack". Dahinter läuft alles wie
+bisher: Entity- und Thread-Registry, Resümee, Chronik, Epos, Bögen. Jacks
+Stand wird außerdem als Ereignis JackStandAbgelegt abgelegt, damit
+„noch N Iterationen“ darauf weitermachen kann.
+
+
+== 1. Überblick und Einbettung ==
+
+--- 1.1 Wo Jack in der Pipeline sitzt ---
+
+Der Lauf einer Sitzung beginnt in Worker.Recording.Pipeline.run_stages/3
+(recording/pipeline.ex:320-333). Er vergibt eine run_id, meldet den Lauf bei
+Fortschritt an und verzweigt:
+
+  * Ohne Option :jack_weiter der ganze Lauf: ganzer_lauf/3
+    (recording/pipeline.ex:335-367). Er liest alle Utterances
+    (Repo.list_utterances(session.id, limit: :all), Zeile 340), fährt die
+    Glättung als Stufe "smooth" in with_status/5 (Zeile 351-357) und ruft mit
+    deren Kontextliste run_wahrheitsbild/4 (Zeile 361).
+  * Mit :jack_weiter kommt „noch N Iterationen“: jack_weiter/4
+    (recording/pipeline.ex:374-382). Er glättet nicht neu, sondern holt die
+    Kontextliste aus der gespeicherten Glättung
+    (Worker.Jack.Pipeline.gespeicherter_kontext/1) und ruft
+    run_wahrheitsbild/4 mit deps.jack = [weiter: n]. Fehlt die Glättung, wird
+    das als Fehlschlag der Stufe "extract" gemeldet (Zeile 380).
+
+run_wahrheitsbild/4 (recording/pipeline.ex:510-652) ist eine with-Kette:
+
+  extract.()                          Jack, jack/pipeline.ex extract_facts/4
+  resolve_entities_best_effort        EntityRegistry, best-effort
+  resolve_threads_best_effort         ThreadRegistry, best-effort
+  bestand_lesen (verify)              Jack.Pipeline.geprueft/1, keine Stufe
+  with_status("render", …)            Resümee
+  danach best-effort: timeline, render_epos, render_arc_progressions
+
+Der Extraktions-Schritt ist Jack (Zeile 532-544). Anders als die übrigen
+Schritte läuft er nicht in with_status/5, weil er seine drei Stufen selbst
+meldet. Die Pipeline gibt ihm dafür den Rückruf :melde_stufe mit
+(stufen_melder/3, Zeile 541 und 885-894). Eine Stufe 3 („verify“, zweites
+Modell) gibt es nicht mehr. An ihrer Stelle liest bestand_lesen/3 (Zeile
+718-727) den Bestand nach den Registries zurück
+(Worker.Jack.Pipeline.geprueft/1 = Repo.get_session_facts/1,
+jack/pipeline.ex:243-249). Der Moduldoc der Pipeline führt die Stufenfolge
+als Liste (recording/pipeline.ex:7-18).
+
+--- 1.2 Die Einstiege in Jack ---
+
+Worker.Jack.Pipeline.extract_facts/4 (jack/pipeline.ex:76-92)
+  Ruft extract_facts_raw/4 und veröffentlicht bei Erfolg genau ein
+  SessionFactsExtracted mit "facts", "extraction_saw",
+  "verify_backend" => "jack" und "verify_model" =>
+  Worker.Settings.model_for(2, :local). Rückgabe {:ok, facts}.
+
+Worker.Jack.Pipeline.extract_facts_raw/4 (jack/pipeline.ex:111-155)
+  Die eigentliche Arbeit, ohne das Fakten-Event. Die Schritte:
+    1. k = kontext(bloecke)                     OOC-Filter (Zeile 114)
+    2. modell(), kontext_fenster(), auftraege(length(k)),
+       vorher(session_id, k, opts[:weiter])     (Zeile 116-119)
+    3. sprecher, cast, straenge                 (Zeile 120-122)
+    4. extrahieren/5 mit lauf_opts               (Zeile 126-137); dazu
+       gehört die Laufsicht als :beobachter      (Zeile 132)
+    5. bei Erfolg: Logzeile, stand_ablegen/3 (JackStandAbgelegt),
+       Rückgabe {:ok, facts ++ Prüfflags, extraction_saw}  (Zeile 138-145)
+  Den Stand legt der Worker ab, BEVOR extract_facts/4 das
+  SessionFactsExtracted veröffentlicht (Zeile 144 vor Zeile 80).
+  Fehler verlassen die Funktion als {:error, {:extraction, …}}: markiert/1
+  wickelt jeden fremden Grund in {:extraction, {:jack, grund}} ein
+  (Zeile 159-160). Ausnahme sind die Fehler aus Schritt 2 (Modell,
+  Kontextfenster, Aufträge, abgelegter Stand). Sie kommen unverändert aus
+  dem else-Zweig zurück (Zeile 150-154); die Fehler aus vorher/3 sind
+  allerdings schon selbst als {:extraction, {:jack, …}} gebaut
+  (abgelegter_stand/2, Zeile 213-215).
+
+Worker.Jack.Pipeline.extrahieren/5 (jack/pipeline.ex:349-360)
+  Eingabe bauen (eingabe/4), Lauf fahren (laufen/2, mit :ablage stattdessen
+  weiterlaufen/3, Zeile 376-381), Bestand übersetzen (fakten/2) und die
+  Ablage für das Stand-Ereignis bauen (ablage/2, Zeile 362-374).
+
+--- 1.3 Neuableitung nach einer Kuration ---
+
+Worker.Recording.Pipeline.Dirty (recording/pipeline/dirty.ex) reagiert auf
+LueckenKurationSet mit der Text-Identitäts-Weiche classify/3 (Zeile 81-95).
+Führt sie auf :reextract, fährt process(session_id, :reextract)
+(Zeile 306-395) einen ganzen Jack-Lauf. Das geschieht im Job der GpuQueue
+(Zeile 173-182) mit Entprellung über dirty_debounce_ms, Default 15 000 ms
+(Zeile 239):
+
+  ctx = Smoothing.to_context(blocks, vorschlaege, overrides)       Zeile 315
+  now_saw = Block-ID → Smoothing.text_hash(text)                    Zeile 316
+  changed = Blöcke, deren Hash sich gegenüber extraction_saw
+            geändert hat                                           Zeile 318-321
+  removed = Blöcke, die to_context als unbrauchbar entfernt hat     Zeile 325-328
+  Worker.Jack.Pipeline.extract_facts_raw(ctx, session_id, campaign) Zeile 333-334
+  {carried, adopted} = partition_carryover(alt, neu, changed, removed)
+
+Übernommen werden nur Jack-Fakten, die einen geänderten Block berühren. Die
+alten Fakten unveränderter Blöcke bleiben stehen (partition_carryover/4,
+Zeile 104-124). Die übernommenen bekommen ihre entity_id aus der bestehenden
+Registry (EntityRegistry.registry_from_facts/1 + apply_registry/2,
+Zeile 357-358). Ein LLM-Judge prüft sie nicht mehr (Zeile 360-364).
+Veröffentlicht wird ein SessionFactsExtracted mit verify_backend "jack"
+(Zeile 370-379). Danach baut Pipeline.republish_timeline_for_session/1 den
+Zeitstrahl neu (Zeile 381).
+
+Dieser Pfad übergibt Jack KEIN :melde_stufe (Zeile 333-334, ohne Optionen).
+Laufband und stufen_melder sehen den Lauf deshalb nicht.
+
+Der Zweig :reverify (Zeile 262-304) ruft kein Modell. Er berechnet verified?
+neu aus den gespeicherten grounded?/attributed? und veröffentlicht die Fakten
+feldkonservativ, samt verify_backend/verify_model aus der Row (Zeile 291-292).
+
+--- 1.4 „noch N Iterationen“ ---
+
+Nur Verifikationen auf dem abgelegten Stand, ohne neue Glättung. Danach geht
+es weiter wie in jedem Lauf (Registries, Resümee, Zeitstrahl, Epos). Der Weg
+vom Knopf bis zu Jack steht in Abschnitt 8.6. Innerhalb von Jack ist es die
+Option weiter: n. Sie macht aus opts ein :ablage + :iterationen
+(weiter_opts/2, jack/pipeline.ex:194-198), und damit läuft weiterlaufen/3
+statt laufen/2 (Zeile 376-381).
+
+--- 1.5 Messläufe und Referenzlauf (kurz) ---
+
+Worker.Jack.Messlauf (jack/messlauf.ex), Mix-Task mix lore.jack.lauf
+(apps/worker/lib/mix/tasks/lore/jack_lauf.ex)
+  Ein Messlauf wie Reihe C des Spikes #1174 gegen das echte Ollama, mit
+  Ablage je Durchgang (dN/, aussagen.jsonl, fortsetzung.json, Journal,
+  Protokoll). Er fährt dieselbe Phase (Worker.Jack.Phase.laufen/3) wie der
+  Betrieb. Das Modell kommt aber aus modell_reihe_c/1 mit festen Werten
+  (jack/messlauf.ex:71-83), NICHT aus den Einstellungen, damit Messläufe
+  vergleichbar bleiben. Die Aufträge heißen dort s1_phase1.md usw. und kommen
+  aus einem Verzeichnis außerhalb des Repos (jack_lauf.ex, Option
+  --auftraege). Laut Moduldoc gilt ein Messlauf als gesättigt, wenn EIN
+  Durchgang keine neue Aussage bringt. Der Betrieb verlangt zwei in Folge
+  (siehe 4.5).
+
+Worker.Jack.Referenz (jack/referenz.ex), Worker.Jack.Mcp (jack/mcp.ex),
+Mix-Tasks mix lore.jack.referenz und mix lore.jack.mcp
+  Hier ist Claude Code headless die Agenten-Schleife (claude -p mit
+  --tools "", --strict-mcp-config, --allowedTools mcp__jack,
+  --system-prompt <pi>, --output-format stream-json; jack/referenz.ex:9-16).
+  Jacks Werkzeuge kommen über einen MCP-Server auf stdio
+  (JSON-RPC 2.0, initialize / tools/list / tools/call / ping). Jeder Aufruf
+  geht durch dieselbe Regelschicht Worker.Agent.Aufruf wie in der eigenen
+  Schleife (jack/mcp.ex:1-22, agent/aufruf.ex:7-10). Wie es nach Durchgang 1
+  weitergeht (Fortsetzen nach Abbruch, Folgedurchgänge, Deckel 8), regelt
+  Worker.Jack.Referenz.Folge (jack/referenz/folge.ex:39). Laut Moduldoc gilt
+  auch dieser Lauf als gesättigt, sobald ein Folgedurchgang nichts Neues
+  bringt. Mit dem Betrieb hat das nichts zu tun; es dient dem Vergleich von
+  Hand.
+
+
+== 2. Eingabe ==
+
+--- 2.1 Die Kontextliste ---
+
+Jack bekommt dieselbe Blockliste wie Kuration und Dirty-Weiche:
+
+  Smoothing.to_context(blocks, vorschlaege, overrides)
+    (recording/pipeline/smoothing.ex:229-248)
+    * verwirft Blöcke, deren Override den Status "unbrauchbar" hat
+      (Zeile 235-237)
+    * macht aus jedem Block eine Map
+        %{id:, discord_id: b["speaker_discord_id"],
+          text: effective_text(b, vorschlag, override),
+          quell_utterance_ids: b["quell_utterance_ids"] || []}
+      (Zeile 238-247); "text" ist der wirksame Text (Vorschlag oder
+      Kuration statt Rohtext, wo vorhanden)
+
+  Worker.Jack.Pipeline.kontext/1 = Ooc.filter/1
+    (jack/pipeline.ex:589; recording/pipeline/ooc.ex:49-51)
+    * entfernt Blöcke, deren Text als OOC erkannt wird
+
+Im ganzen Lauf kommt die Liste aus der Glättung dieses Laufs
+(recording/pipeline.ex:358-361). Bei „noch N Iterationen“ kommt sie aus der
+gespeicherten Glättung (gespeicherter_kontext/1, jack/pipeline.ex:224-235:
+get_smoothed_blocks, luecken_vorschlaege_for_session,
+luecken_overrides_effective und dann to_context). In der Neuableitung baut
+Dirty sie selbst (dirty.ex:315). extract_facts_raw/4 schickt sie in allen
+drei Fällen noch durch kontext/1 (jack/pipeline.ex:114).
+
+--- 2.2 Blocknummer = Position ---
+
+Jack sieht keine Block-IDs, sondern Nummern von 0 bis n−1. Stand.neu/1
+nummeriert die Blöcke in der Reihenfolge der Liste durch
+(jack/stand.ex:96-97: Enum.with_index → %{i => block}). Nummer n ist also
+Position n in genau der Kontextliste nach kontext/1. fakten/2 übersetzt
+später über dieselbe Liste zurück (jack/pipeline.ex:673: ids = kontext |>
+Enum.map(& &1.id) |> List.to_tuple()). Stimmt die Liste beim Zurückübersetzen
+nicht mit der beim Lesen überein, zeigen die Nummern auf falsche Blöcke. Genau
+davor schützt abgelegter_stand/2 bei „noch N Iterationen“ (Abschnitt 8.3).
+
+Jeder Block im Stand hat die Form (jack/stand.ex:11-14, 76):
+
+  %{text: "Der Alte steht in der Werkstatttür und raucht.",
+    sprecher: "Erzähler",            (erfunden)
+    block_id: "b_…"}
+
+--- 2.3 Sprecher ---
+
+Worker.Jack.Pipeline.sprecher/2 (jack/pipeline.ex:599-607):
+
+  1. Prompts.resolve_speaker_names(campaign_id)
+     (recording/pipeline/prompts.ex:445-459): die Nutzernamen der Mitglieder
+     (Repo.users_for_campaign → fetch_users), überlagert von den
+     Figurennamen (Repo.character_names_for). Die Figur gewinnt
+     (Map.merge(user_names, char_names)).
+  2. namen_ergaenzen/3 (jack/pipeline.ex:615-632): jede Discord-ID der
+     Kontextliste, die danach keinen Namen hat (nil oder ""), bekommt in der
+     Reihenfolge ihres ersten Auftretens erst den display_name aus
+     Repo.get_user/1, sonst „Sprecher ohne Namen N“. Die Ersatzbezeichnung
+     wird als Logger.warning geloggt (Zeile 627).
+
+eingabe/4 (jack/pipeline.ex:640-661) prüft danach, dass jede Discord-ID der
+Liste einen Eintrag hat. Fehlt einer, ist das {:error,
+{:sprecher_ohne_namen, ids}}. Als Sprecher steht im Block der Name
+(Map.fetch!(sprecher, b.discord_id), Zeile 652).
+
+Eine Einschränkung aus dem Code, siehe Abschnitt 10.2: der Satz „eine
+Discord-ID erreicht Jack nie“ hat nach meiner Lesart eine Lücke.
+
+--- 2.4 Cast und Stränge ---
+
+  cast     = Worker.Repo.character_roster_for(campaign.id)
+             (jack/pipeline.ex:121; repo.ex:237-261): die Figurennamen der
+             Mitglieder und dazu NPC-Aliase aus verifizierten Fakten, deren
+             entity_id in mindestens @cast_roster_npc_min_sessions = 2
+             verschiedenen Sitzungen vorkommt (repo.ex:221, 249-250). Als
+             Alias zählt der häufigste character_alias.
+  straenge = Repo.Threads.campaign_threads(campaign.id) |> Enum.map(& &1.canonical)
+             (jack/pipeline.ex:122): die kanonischen Namen der bestehenden
+             Stränge.
+
+Beide Listen verlieren in eingabe/4 ihre leeren Einträge und Dubletten
+(ohne_leere/1, Zeile 654-655, 704). Jack liest sie über die Werkzeuge cast()
+und straenge() (Abschnitt 5.2). Formregeln prüft cast_match gegen genau diese
+Cast-Liste (Abschnitt 6.3).
+
+--- 2.5 eingabe/4 und Stand.neu/1 ---
+
+eingabe/4 liefert
+
+  %{bloecke: [%{text:, sprecher:, block_id:}, …],
+    cast: ["…"], straenge: ["…"]}
+
+Daraus baut laufen/2 mit basis/1 (jack/pipeline.ex:480) die Optionen
+[bloecke:, cast:, straenge:] für Stand.neu/1 (jack/stand.ex:94-117). Wichtige
+Felder des Stands (Struct jack/stand.ex:45-74, Moduldoc Zeile 11-36):
+
+  bloecke        %{nummer => block}
+  max_block      höchste Nummer (map_size − 1)
+  cast, straenge die Listen aus 2.4
+  phase          1 (Lesen) oder 2 (Sammeln); anderes wirft ArgumentError
+  durchgang      Default 1
+  eingetragen    der Bestand, je %{nr:, woerter:, kurz:, voll:}
+  lfd            höchste vergebene Aussagenummer
+  register       das Gedächtnis, je %{abschnitt:, schluessel:, zeile:, bloecke:}
+  offene / ausgegeben   GUIDs des Tors (Abschnitt 6.7)
+  kollisionen    Aussagenummer → Zahl der Vorlagen
+  bestaetigt     wiedergefunden in diesem Durchgang
+  gelesen / sammelnd    gelesene Bereiche {von, bis}
+  themen         verwendete threads, in Reihenfolge des ersten Auftretens
+  versuche       claim-Präfix (60 Zeichen) → Fehlversuche
+  abgelehnt, geraten, abschluss_zahlversuche, unveraendert   Zähler
+  journal        interne Einträge, für Auswertung, Jack sieht sie nicht
+  guid_quelle    fn n -> guid end, Default zufalls_guid/1
+  beppo, beppo_pos, portion, weiter_leer   Portionsmodus (im Betrieb aus)
+
+Den Portionsmodus („Beppo“) setzt die Pipeline nie. basis/1 übergibt kein
+:beppo, der Default ist false (jack/stand.ex:48, 110). Im Betrieb liest Jack
+deshalb mit bloecke(von, bis) und nicht mit weiter().
+
+
+== 3. Modell und Laufzeit ==
+
+--- 3.1 Modell aus den Einstellungen ---
+
+Worker.Jack.Pipeline.modell/0 (jack/pipeline.ex:261-286):
+
+  endpunkt = Worker.Settings.get(:local_endpoint)
+  name     = Worker.Settings.model_for(2, :local)     → :model_stage2_local
+  fehlt endpunkt → {:error, :no_local_endpoint_configured}
+  fehlt name     → {:error, {:no_model_configured, 2}}
+  sonst Messlauf.modell_reihe_c(
+          endpunkt:, modell_name:,
+          temperatur:  Settings :jack_temperature,
+          max_ausgabe: Settings :jack_max_tokens,
+          extra: %{"top_p" => :jack_top_p,
+                   "frequency_penalty" => :jack_frequency_penalty})
+
+modell_reihe_c/1 liefert {Worker.Agent.Modell.Ollama, opts}
+(jack/messlauf.ex:71-83). Die Werte aus den Einstellungen überschreiben per
+Keyword.merge die festen Werte von Reihe C. Die Defaults in Worker.Settings
+sind genau diese Werte (settings.ex:116-140):
+
+  model_stage2_local       :no_default
+  jack_temperature         0.7
+  jack_top_p               0.8
+  jack_frequency_penalty   0.4
+  jack_max_tokens          60 000
+  ctx_jack                 98 304
+
+In /settings stehen sie im Block „Jack: Extract/verify“
+(HubWeb.EinstellungenLive.JackBlock,
+apps/hub/lib/hub_web/live/einstellungen_live/jack_block.ex).
+
+Kontextfenster: kontext_fenster/0 (jack/pipeline.ex:298-306) liest
+:ctx_jack. Liegt der Wert unter Worker.Jack.Phase.mindestfenster/0
+(= 4096 + 8000 + 1 = 12 097, phase.ex:83) oder ist er keine ganze Zahl, gibt
+es {:error, {:ctx_jack_ungueltig, wert, mindestens}}. ErrorClass führt das als
+Klasse ctx_jack_ungueltig (recording/error_class.ex:67).
+
+--- 3.2 Der Ollama-Client ---
+
+Worker.Agent.Modell.Ollama (agent/modell/ollama.ex) spricht die
+OpenAI-kompatible Schnittstelle POST <endpunkt>/v1/chat/completions
+(Zeile 47, 112) mit "tools". Den Pipeline-Client /api/chat
+(Worker.LLM.Local) benutzt er nicht (Moduldoc Zeile 3-6).
+
+  Anfrage (anfrage/3, Zeile 127-137):
+    "model", "messages", "stream": false,
+    "tools" (Werkzeug.als_json/1 je Werkzeug),
+    "temperature", "max_tokens",
+    dazu :extra unverändert eingemischt (top_p, frequency_penalty)
+  Kein "num_ctx": das Serverfenster setzt dieser Client nicht (Moduldoc
+    Zeile 30-31). ctx_jack muss deshalb zu dem Fenster passen, mit dem Ollama
+    das Modell lädt (settings.ex:128-139).
+  HTTP-Frist: :timeout_ms, Default 600 000 ms (Zeile 48, 63). Die Pipeline
+    übergibt keinen eigenen Wert.
+  Streaming (gestreamt/4, Zeile 74-110): nur wenn :bei_delta gesetzt ist.
+    Dann gehen "stream": true und "stream_options.include_usage" hinaus, und
+    die Frist gilt je Stück. Worker.Agent.Modell.Strom setzt die Antwort
+    zusammen. :bei_delta setzt die Laufzeit genau dann, wenn ein Beobachter da
+    ist (agent/lauf.ex:248-260). Im Betrieb ist das die Laufsicht, sofern sie
+    läuft (jack/pipeline.ex:132). Der Moduldoc sagt: „Gegen das echte Ollama
+    noch nicht geprüft, namentlich Werkzeugaufrufe in Stücken und die Nutzung
+    im letzten Stück“ (Zeile 26-28).
+  Antwort (antwort/1, Zeile 141-154):
+    text     aus message.content
+    denken   aus message.reasoning oder reasoning_content
+    aufrufe  aus tool_calls; Argumente, die kein JSON-Objekt sind, bleiben
+             als {:error, rohtext} erhalten; eine fehlende ID wird erzeugt
+             ("aufruf_<n>", Zeile 194)
+    stopp    finish_reason "length" → :laenge; mit Aufrufen → :werkzeuge;
+             sonst :stop (Zeile 218-221)
+    nutzung  prompt_tokens/completion_tokens → %{eingabe:, ausgabe:}
+  Denkspur zurück: nur wenn die Nachricht :denken trägt (Laufoption
+    denken_zurueck), dann als Feld "reasoning" (Zeile 160-167). Im Betrieb
+    ist denken_zurueck aus (phase.ex:55, Default false).
+
+--- 3.3 Die Agenten-Schleife (Worker.Agent.Lauf) ---
+
+Worker.Agent.laufen/1 delegiert an Worker.Agent.Lauf.laufen/1 (agent.ex).
+Die Schleife (agent/lauf.ex):
+
+  schleife/1 (Zeile 178-184)
+    Rundendeckel erreicht → {:deckel, :runden}
+    Wanduhr abgelaufen    → {:deckel, :zeit}   (geprüft VOR jedem Modellaufruf)
+    sonst: gegebenenfalls kompaktieren (3.7), dann runde/1
+  runde/1 (Zeile 186-212)
+    Modell aufrufen, mit Neuversuchen (3.6). Bei Erfolg die Antwort an den
+    Verlauf hängen (antwort_anhaengen/3), sonst Ende {:modell_fehler, grund}.
+  nach_antwort/2 (Zeile 262-280)
+    keine Aufrufe          → gestoppt/2 → bei_stopp (3.9)
+    stopp :laenge          → ALLE Aufrufe dieser Antwort werden abgelehnt,
+                             Text siehe abgeschnitten/1 (Zeile 348-352):
+                             „Werkzeugaufruf … wurde nicht ausgeführt: die
+                             Antwort ist an die Ausgabegrenze gestoßen …“
+    sonst                  → jeder Aufruf der Reihe nach über
+                             Worker.Agent.Aufruf.beobachtet/2 (3.4), die
+                             Ergebnisse als role: :tool an den Verlauf
+    danach: abgebrochen → {:abbruch, grund}; ALLE Ergebnisse :halt →
+            Ende :halt; sonst weiter
+  abschluss/1 (Zeile 304-323)
+    {:ok, bericht} bei :fertig oder :halt, sonst {:error, bericht}
+    bericht = %{ende:, runden:, nachrichten:, kompaktierungen:, nutzung:, ms:}
+
+Die Werkzeuge laufen nacheinander im Prozess des Aufrufers (Moduldoc Zeile
+20-23). :halt beendet den Lauf nur, wenn jedes Ergebnis derselben Antwort
+:halt ist (Zeile 277). Ruft Jack fertig() also zusammen mit einem anderen
+Werkzeug auf, endet der Lauf nicht.
+
+Deckel je Phase im Betrieb: Worker.Jack.Phase.laufen/3 setzt max_runden
+5000 und max_ms 6 Stunden (phase.ex:63-64). Die Pipeline gibt keine
+eigenen Werte mit (lauf_opts, jack/pipeline.ex:126-135). Die Defaults der
+Laufzeit selbst (100 Runden, 1 h, agent/lauf.ex:103-104) greifen hier also
+nicht.
+
+--- 3.4 Ein Werkzeugaufruf (Worker.Agent.Aufruf) ---
+
+Aufruf.beobachtet/2 (agent/aufruf.ex:59-99):
+
+  1. Ist der Lauf abgebrochen, wird nichts mehr ausgeführt, aber jeder Aufruf
+     bekommt eine Antwort (Zeile 59-60).
+  2. Wiederholungssperre (3.5), außer das Werkzeug trägt wiederholung: :frei.
+  3. ausfuehren/2 (Zeile 103-112): Werkzeug suchen (unbekannt → Fehlertext
+     mit der Liste der verfügbaren), Argumente (kein JSON-Objekt →
+     Fehlertext), Schema prüfen (Schema.pruefen/2).
+     Bei einem Schemaverstoß und gesetztem bei_formfehler antwortet das
+     Werkzeug selbst (Zeile 108, 164-178). Das tun aussage und
+     aussage_entscheiden (Abschnitt 6.3).
+  4. Die Ausführung ist abgesichert (sicher/2, Zeile 180-192). Eine Ausnahme
+     wird zum Fehlerergebnis, ein ungültiges Ergebnis ebenso.
+  5. Liefert ein Werkzeug mit aendert_bestand: true das Ergebnis :ok, beginnt
+     die Zählung der :bis_aenderung-Aufrufe neu (Zeile 90-91).
+     {:abbruch, …} bricht den Lauf ab (Zeile 87-88).
+
+Werkzeug.neu/1 (agent/werkzeug.ex:121-140) macht jedes Parameter-Schema streng
+(Schema.streng/2, agent/schema.ex:103-119): jedes Feld ist Pflicht, fremde
+Felder sind verboten, Pflicht-Texte dürfen nicht leer sein. Ausnahmen gibt es
+nur über optional: (Moduldoc werkzeug.ex:31-39).
+
+--- 3.5 Wiederholungssperre (Worker.Agent.Wiederholung) ---
+
+Die Laufzeit merkt sich jeden Aufruf mit seinen Argumenten
+({name, argumente}). Default warnung: 4, abbruch: 6 (agent/wiederholung.ex:45;
+Lauf-Default agent/lauf.ex:517). Ab dem vierten gleichen Aufruf wird er nicht
+mehr ausgeführt, die Antwort ist eine Warnung. Beim sechsten bricht der Lauf
+mit {:abbruch, {:wiederholung, name}} ab (beobachten/3, Zeile 84-96; Texte
+texte/4, Zeile 113-124). Gezählt wird über den ganzen Lauf; eine
+Kompaktierung setzt die Zählung nicht zurück (Moduldoc Zeile 34-36).
+wiederholung: :frei tragen weiter, notizen_lesen, cast, straenge und fertig
+(Werkzeuge-Moduldoc jack/werkzeuge.ex:17-19; Einzelwerte in lesen.ex,
+gedaechtnis.ex, abschluss.ex). aussage und aussage_entscheiden haben
+bei_wiederholung. Sie antworten dann in ihrer einheitlichen Form mit outcome
+"repeat" bzw. "aborted" (jack/werkzeuge.ex:139-148,
+Aussage.wiederholung/5, jack/aussage.ex:143-146).
+
+--- 3.6 Neuversuche bei Modellfehlern (Worker.Agent.Neuversuch) ---
+
+Default versuche: 3, basis_ms: 2000 (agent/neuversuch.ex:40-41; Lauf-Default
+agent/lauf.ex:518). Wiederholt werden nur Fehler, die vorübergehend sein
+können: {:strom_unvollstaendig, _}, {:netz, _}, HTTP 500/502/503/504,
+bestimmte {:strom, …} (wiederholbar?/1, Zeile 70-74). Die Wartezeit ist
+basis · 2^(versuch−1), also 2 s, 4 s, 8 s (Zeile 78). Jeder Neuversuch wird
+protokolliert (agent/lauf.ex:223-229). Nach dem letzten Versuch endet der
+Lauf mit {:modell_fehler, grund}.
+
+--- 3.7 Kontext-Kompaktierung (Worker.Agent.Kontext) ---
+
+Worker.Jack.Phase.laufen/3 (phase.ex:57-62) übergibt
+
+  kontext: [fenster:  :kontext_fenster (im Betrieb ctx_jack), Default 98 304,
+            reserve:  4096,     (phase.ex:27)
+            behalten: 8000,     (phase.ex:28)
+            zusammenfassen: Worker.Jack.Zusammenfassung.fuer(halter)]
+
+Die Rechnung (agent/kontext.ex):
+  * Geschätzt wird mit vier Zeichen je Token (schaetzen/1, Zeile 45-51).
+    Gezählt werden Text, Denkspur (nur wenn sie an der Nachricht steht),
+    Werkzeugnamen und Argumente.
+  * Gemessen wird, was die letzte Antwort in usage meldet (eingabe + ausgabe),
+    plus die Schätzung für alles, was seitdem angehängt wurde (tokens/3,
+    Zeile 60-61; basis in agent/lauf.ex:397, 426-427).
+  * Kompaktiert wird, wenn tokens > fenster − reserve (voll?/3, Zeile 65),
+    mit den Defaults also ab 94 208 geschätzten Token.
+  * schnitt/2 (Zeile 80-89): von hinten Token aufsummieren, bis 8000 erreicht
+    sind. Geschnitten wird am nächsten gültigen Punkt ab dort. Gültig ist nur
+    eine Nachricht mit role :user oder :assistant, nie ein Werkzeugergebnis.
+    Ein Aufruf und sein Ergebnis werden also nie getrennt.
+  * Das Weggeschnittene ersetzt EINE Nachricht des Nutzers im Rahmen von pi:
+    „The conversation history before this point was compacted into the
+    following summary: <summary>…</summary>“ (agent/lauf.ex:358-374).
+
+Den Text schreibt Worker.Jack.Zusammenfassung.text/1
+(jack/zusammenfassung.ex:67-90), deterministisch aus dem Stand. Ein Modell
+fasst dabei nichts zusammen:
+
+  # Stand deiner Arbeit (von deinen Werkzeugen geschrieben, nicht zusammengefasst)
+  ## Auftrag            fünf feste Zeilen (Zeile 26-32): Aussagen sammeln,
+                        zehn Pflichtfelder, source_refs, beleg wird geprüft
+  ## Wo du stehst       Gedaechtnis.stand_text/1: Zahl der Aussagen,
+                        Blockbereich, Lesestand, größte Lücke ohne Aussage
+  ## Dein Gedaechtnis   Gedaechtnis.notizen_text/1
+  ## Naechster Schritt  je Phase (naechster_schritt/1, Zeile 92-131), z. B.
+                        „Du bist NICHT fertig: beim Sammeln bist du bis Block
+                        … gekommen. … bloecke(von, bis) ab Block …“
+
+Der Text wird bei jedem Schnitt neu gebaut und ins Journal geschrieben
+(Zeile 41-63). Scheitert das, fällt die Laufzeit auf den Vermerk
+„[Gekürzt: N ältere Nachrichten …]“ zurück
+(Kontext.standard_zusammenfassung/1, agent/kontext.ex:98-112).
+
+Wichtig: Phase.laufen/3 setzt anheften: false (phase.ex:54). Der Auftrag ist
+damit gewöhnlicher Anfang des Verlaufs und fällt beim ersten Schnitt weg, wie
+bei pi (agent/lauf.ex:29-32, 509-510; agent/kontext.ex:31-34). Danach hat
+Jack statt des vollständigen phase2.md bzw. folgelauf.md nur noch die fünf
+Auftragszeilen der Zusammenfassung und sein Gedächtnis. Diese Zeilen sprechen
+vom Sammeln. Für Extraktion und Verifikation sind sie gleich
+(naechster_schritt/1 unterscheidet nur Phase 1 und „sonst“).
+
+--- 3.8 Systemprompt ---
+
+Phase.laufen/3 übergibt system: Worker.Jack.Systemprompt.pi() (phase.ex:52).
+Das ist pis eingebauter Standardprompt, aus dem pi-Code rekonstruiert
+(jack/systemprompt.ex:35-57): „You are an expert coding assistant operating
+inside pi …“, „Available tools: (none)“, zwei Leitlinien, Doku-Pfade von pi,
+„Current working directory: /“. Der Moduldoc sagt dazu: „Für J4 ist dieser
+Prompt nicht gedacht: er nennt einen Coding-Agenten und pis Doku. Er steht
+hier nur, damit die Messung dasselbe misst.“ (Zeile 27-28). Der Betrieb nimmt
+ihn trotzdem, weil Betrieb und Messlauf dieselbe Phase fahren
+(phase.ex:4-7). Die eigentliche Anweisung steckt ganz im Auftrag (Nachricht
+des Nutzers).
+
+--- 3.9 Nachhaken ---
+
+Endet eine Antwort ohne Werkzeugaufruf, ruft die Laufzeit bei_stopp auf
+(agent/lauf.ex:282-302). Phase.laufen/3 setzt dafür Phase.nachhaken/1
+(phase.ex:67, 91-95):
+
+  ohne_aufruf_in_folge <= 3  → {:weiter, "Deine letzte Antwort enthielt keinen
+                               Werkzeugaufruf. Setz die Arbeit fort; wenn du
+                               durch bist, ruf fertig() auf."}
+  sonst                      → :fertig
+
+ohne_aufruf_in_folge zählt die Antworten ohne Aufruf seit dem letzten Aufruf,
+diese mitgezählt (agent/lauf.ex:283; ein Aufruf setzt sie auf 0,
+Zeile 265, 271). Nach der vierten Antwort ohne Aufruf in Folge endet der Lauf
+mit :fertig. Weil nur :halt als Abschluss gilt (Phase.abgeschlossen?/1,
+phase.ex:98-100), ist die Phase dann NICHT abgeschlossen. Anlass laut Kommentar:
+ein Modell schrieb einen Aufruf als rohes Markup in den Text, und die ganze
+Sitzung ging verloren (phase.ex:12-17).
+
+--- 3.10 Der Halter ---
+
+Die Laufzeit kennt Werkzeuge nur als Funktionen Argumente → Ergebnis. Der
+Stand liegt deshalb in einem Agent-Prozess, Worker.Jack.Halter
+(jack/halter.ex). Jedes Werkzeug ruft ihn mit
+Halter.aufrufen(halter, fun, argumente, name) (Zeile 56-68,
+Agent.get_and_update ohne Frist). Der Ablauf dort:
+
+  * fun.(stand, argumente) muss {neuer_stand, ergebnis} liefern. Eine
+    Ausnahme oder etwas anderes lässt den Stand unverändert und macht aus dem
+    Ergebnis einen Fehler (sicher/3, Zeile 70-77).
+  * Danach sieht Worker.Jack.Probieren den Aufruf an (5.8).
+  * Nach jedem Aufruf schickt der Halter dem Beobachter
+    {:jack_stand, Abbild.von(stand)}. Mit :ablage schreibt er außerdem das
+    Abbild in ein Verzeichnis (nachher/1, Zeile 79-83). Im Betrieb gibt es
+    keine Ablage.
+
+Werkzeuge.fuer/2 (jack/werkzeuge.ex:77-83, 119-134) hängt jedes Werkzeug
+über den Halter an und formt jede Antwort mit Antwort.fuer_modell/1.
+Phase.laufen/3 startet je Phase einen neuen Halter und stoppt ihn danach.
+Zurück kommen das Ergebnis der Laufzeit und der Stand nach dem letzten
+Aufruf (phase.ex:45-73).
+
+
+== 4. Die drei Teile eines Durchgangs ==
+
+--- 4.1 Der Ablauf in laufen/2 ---
+
+Worker.Jack.Pipeline.laufen/2 (jack/pipeline.ex:419-446):
+
+  s1 = Stand.neu(basis ++ [phase: 1])
+  auftrag1 = phase1 (gefüllt) <> "\n\nDer Mitschnitt hat die Blöcke 0 bis N."
+  phase(s1, auftrag1, …, "jack_gedaechtnis", :phase1_ohne_abschluss)
+      ↓ nur bei Abschluss mit fertig
+  s2 = Stand.neu(basis ++ [phase: 2, register: s1.register])
+  phase(s2, mit_gedaechtnis(phase2, s2), …, "extract", :phase2_ohne_abschluss)
+      ↓ nur bei Abschluss mit fertig
+  erster = %{nr: 1, vorher: 0, bestand: s2.lfd, neu: s2.lfd}
+  verifizieren(s2, max = opts[:iterationen] || 8, [erster], folgelauf(…), melde)
+
+Phase 1 und Phase 2 laufen je in einer frischen Sitzung der Laufzeit, mit
+eigenem Halter und eigenem Verlauf. Von Phase 1 geht nur das Gedächtnis
+(register) in Phase 2 über. Gelesen hat Phase 2 selbst noch nichts.
+
+--- 4.2 Wie ein Auftrag entsteht ---
+
+Die Vorlagen liegen in apps/worker/priv/jack/auftraege/ (phase1.md,
+phase2.md, folgelauf.md; LIES_MICH.md wird nicht geladen). Laut LIES_MICH.md
+sind sie die gemessene Fassung aus dem Spike #1174 (Werkzeugstand 7ecc9ea8).
+Die Blockzahlen sind dort Platzhalter, und die Beispiele stammen aus der Demo.
+
+  auftraege/2 (jack/pipeline.ex:314-326)
+    liest die drei Dateien aus Application.app_dir(:worker,
+    "priv/jack/auftraege"). Fehlt eine, gibt es {:error, {:auftrag_fehlt,
+    pfad}}.
+  fuellen/2 (jack/pipeline.ex:332-337)
+    {{letzter_block}} → anzahl − 1 (mindestens 0)
+    {{anzahl_bloecke}} → anzahl
+  Phase 1: gefüllte Vorlage, ohne Leerraum am Ende, dann
+    "\n\nDer Mitschnitt hat die Blöcke 0 bis #{max_block}." (Zeile 428-429)
+  Phase 2 und Verifikation: mit_gedaechtnis/2 (Zeile 582-585)
+    Vorlage <> "\n\n## Dein Gedächtnis\n\n" <> Gedaechtnis.notizen_text(stand)
+
+notizen_text/1 (jack/gedaechtnis.ex:303-307) schreibt je Abschnitt
+„## NAME“ und darunter „schluessel — zeile  [blöcke]“. Ein erfundenes
+Beispiel im Stil der Vorlage (phase1.md:93-102):
+
+  ## FIGUREN
+  Mira — Spielfigur, kennt das Wappen der Familie von Arnheim  [2, 14]
+  der Alte — NPC in der Werkstatt, Lederschürze  [5, 7]
+
+  ## ABLAUF
+  0-180 — Besuch in der Werkstatt am Hafen, die Spieldose  [1, 11, 13]
+  181-400 — Reise nach Norden, das Dorf an den Salzminen  [20, 22, 28]
+
+  ## AUFTRAG
+  Ziel — den verschwundenen Uhrmacher finden  [6]
+
+  ## THEMEN
+  Stränge — die Werkstatt · die Salzmine · die Familie von Arnheim
+
+  ## OFFEN
+  Verschwunden seit — einmal „seit drei Wochen“, einmal „vor zehn Tagen“  [7, 26]
+
+--- 4.3 Phase 1: Gedächtnis ---
+
+Auftrag phase1.md: den Mitschnitt einmal ganz lesen und dabei mit notiz() ein
+Gedächtnis anlegen, das die ganze Sitzung beschreibt. Das Gedächtnis ist das
+Einzige, was diesen Auftrag überlebt (phase1.md:7-17). Werkzeuge: bloecke,
+block, suche, cast, straenge, notiz, notizen_lesen, fertig. aussage gibt es
+in Phase 1 nicht (Werkzeuge.namen/1, jack/werkzeuge.ex:61-69).
+
+Was ins Register kommt (Gedaechtnis.notiz/2, jack/gedaechtnis.ex:112-131):
+
+  Abschnitte (Schema-Enum Stand.abschnitte_alle/0):
+    FIGUREN, ABLAUF, AUFTRAG, THEMEN, OFFEN (das Gerüst, stand.ex:41)
+    und ABLEHNUNGEN (aus der entfallenen Phase 3, stand.ex:123-130)
+  Jeder Eintrag: abschnitt, schluessel, zeile (Text oder null), bloecke
+  Derselbe Schlüssel im selben Abschnitt ersetzt den alten Eintrag;
+    zeile: null streicht ihn (eintrag/3, Zeile 133-159)
+  Abgelehnt wird (pruefen/6, Zeile 161-186):
+    * eine leere Zeile
+    * Blocknummern, die es nicht gibt
+    * ein ABLAUF-Schlüssel, der kein Blockbereich „von-bis“ ist
+      (Regex ^\s*(\d+)\s*[-–]\s*(\d+)\s*$, Zeile 38; vertauschte Grenzen
+      gelten richtig herum, bereich/1, Zeile 385-394)
+    * ein NEUER ABLAUF-Bereich, der einen bestehenden unter anderem Schlüssel
+      überlappt (ablauf_ueberlappt/2, Zeile 402-409)
+  Ein gleichlautender Schreibversuch zählt als „unveraendert“, ab dem
+    dritten ist er ein Fehler (aendern/4, Zeile 226-264)
+  Ergebnis {:error, …}, wenn nichts neu, ersetzt oder gestrichen wurde
+    (Zeile 130). Die Antwort nennt neu/ersetzt/gestrichen/eintraege_gesamt
+    und gegebenenfalls geruest_unvollstaendig.
+
+Das Gerüst gilt als vorhanden, wenn alle fünf Abschnitte je mindestens einen
+Eintrag mit Inhalt haben und es insgesamt mindestens zehn solche Einträge sind
+(Stand.geruest_fehlt/1, jack/stand.ex:168-180).
+
+Abschluss: fertig(bereiche:, eintraege:, offen_geblieben:) (Abschnitt 5.6).
+Phase 1 kann nur abschließen, wenn (Abschluss.hindernisse/1 für Phase 1,
+jack/abschluss.ex:205-238)
+  * überhaupt ein Block gelesen wurde,
+  * kein Bereich des Mitschnitts ungelesen blieb (nie_gelesen/1),
+  * das Gerüst vollständig ist,
+  * ABLAUF den Mitschnitt lückenlos von 0 bis max_block abdeckt
+    (Gedaechtnis.ablauf_luecken/1, Zeile 418-427).
+Die Buchhaltung zählt bereiche = Zahl der ABLAUF-Einträge und
+eintraege = Länge des Registers (ist_zahlen/1, Zeile 194-199).
+
+--- 4.4 Phase 2: Extraktion ---
+
+Auftrag phase2.md: das Gedächtnis zuerst lesen, dann den Mitschnitt ein
+zweites Mal Bereich für Bereich durchgehen und jede Aussage über die Welt
+mit aussage() eintragen. Den Wortlaut für beleg nimmt Jack aus dem Bereich,
+den er gerade vor sich hat (phase2.md:82-86). Die Vorlage legt fest, was eine
+Aussage ist und was nicht (Zustimmung, Gesprächssteuerung, Werte auf dem
+Blatt, verrechnete Ergebnisse, Hypothesen, phase2.md:93-146). Sie beschreibt
+die Felder (phase2.md:241-423) mit Beispielen aus der Demo
+(phase2.md:475-561).
+
+Werkzeuge: dazu aussage und aussage_entscheiden (jack/werkzeuge.ex:63).
+Ein Werkzeug, das den Bestand lesen kann, gibt es nicht: Jack sieht den
+Bestand nur, wenn er dagegen stößt (Moduldoc jack/werkzeuge.ex:9-12;
+jack/tor.ex:7-9).
+
+Abschluss: fertig(aussagen:, offen_geblieben:). Hindernisse für Phase 2
+(abschluss.ex:240-250):
+  * der Bestand ist leer (lfd == 0),
+  * Blöcke, die IN DIESEM DURCHGANG nicht angesehen wurden (ungelesen/1,
+    Zeile 254-266). Die Meldung nennt bis zu zwölf Bereiche. Geprüft wird,
+    ob lückenlos gelesen wurde, nicht die höchste Blocknummer: wer 0-60 und
+    1750-1801 holt, hat den Rest nie gesehen (Kommentar Zeile 252-253).
+Da der Stand für Phase 2 frisch ist (gelesen = []), muss Jack den ganzen
+Mitschnitt in Phase 2 noch einmal holen. Was er in Phase 1 gelesen hat, zählt
+hier nicht.
+
+--- 4.5 Verifikationen, Fortsetzung und Sättigung ---
+
+Auftrag folgelauf.md: „Verifizieren“. Jede Aussage über die Welt, die Jack
+im Mitschnitt liest, reicht er mit aussage() ein, genau wie beim ersten Mal.
+Steht sie schon da, legt aussage() die bestehende vor, und das ist die
+Verifikation. Was noch nicht dasteht, trägt er „als Beifang“ ein
+(folgelauf.md:6-14). Werkzeuge und Abschluss sind dieselben wie in Phase 2
+(Stand mit phase: 2).
+
+Jede Verifikation ist ein Folgedurchgang mit frischem Stand:
+
+  folgelauf/4 (jack/pipeline.ex:496-507)
+    fn s, nr ->
+      naechster = Fortsetzung.naechster(s, basis ++ [phase: 2])
+      gezaehlt(naechster, mit_gedaechtnis(folgelauf, naechster), …,
+               {melde, "jack_verifikation", nr})
+    end
+
+Worker.Jack.Fortsetzung.naechster/2 (jack/fortsetzung.ex:74-79) schickt den
+Bestand (eingetragen[].voll) und die Übergabe (daten/1) einmal durch
+Jason.encode!/decode!. Der nächste Durchgang bekommt damit dieselbe
+JSON-Form, die er aus einer Ablage bekäme. Dann aus_daten/3 (Zeile 87-89):
+
+  Stand.neu(opts)
+    |> bestand(aussagen)   jede Aussage mit Integer-"nummer" eintragen,
+                           Themen und belegte Blöcke merken;
+                           lfd = höchste Nummer;
+                           durchgang = max(höchstes _iter + 1, 2)
+                           (Zeile 125-143)
+    |> fortsetzen(f)       register (ABLAUF-Einträge ohne Bereichsschlüssel
+                           fallen weg, Zeile 158-163), kollisionen,
+                           beppo_pos (Zeile 145-152)
+
+Nicht übernommen werden offene GUIDs, Versuchszähler und Lesefortschritt
+(Moduldoc Zeile 35-36). Jede Verifikation muss also wieder den ganzen
+Mitschnitt lesen, bevor sie abschließen kann.
+
+Die Übergabe daten/1 (jack/fortsetzung.ex:42-49):
+
+  %{"register"    => [%{abschnitt:, schluessel:, zeile:, bloecke:}, …],
+    "kollisionen" => %{"12" => 3, …},          (erfundene Zahlen)
+    "beppo_pos"   => %{"2" => 0}}
+
+Die Schleife iterieren/6 (jack/pipeline.ex:533-553):
+
+  je Verifikation: {ergebnis, n} = fahren.(s, nr)
+    d = %{nr: length(durchgaenge) + 1, vorher: s.lfd, bestand: n.lfd,
+          neu: n.lfd − s.lfd}
+    ohne_neu = d.neu <= 0 ? ohne_neu + 1 : 0
+  nicht mit fertig abgeschlossen → Ende {:iteration_ohne_abschluss, ende}
+  ohne_neu >= 2                  → Ende :gesaettigt
+  Rest 0 (Deckel)                → Ende :fertig
+  sonst                          → nächste Verifikation
+
+Konstanten: @ohne_neu_bis_gesaettigt 2, @verifikationen_deckel 8
+(jack/pipeline.ex:62-63). Gesättigt heißt: zwei Verifikationen in Folge ohne
+neue Aussage. Ein Fund setzt den Zähler zurück. „neu“ ist dabei der Zuwachs
+der höchsten Aussagenummer (lfd). Eine Ersetzung vergibt keine neue Nummer
+und zählt nicht als neu (ersetzen/5 behält die Nummer, jack/aussage.ex:570).
+Eine verworfene Aussage behält ihre Nummer.
+
+Das Ende :fertig heißt hier „Deckel erreicht“, nicht „fertig() gerufen“
+(fertig/3, Zeile 535, 555).
+
+Durchgangszähler: Phase 2 schreibt _iter = 1 (Stand-Default durchgang 1).
+Die erste Verifikation bekommt über bestand/2 durchgang 2, die nächste 3 und
+so fort. Trägt eine Verifikation nichts Neues ein, bleibt das höchste _iter
+stehen, und die nächste Verifikation hat dieselbe Durchgangsnummer
+(Melder-Moduldoc jack/melder.ex:10-17 nennt genau diesen Fall). Die
+Durchgangsnummer steuert zwei Texte: den Hinweis bei einer Vorlage
+(Antwort.verifikations_hinweis/3, weg_eins/2 ab durchgang > 1,
+jack/antwort.ex:166-178) und die Probier-Hinweise (nur durchgang == 1,
+jack/probieren.ex:63).
+
+Die Liste bericht.durchgaenge hat als ersten Eintrag die Extraktion
+(nr 1, jack/pipeline.ex:442), danach je Verifikation einen. Daraus kommt die
+Logzeile „neu je Durchgang […]“ (Abschnitt 9.4).
+
+--- 4.6 Wie ein Teil endet ---
+
+Eine Phase gilt als abgeschlossen, wenn die Laufzeit mit {:ok, %{ende:
+:halt}} endet (Phase.abgeschlossen?/1, phase.ex:98-100). :halt entsteht nur,
+wenn fertig() angenommen wurde ({:halt, …} aus Abschluss.abschliessen/5,
+jack/abschluss.ex:165-173) und alle Aufrufe derselben Antwort :halt liefern.
+Alles andere ist kein Abschluss: :fertig nach dem Nachhaken, {:deckel, :runden},
+{:deckel, :zeit}, {:modell_fehler, _}, {:abbruch, _}. Phase.ende/1 liefert
+den Grund (phase.ex:103-105).
+
+phase/5 (jack/pipeline.ex:558-570) meldet der Stufe :beginn, fährt die Phase
+über gezaehlt/4 und meldet danach {:ende, :ok} oder {:ende, {:error,
+{:extraction, {:jack, {fehler, ende}}}}}.
+
+--- 4.7 Was ein Fehlschlag kostet ---
+
+  Phase 1 ohne fertig  → {:error, {:phase1_ohne_abschluss, ende}}, der ganze
+                         Lauf scheitert, kein Bestand, kein Stand-Ereignis,
+                         keine Fakten. run_wahrheitsbild/4 bricht in der
+                         with-Kette ab (recording/pipeline.ex:577).
+  Phase 2 ohne fertig  → {:error, {:phase2_ohne_abschluss, ende}}, ebenso.
+                         Was Phase 2 bis dahin eingetragen hat, geht verloren.
+  Verifikation ohne fertig
+                       → Ende {:iteration_ohne_abschluss, …}, aber
+                         {:ok, bericht} mit dem Stand NACH dieser Verifikation
+                         (iterieren/6, Zeile 544-545). Die Stufe
+                         jack_verifikation wird als Fehlschlag gemeldet
+                         (verifizieren/5, Zeile 520-526). Resümee, Chronik
+                         und Epos laufen weiter. Laut Shared.PipelineStufen
+                         ist die Verifikation deshalb best-effort
+                         (apps/shared/lib/shared/pipeline_stufen.ex:62-73).
+
+
+== 5. Jacks Werkzeuge ==
+
+--- 5.0 Übersicht ---
+
+Welche Werkzeuge es gibt und in welcher Reihenfolge, bestimmt
+Werkzeuge.namen/1 (jack/werkzeuge.ex:61-69). Die Definitionen kommen aus
+Lesen.werkzeuge/1, Gedaechtnis.werkzeuge/1, Abschluss.werkzeuge/1 und
+aussage/0 (Zeile 93-117).
+
+  Werkzeug              Phase  Wiederholung   ändert Bestand  Modul
+  bloecke(von, bis)     1, 2   zählt          nein            Lesen
+  block(nummer)         1, 2   zählt          nein            Lesen
+  suche(begriff,ab?,bis?) 1,2  zählt          nein            Lesen
+  cast()                1, 2   frei           nein            Lesen
+  straenge()            1, 2   frei           nein            Lesen
+  notiz(eintraege)      1, 2   zählt          nein            Gedaechtnis
+  notizen_lesen()       1, 2   frei           nein            Gedaechtnis
+  fertig(…)             1, 2   frei           nein            Abschluss
+  aussage(…)            2      zählt          ja              Aussage
+  aussage_entscheiden(…) 2     zählt          ja              Aussage
+  weiter()              nur im Portionsmodus statt bloecke; im Betrieb nicht
+
+(Die Markierungen „frei“ stehen an cast, straenge, weiter in lesen.ex:103,
+112, 121, an notizen_lesen in gedaechtnis.ex:102, an fertig in
+abschluss.ex:57. aendert_bestand an aussage/aussage_entscheiden steht in
+werkzeuge.ex:103, 111. Alle übrigen haben die Defaults von Werkzeug.neu/1:
+:zaehlt, false.)
+
+Die Beschreibungstexte der lesenden Werkzeuge sind die des Spikes, samt
+dessen Umschrift ohne Umlaute (Moduldoc lesen.ex:7-9).
+
+--- 5.1 bloecke, block, suche ---
+
+bloecke(von, bis) (jack/lesen.ex:136-154)
+  Pflicht: von, bis (ganze Zahlen ≥ 0)
+  Antwort: je Zeile "nummer\tsprecher\ttext" (zeile/2, Zeile 290)
+  Fehler: von > bis; von > max_block. bis wird auf max_block beschnitten.
+  Wirkung: der tatsächlich gelieferte Bereich kommt in gelesen, sobald
+    lfd > 0 auch in sammelnd (gelesen/3, Zeile 274-277)
+  Die Beschreibung nennt den Blockbereich 0 bis max_block (Zeile 60).
+
+block(nummer) (Zeile 160-173)
+  Pflicht: nummer
+  Antwort: eine Zeile wie oben; unbekannt → Fehler „Block n gibt es nicht.
+    Gültig sind 0 bis …“
+  Zählt NICHT als gelesen (keine Änderung am Stand).
+
+suche(begriff, ab?, bis?) (Zeile 179-188)
+  Pflicht: begriff; optional: ab, bis (Zeile 92)
+  Vergleich: Beleg.norm (Leerraum gefaltet, klein) mit String.contains?
+  Weniger als 3 Zeichen → Fehler
+  Antwort: Kopfzeile („N Fundstelle(n):“ bzw. „N Fundstelle(n), die ersten
+    40:“ bzw. „Keine Fundstelle für …“) und höchstens 40 Zeilen
+    (@treffer_max, Zeile 39)
+  Zählt NICHT als gelesen.
+
+weiter() (Zeile 211-260) gibt es nur im Portionsmodus: Portion 100 Blöcke in
+Phase 1, sonst 40. Nach dem Ende gibt es eine Warnung, beim dritten Aufruf
+nach dem Ende {:abbruch, …}. Im Betrieb kommt es nicht vor (siehe 2.5).
+
+--- 5.2 cast, straenge ---
+
+cast() (jack/lesen.ex:266): die Cast-Liste zeilenweise. Die Beschreibung
+sagt: einzige zulässige Quelle für cast_match; passt keine, bleibt
+cast_match leer (Zeile 108-110).
+straenge() (Zeile 270): die bekannten Themen zeilenweise, als Quelle für
+threads; passt keines, wählt Jack eine eigene kurze Bezeichnung
+(Zeile 117-119).
+
+--- 5.3 notiz, notizen_lesen ---
+
+notiz(eintraege) (jack/gedaechtnis.ex:49-94, 112-131)
+  Pflicht: eintraege, eine Liste mit mindestens einem Eintrag
+    je Eintrag: abschnitt (Enum), schluessel, zeile (Text oder null),
+    bloecke (Liste ganzer Zahlen)
+  Antwort (geordnet): neu, ersetzt, gestrichen, eintraege_gesamt,
+    gegebenenfalls unveraendert + hinweis_unveraendert, fehler,
+    geruest_unvollstaendig
+  Art: :ok, wenn etwas geändert wurde, sonst :error
+  Die Beschreibung sagt: „Geht nicht in das Ergebnis ein.“ Das stimmt auch
+  im Betrieb: das Register kommt nie in die Fakten. Es reist aber mit dem
+  Stand-Ereignis (Abschnitt 8).
+
+notizen_lesen() (Zeile 276-297)
+  Antwort: stand (stand_text/1), eintraege (mit Schlüsseln, damit Jack
+    ersetzen kann statt doppelt anzulegen), notizen (notizen_text/1 oder
+    „(noch keine Notizen)“)
+  stand_text/1 (Zeile 338-346): „Eingetragene Aussagen: N“, „Der Mitschnitt
+    hat die Bloecke 0 bis M.“, Lesestand, und die größte Lücke zwischen zwei
+    belegten Blöcken, wenn sie breiter als 120 ist („Groesster Bereich ohne
+    Aussage: …“, Zeile 366-375).
+
+--- 5.4 aussage ---
+
+Beschreibung: jack/werkzeuge.ex:41-50. Schema: Felder.einreichen_schema/0
+(jack/felder.ex:66, 74-100). Durch Werkzeug.neu/1 sind alle Felder Pflicht,
+außer den optionalen time_offset und precision (Felder.optional/0,
+Zeile 62). Pflicht-Texte dürfen nicht leer sein, außer den ausdrücklich
+freigegebenen (minLength 0).
+
+  Feld            Typ / erlaubte Werte                        leer erlaubt?
+  claim           Text                                        nein
+  character       Text                                        ja (Weltaussage)
+  cast_match      Text, muss in cast() stehen oder leer sein  ja
+  narration_time  present | flashback | future | unknown      nein
+  time_anchor     absolute | session | unknown                nein
+  in_game_date    Text (Zeitausdruck wörtlich)                ja
+  fact_type       ereignis | zustand | zustandsänderung |
+                  beziehung | absicht | enthüllung | auflösung  nein
+  threads         Liste von Texten                            [] erlaubt
+  source_refs     Liste ganzer Zahlen, mindestens 1           nein
+  beleg           Text; ein Zitat je Block, mit „ … “ getrennt nein
+  time_offset     optional: {value: ganze Zahl,
+                  unit: day | week | month | year} oder null
+  precision       optional: day | month | season | year | decade
+
+Die Enums sind dieselben wie in Parsing (Moduldoc felder.ex:6-8; ein
+Quelltext-Wächter hält beide gleich, laut Moduldoc). time_anchor kennt die
+Form event:<…> nicht. Der Parser würde sie ohnehin laut verwerfen
+(Parsing.normalize_anchor/1, recording/pipeline/parsing.ex:360-381).
+
+Beispiel eines Aufrufs (aus phase2.md:489-499, als JSON):
+
+  aussage({
+    "claim": "Der Alte steht in der Werkstatttür.",
+    "character": "der Alte",
+    "cast_match": "",
+    "narration_time": "present",
+    "time_anchor": "session",
+    "in_game_date": "",
+    "fact_type": "zustand",
+    "threads": ["die Werkstatt"],
+    "source_refs": [118],
+    "beleg": "Der Alte steht in der Werkstatttür"
+  })
+
+Ergebnis: {:ok, antwort} bei outcome written/modify, sonst {:error, antwort}
+(Moduldoc jack/aussage.ex:36-38). Die einzelnen Prüfungen stehen in
+Abschnitt 6.
+
+--- 5.5 aussage_entscheiden ---
+
+Beschreibung: jack/werkzeuge.ex:54-58. Schema: Felder.entscheiden_schema/0
+(jack/felder.ex:70-72, 102-128). Es verlangt dieselben Inhaltsfelder und dazu
+vier Steuerfelder:
+
+  verifikations_guid  Text: die GUID aus der Antwort mit der Vorlage
+  entscheidung        "neu" | "ersetzt"
+  begruendung         Text; mindestens 10 Zeichen, sonst Ablehnung
+                      (jack/aussage.ex:451-475)
+  weitere_guids       Liste (Pflicht, darf leer sein); nur bei "ersetzt"
+                      erlaubt, bei "neu" mit Inhalt ein Fehler (Zeile 477-488)
+
+Nur nach einer Antwort von aussage() mit outcome verify sinnvoll. Die
+Steuerfelder kommen nicht in den Bestand (Map.drop(Felder.steuerfelder()),
+Zeile 544, 569). Die Entscheidung geht als Feld "entscheidung" = %{"art",
+"gegen", "grund"} in den Datensatz (Zeile 78, 553, 577).
+
+--- 5.6 fertig ---
+
+Abschluss.werkzeuge/1 und schema/1 (jack/abschluss.ex:45-77). Das Schema
+hängt von der Phase ab (@zahlen, Zeile 33):
+
+  Phase 1: bereiche, eintraege (ganze Zahlen ≥ 0), offen_geblieben (Text,
+           darf leer sein)
+  Phase 2: aussagen, offen_geblieben
+
+Ablauf fertig/2 (Zeile 81-103, 105-135, 137-174):
+
+  1. hindernisse(stand) nicht leer → {:error, %{ok: false, fertig: false,
+     hinweis: „Noch nicht fertig. …“, offen: [Hindernisse]}}
+  2. Zahlen mit der Buchhaltung vergleichen (ist_zahlen/1, Zeile 194-201:
+     Phase 1 bereiche/eintraege, Phase 2 aussagen = lfd). Falsche Zahlen:
+     abschluss_zahlversuche + 1; solange der Zähler unter 3 bleibt
+     (@zahlversuche, Zeile 32), Ablehnung mit „abweichung: aussagen: du sagst
+     … — das stimmt nicht mit der Buchhaltung überein“. Die RICHTIGE Zahl
+     nennt die Antwort nicht (gemeldet_falsch/2, Zeile 177-180). Im Journal
+     stehen beide Werte (abweichung/3).
+  3. Beim dritten falschen Versuch geht fertig trotzdem durch; im Journal
+     steht zahlen_stimmten „nein“.
+  4. Erfolg: {:halt, %{ok: true, fertig: true, zahlen:, mehrfach_gefunden:,
+     hinweis:}}. mehrfach_gefunden = Zahl der nicht verworfenen Aussagen mit
+     _bestaetigt > 1 (Zeile 140-143).
+
+Buchhaltungsprüfung heißt hier also zweierlei: die Arbeit ist vollständig
+(Hindernisse), und Jacks Selbstauskunft stimmt mit dem Stand überein. Die
+Zahl aussagen ist lfd, die höchste vergebene Nummer. Verworfene und aus
+früheren Durchgängen geladene Aussagen zählen mit.
+
+--- 5.7 Die einheitliche Antwort (Worker.Jack.Antwort) ---
+
+aussage und aussage_entscheiden antworten immer gleich aufgebaut
+(Antwort.einheitlich/5, jack/antwort.ex:75-84). Die Reihenfolge der Schlüssel
+setzt fuer_modell/1 (Zeile 50-60): outcome, aussagen, fehler, hinweis,
+bestand, themen; in jedem Eintrag erst status und verifikations_guid, dann
+die Inhaltsfelder (@felder, Zeile 29-30).
+
+  outcome    written | modify | verify | fix | exhausted | no_scaffold |
+             fraud | expired | misplaced | repeat | aborted
+             (Moduldoc Zeile 8-18)
+  aussagen   Einträge mit status vorgelegt | bestehend | identisch | neu |
+             ersetzt | verworfen; eine interne Nummer steht nicht darin, aus
+             "entscheidung" fällt "gegen" heraus (als_eintrag/3, Zeile 92-118)
+  fehler     Liste von Texten
+  hinweis    was als Nächstes zu tun ist
+  bestand    lfd
+  themen     die ersten 40 verwendeten threads (Zeile 82)
+
+Ein erfundenes Beispiel, eine Vorlage nach einer Kollision:
+
+  {"outcome": "verify",
+   "aussagen": [
+     {"status": "vorgelegt", "claim": "Der Alte raucht in der Werkstatttür.",
+      "beleg": "steht in der Werkstatttür und raucht", "source_refs": [118], …},
+     {"status": "bestehend",
+      "verifikations_guid": "3f2a9c1e-…",
+      "claim": "Der Alte steht in der Werkstatttür.", "source_refs": [118], …}],
+   "fehler": [],
+   "hinweis": "Du hast eine mögliche Übereinstimmung gefunden — verifiziere. …",
+   "bestand": 7,
+   "themen": ["die Werkstatt"]}
+
+Die Texte des Hinweises stehen in eine/0 und mehrere/1 (Zeile 180-243). Sie
+nennen drei Wege: dasselbe (nichts tun), anders (aussage_entscheiden mit
+"neu"), bessere Fassung (aussage_entscheiden mit "ersetzt"). Ab Durchgang 2
+wird der Satz zu Weg 1 zu „Damit ist sie verifiziert — genau dafür ist dieser
+Durchgang da.“ (@verifiziert, weg_eins/2, Zeile 156-178).
+
+Die übrigen Werkzeuge antworten mit Text (Lesen) oder mit geordnetem JSON
+(notiz, notizen_lesen, fertig).
+
+--- 5.8 Probier-Hinweise (Worker.Jack.Probieren) ---
+
+Der Halter zeigt jedes Ergebnis Probieren.nachsehen/5 (jack/halter.ex:61;
+jack/probieren.ex:59-99). Blockiert wird nichts. Es gibt zwei Hinweise:
+
+  * aussage als Abfrage: zehn Einreichungen in Folge mit outcome verify ohne
+    Entscheidung, danach jede fünfte (@ab 10, @alle 5, faellig?/1). Dann steht
+    vorn im hinweis „Deine letzten N Einreichungen standen alle schon im
+    Bestand. aussage() ist zum Eintragen da, nicht zum Nachsehen …“. Das gilt
+    nur in Durchgang 1 (Zeile 63), weil Kollisionen in einer Verifikation
+    gewollt sind.
+  * suche mit einem Aussagesatz: mindestens sechs Wörter, oder
+    deckungsgleich mit einer eingereichten Aussage (grund/2, Zeile 121-133).
+    Dann steht vor dem Suchergebnis: „HINWEIS: suche() durchsucht nur den
+    Mitschnitt, nicht den Bestand …“.
+
+
+== 6. Prüfungen beim Eintragen ==
+
+--- 6.1 Reihenfolge ---
+
+Aussage.einreichen/2 (jack/aussage.ex:49-59):
+
+  0. Schema der Laufzeit (streng, Enums). Bei einem Verstoß antwortet
+     Aussage.formfehler/4 statt der Laufzeit (6.3).
+  1. Tor.verfallen_ausser(s, [])      alle offenen GUIDs verfallen
+  2. geruest/2                        Gerüst im Gedächtnis?
+  3. form/3                           Formregeln, dann Belegprüfung
+  4. Tor.aehnliche/4                  Kollision mit dem Bestand?
+       keine → neu_eintragen/3 (written)
+       sonst → vorlegen/3 (verify)
+
+Aussage.entscheiden/2 (Zeile 65-86):
+
+  1. Tor.verfallen_ausser(s, [verifikations_guid | weitere_guids])
+  2. geruest/2
+  3. form/3 (mit Steuerfeldern)
+  4. guid_gueltig/3          GUID offen? sonst fraud/expired
+  5. gebunden/4              GUID an dieser Stelle? sonst misplaced
+  6. riegel/5                wortgleich + gleiche Blöcke schon im Bestand?
+  7. begruendung/3           mindestens 10 Zeichen
+  8. weitere_pruefen/5       weitere_guids gültig und an dieser Stelle
+  9. Tor.verbrauchen(gid), dann neu_eintragen (neu) oder ersetzen (ersetzt)
+
+--- 6.2 Gerüst ---
+
+geruest/2 (jack/aussage.ex:90-106). Fehlt etwas nach Stand.geruest_fehlt/1
+(4.3), ist das outcome "no_scaffold". Der Hinweis erklärt die fünf
+Abschnitte (Antwort.geruest/2, jack/antwort.ex:131-153). abgelehnt wird um 1
+erhöht, ins Journal kommt ein Eintrag „abgelehnt.jsonl“. In Phase 2 und in
+den Verifikationen kommt das Gedächtnis aus Phase 1. Ist es dort unter der
+Schwelle geblieben, nimmt aussage() nichts an, bis Jack es mit notiz()
+ergänzt.
+
+--- 6.3 Formregeln ---
+
+Worker.Jack.Formregeln.fehler/3 (jack/formregeln.ex:31-59) prüft in dieser
+Reihenfolge (Wortlaut des Spikes):
+
+  1. fehlende Pflichtfelder (die zehn aus @pflicht, Zeile 23-24; bei
+     aussage_entscheiden dazu die vier Steuerfelder)
+  2. Typ: Text bzw. Liste
+  3. Enums: narration_time, time_anchor, fact_type, precision
+  4. entscheidung nur "neu" oder "ersetzt"
+  5. character/cast_match (cast_fehler/2, Zeile 76-93):
+       character enthält „kein Cast“ → Fehler (eine Weltaussage bleibt leer)
+       cast_match = „(kein Cast-Treffer)“ → Fehler (der alte Escape-Wert)
+       cast_match nicht leer und nicht in s.cast → Fehler („steht nicht in
+       cast()“)
+  6. time_offset: Objekt, value ganze Zahl, unit in day/week/month/year
+  7. leere Pflichtwerte: claim, source_refs == [], narration_time,
+     time_anchor, fact_type, beleg
+  8. source_refs mit Blöcken, die es nicht gibt
+
+form/3 (jack/aussage.ex:108-112) ruft danach, wenn die Formregeln nichts
+finden, die Belegprüfung (6.4). Liefert eins von beiden Fehler, lehnt
+ablehnen/4 ab (6.5).
+
+Hat schon das Schema der Laufzeit abgewiesen, antwortet formfehler/4
+(Zeile 123-133): GUIDs verfallen (außer den genannten), das Gerüst geht vor,
+dann die Formregeln. Finden sie nichts, gehen die Meldungen des Schemas durch
+(etwa bei einem fremden Feld). Der Fehlschlag zählt in den Versuchsdeckel.
+
+--- 6.4 Belegprüfung (Worker.Jack.Beleg) ---
+
+Das Herz des Ganzen: steht das Zitat wörtlich in den genannten Blöcken?
+
+  norm/1 (jack/beleg.ex:63): Leerraum falten, trimmen, klein schreiben.
+  stuecke/1 (Zeile 66-85): den Beleg an „…“ (U+2026) teilen, jedes Stück
+    falten. Stücke unter 8 Zeichen fallen weg. Bleibt nichts übrig, zählt
+    der ganze Beleg als ein Stück.
+  kurze_stuecke/1 (Zeile 89-95): die weggelegten kurzen Stücke, normalisiert.
+  trifft/3 (Zeile 99-104): die Blöcke unter refs, deren normalisierter Text
+    das Stück enthält (String.contains?).
+  pruefen/3 (Zeile 108-135):
+    ohne_treffer    = Stücke, die in keinem genannten Block stehen
+    getroffen       = Blöcke, die mindestens ein Stück trifft,
+                      dazu Blöcke, deren GANZER normalisierter Text einem
+                      kurzen Stück gleich ist („Nein.“)
+    refs_ohne_zitat = genannte Blöcke, die nichts getroffen hat
+    ok              = es gibt Stücke, keins ohne Treffer, kein Block ohne Zitat
+  nur_fragen?/1 (Zeile 139-148): endet jedes Stück auf „?“, ist der Beleg
+    abgewiesen („Eine Frage belegt ihre eigene Antwort nicht …“).
+  fehler/3 (Zeile 152-164): erst nur_fragen?, dann pruefen. Die Texte nennen
+    die Stücke ohne Treffer (bis 60 Zeichen je Stück) und die Blöcke ohne
+    Zitat.
+
+Zwei Bedingungen gelten also zusammen:
+  (a) Jedes Belegstück steht wörtlich (bis auf Leerraum und Groß-/Klein-
+      schreibung) in irgendeinem der genannten Blöcke.
+  (b) Jeder genannte Block wird von mindestens einem Stück getroffen. Ein
+      source_ref ohne Zitat ist „Dekoration“ (Moduldoc Zeile 11-12).
+
+Satzzeichen werden nicht normalisiert. „Tür“ und „Tuer“ sind verschieden.
+
+Bei einer Ablehnung hängt beleg_fehler/2 (jack/aussage.ex:191-209) den
+Wortlaut von bis zu drei Blöcken ohne Zitat an: „Block r lautet: "Sprecher:
+Text (bis 240 Zeichen)"“. So muss Jack nicht noch einmal block() rufen.
+
+Rückbezug (kein Ablehnungsgrund): nennt der claim nur einen Block und enthält
+ein Wort aus @rueckbezug („vorhin“, „eben“, „wieder“, „danach“, „deshalb“ …,
+jack/beleg.ex:29-51), kommt nach dem Eintragen ein Hinweis, die frühere
+Stelle zu suchen und beide Blöcke zu nennen (Beleg.rueckbezug/2,
+Zeile 195-200; Aussage.rueckbezug_hinweis/1, jack/aussage.ex:668-680).
+
+Beispiel (erfunden, Blöcke aus phase2.md):
+
+  Block 25: „Wann war das?“
+  Block 26: „Vor zehn Tagen, meinte die Wirtin.“
+
+  source_refs [25, 26], beleg "Wann war das? … Vor zehn Tagen"
+    Stücke: "wann war das?" (13 Zeichen) trifft Block 25,
+            "vor zehn tagen" trifft Block 26
+    → ok, und nicht nur Fragen
+  source_refs [25, 26], beleg "Wann war das?"
+    → nur Fragen: abgewiesen
+  source_refs [25, 26], beleg "Vor zehn Tagen"
+    → Block 25 ohne Zitat: abgewiesen, dazu „Block 25 lautet: …“
+
+--- 6.5 Versuchsdeckel ---
+
+ablehnen/4 (jack/aussage.ex:151-183). Schlüssel sind die ersten 60 Zeichen
+des claim. Jede Ablehnung erhöht versuche[schlüssel] und abgelehnt und
+schreibt einen Journaleintrag. Ab dem fünften Fehlversuch mit derselben
+Aussage (Stand.deckel/0 = 5, jack/stand.ex:43) ist das outcome "exhausted":
+„Lass sie weg und mach mit der nächsten weiter — im Protokoll steht sie als
+aufgegeben.“ Davor ist es "fix": „Korrigiere die genannten Felder und rufe
+aussage() erneut auf.“ Ein erfolgreicher Eintrag löscht den Zähler
+(nach_dem_schreiben/3, Zeile 651-655).
+
+--- 6.6 Das Tor: was ähnlich ist (Worker.Jack.Tor) ---
+
+Tor.aehnliche/4 (jack/tor.ex:37-54) vergleicht die neue Aussage mit jeder
+nicht verworfenen im Bestand und vergibt einen Rang (rang/6, Zeile 56-85):
+
+  gleiche Blöcke (als sortierte Menge) UND gleicher normalisierter claim
+                                          → 100 + Deckung
+  ein Block gemeinsam ODER gleicher Beleg → 50 (gleiche Blöcke)
+                                             40 (gleicher Beleg)
+                                             20 (nur Überlappung) + Deckung
+  weniger als 3 lange Wörter im neuen claim → keine Vorlage
+  Wortdeckung >= 0,75                     → 30 + Deckung
+  sonst                                   → keine Vorlage
+
+  Wörter: Beleg.woerter/1, Wörter mit mehr als drei Zeichen nach norm
+          (jack/beleg.ex:204-210)
+  Deckung: gemeinsame Wörter / max(|neu|, |alt|)
+
+Vorgelegt werden höchstens acht, die ranghöchste zuerst (@deckel 8,
+Zeile 31). Der Moduldoc begründet: ein Fehlalarm kostet wenig, einer zu
+wenig kostet eine Dublette (Zeile 20-21). Jede Aussage, die an einem der
+genannten Blöcke schon etwas stehen hat, wird also vorgelegt, auch wenn sie
+inhaltlich nichts damit zu tun hat.
+
+--- 6.7 Vorlage und GUIDs ---
+
+vorlegen/3 (jack/aussage.ex:217-248), je ähnlicher Aussage:
+
+  g = Stand.guid(s)                                     neue GUID
+  Tor.ausgeben(s, g, %{nr: d.nr, refs: source_refs})   offen, gebunden an
+                                                        die Blöcke DIESES
+                                                        Aufrufs
+  kollisionen[d.nr] += 1
+  bestaetigen(s, d, f)                                  siehe 6.10
+  Journal „dubletten.jsonl“ (iter, guid, gegen, neu, bestehend)
+
+Die Antwort ist outcome "verify": [vorgelegt | bestehende mit GUID], dazu der
+Hinweis. Die Vorlage zählt als abgelehnt (abgelehnt + 1, Zeile 219;
+Kommentar Zeile 213-216: der Zähler heißt „nicht eingetragen“, nicht
+„falsch eingereicht“).
+
+GUID-Regeln (Moduldoc jack/tor.ex:23-26):
+  * zufällig, 8-4-4-4-12 hex aus :crypto.strong_rand_bytes(16)
+    (Stand.zufalls_guid/1, jack/stand.ex:226-239)
+  * gilt genau einmal und nur für den nächsten Aufruf: jeder Aufruf von
+    aussage/aussage_entscheiden/formfehler lässt alle offenen GUIDs verfallen,
+    die er nicht nennt (Tor.verfallen_ausser/2, Zeile 151-163). Andere
+    Werkzeuge rühren sie nicht an.
+  * das Schicksal wird gemerkt (:offen, :eingeloest, :verfallen), damit
+    „erfunden“ (fraud, nie ausgegeben) von „abgelaufen“ (expired)
+    unterscheidbar bleibt (schicksal/2, Zeile 171; guid_gueltig/3,
+    jack/aussage.ex:282-294). Eine erfundene GUID erhöht geraten.
+
+Nicht über GUIDs, sondern über Aussagenummern läuft das intern: offene[g] =
+%{nr:, refs:}. Die Nummer sieht Jack nie (als_eintrag/3 lässt sie weg).
+
+--- 6.8 Entscheidung: neu oder ersetzt ---
+
+guid_gueltig/3: die GUID muss offen sein, sonst fraud oder expired
+  (jack/aussage.ex:282-294). Die Antworttexte stehen in
+  Antwort.guid_problem/5 (jack/antwort.ex:252-295).
+gebunden/4 (Zeile 324-364): die neue Aussage muss mindestens einen Block mit
+  den Blöcken des Aufrufs gemeinsam haben, der die Vorlage ausgelöst hat.
+  Sonst ist das outcome "misplaced": die GUID ist verbraucht, und die
+  Aussagen an der NEUEN Stelle werden gleich mit frischen GUIDs vorgelegt
+  (Anlass laut Kommentar: mit einer GUID für eine Stelle wurde eine Aussage
+  an anderer Stelle eingetragen und eine fremde überschrieben).
+riegel/5 (Zeile 389-427): steht im Bestand schon eine Aussage mit denselben
+  Blöcken und wortgleichem normalisiertem claim, und ist es keine der
+  Aussagen, die dieser Aufruf ablöst, wird abgewiesen. Das outcome ist
+  "verify" mit status "identisch", die GUID ist verbraucht. Das gilt bei
+  "neu" UND bei "ersetzt".
+begruendung/3 (Zeile 451-475): mindestens 10 Zeichen, sonst "fix". Die
+  GUIDs gelten dann weiter.
+weitere_pruefen/5 (Zeile 477-534): bei "neu" muss weitere_guids leer sein.
+  Bei "ersetzt" werden erst alle genannten GUIDs geprüft (offen, und
+  mindestens ein gemeinsamer Block), dann alle eingelöst. Eine ungültige
+  GUID am Ende verbraucht die gültigen davor nicht.
+
+--- 6.9 Schreiben ---
+
+neu_eintragen/3 (jack/aussage.ex:538-561). Der Datensatz ist das Argument
+ohne Steuerfelder, dazu:
+
+  "nummer"    lfd + 1 (neue laufende Nummer)
+  "_belegt"   true
+  "_versuche" Zahl der Versuche mit diesem claim-Präfix, einschließlich
+              dieses
+  "_pos"      kleinste Blocknummer aus source_refs (Beleg.pos_von/1)
+  "_iter"     Durchgang, der geschrieben hat
+  "_iter0"    Durchgang, der die Aussage zuerst eingetragen hat
+  "entscheidung" %{"art" => "neu", "gegen" => nr, "grund" => …}
+              (nur über aussage_entscheiden)
+
+Danach Stand.eintragen/2 (jack/stand.ex:193), belegte Blöcke und Themen
+merken. Das outcome ist "written" mit status "neu" und dem Hinweis
+„Gespeichert.“, gegebenenfalls dazu der Rückbezug-Hinweis und „Mach mit
+deiner nächsten Aussage weiter.“ (erfolg/5, Zeile 659-666).
+
+Ein erfundenes Beispiel, wie der Datensatz im Bestand aussieht:
+
+  {"nummer": 8, "claim": "Der Alte steht in der Werkstatttür.",
+   "character": "der Alte", "cast_match": "", "narration_time": "present",
+   "time_anchor": "session", "in_game_date": "", "fact_type": "zustand",
+   "threads": ["die Werkstatt"], "source_refs": [118],
+   "beleg": "Der Alte steht in der Werkstatttür",
+   "_belegt": true, "_versuche": 1, "_pos": 118, "_iter": 1, "_iter0": 1}
+
+ersetzen/5 (Zeile 563-617): die neue Fassung übernimmt die Nummer der
+adressierten Aussage (Stand.ersetzen/3). Sie trägt "_ersetzt" true und die
+Entscheidung. "_iter0" bleibt das der alten Fassung, "_bestaetigt" wird
+übernommen. Die Aussagen aus weitere_guids werden verworfen, nicht gelöscht
+(verwerfen/4, Zeile 621-649): "_verworfen" true, "_grund" „abgeloest von
+#n: …“, "_abgeloest_von" n. Der Wortlaut bleibt lesbar, zählt aber nicht
+mehr: Tor.aehnliche ignoriert verworfene (tor.ex:45), fakten/2 lässt sie weg
+(Abschnitt 7.1). Das outcome ist "modify".
+
+--- 6.10 _bestaetigt: wie oft eine Aussage wiedergefunden wurde ---
+
+bestaetigen/3 (jack/aussage.ex:261-278). Bei jeder Vorlage wird geprüft, ob
+die neue Einreichung eine unabhängige Wiederentdeckung der bestehenden ist.
+Tor.bestaetigung?/3 (jack/tor.ex:98-116) verlangt dafür dieselbe
+Blockmenge und eine Wortdeckung von mindestens 0,6. Ist es eine, und wurde
+die Aussage in einem FRÜHEREN Durchgang eingetragen (_iter0 ≠ aktueller
+Durchgang), erhöht sich "_bestaetigt" im Datensatz um 1 (Default 1). Das
+geschieht höchstens einmal je Durchgang (s.bestaetigt merkt es; der Zähler
+beginnt jeden Durchgang leer). Jack sieht den Wert nicht (Kommentar
+Zeile 257-260). Er geht in mehrfach_gefunden der fertig-Antwort ein und reist
+mit dem Datensatz in das Stand-Ereignis. In die Fakten kommt er nicht
+(Parsing kennt das Feld nicht).
+
+--- 6.11 Was als „abgelehnt“ zählt ---
+
+Der Zähler abgelehnt (Stand) wird erhöht bei: fehlendem Gerüst, Form- und
+Belegfehlern, jeder Vorlage (verify), fraud/expired, misplaced, riegel
+(identisch), zu knapper Begründung und weitere_guids bei „neu“ oder an
+falscher Stelle (jack/aussage.ex:97, 158, 219, 297, 331, 404, 468, 481, 523).
+Er heißt also „nicht eingetragen“. Laut Kommentar liest ihn nur die
+Auswertung: Abbild und Laufsicht (Zeile 213-216; jack/abbild.ex:35). Auf den
+Lauf wirkt er nicht.
+
+--- 6.12 Ein Ablauf, erfunden ---
+
+  Extraktion, Durchgang 1, Bestand 7:
+    aussage(claim "Der Alte steht in der Werkstatttür.", refs [118], …)
+      → Formregeln ok, Beleg ok, aehnliche: keine → written, Nummer 8
+
+  Verifikation, Durchgang 2, frischer Stand, Bestand 8:
+    bloecke(100, 139)
+    aussage(claim "Der Alte steht rauchend in der Werkstatttür.", refs [118],
+            beleg "steht in der Werkstatttür und raucht")
+      → aehnliche: Nr. 8 (gleiche Blöcke, Rang 50 + Deckung) → verify,
+        GUID g1 offen; bestaetigung? (gleiche Blöcke, Deckung ≥ 0,6) →
+        Nr. 8 bekommt _bestaetigt 2
+    Jack entscheidet „dasselbe“ und reicht nichts mehr ein; g1 verfällt beim
+    nächsten aussage-Aufruf.
+    … oder: aussage_entscheiden(…, verifikations_guid g1,
+            entscheidung "ersetzt", begruendung "nennt zusätzlich, dass er
+            raucht", weitere_guids [])
+      → modify, Nr. 8 trägt jetzt die neue Fassung, _ersetzt true
+
+
+== 7. Vom Bestand zu Fakten ==
+
+--- 7.1 fakten/2 ---
+
+Worker.Jack.Pipeline.fakten/2 (jack/pipeline.ex:670-685). Eingabe ist
+Enum.map(lauf.stand.eingetragen, & &1.voll), der Bestand nach dem letzten
+Durchgang (mit_eingabe/3, Zeile 364), zusammen mit der Kontextliste.
+
+  ids = kontext |> Enum.map(& &1.id) |> List.to_tuple()
+  liste = für jede Aussage mit ganzzahliger "nummer" und ohne "_verworfen":
+          source_refs := block_ids(source_refs, ids)
+  Parsing.parse_facts_json(Jason.encode!(%{"facts" => liste}), kontext)
+    {:ok, [_ | _]} → {:ok, facts, extraction_saw(kontext)}
+    {:ok, []}      → {:error, {:extraction, :empty}}
+    {:error, g}    → {:error, {:extraction, g}}
+
+block_ids/2 (Zeile 698-702) bildet Nummern auf Block-IDs ab. Nummern außerhalb
+0..n−1 und Nicht-Zahlen fallen still weg; Doppelte werden entfernt.
+
+--- 7.2 Normalisierung im Parser ---
+
+Parsing.parse_facts_json/2 (recording/pipeline/parsing.ex:69-91):
+
+  index_map   = "u1".."uN" → IDs der Liste (utterance_index_map/1,
+                Zeile 27-31)
+  valid_ids   = Menge der IDs der Liste
+  quell_lookup= ID → quell_utterance_ids (sonst [ID])
+  strip_and_note/1 und Jason.decode
+    → normalize_facts/5 (Zeile 95-107):
+      normalize_fact/4 je Aussage
+      Enum.reject(nil)
+      Enum.uniq_by(id)        Dedup über die Inhaltsadresse
+      grounde_zeitangabe/2    Zeit-Grounding
+
+Die source_refs sind nach 7.1 bereits Block-IDs. resolve_source_refs/3
+(Zeile 38-53) lässt sie deshalb über valid_ids durch (Kurz-IDs gibt es hier
+nicht). Andere Werte fallen weg, Doppelte werden entfernt.
+
+normalize_fact/4 (Zeile 235-293) baut jeden Fakt mit fester Feldliste neu:
+
+  "id"              fact_content_id(quell_union, claim)       7.3
+  "claim"           getrimmt; ist er leer, fällt der Fakt weg
+  "entity_id"       normalisierter Alias (klein, Leerraum gefaltet)
+  "character_alias" cast_match, wenn nicht leer und nicht der Escape-Wert
+                    „(kein Cast-Treffer)“, sonst character
+                    (resolve_character_alias/1, Zeile 305-314)
+  "in_game_date"    getrimmt oder nil
+  "narration_time"  Whitelist, sonst "present"
+  "time_offset"     nur {value: Integer, unit: String}, sonst nil
+  "precision"       Whitelist oder nil
+  "time_anchor"     absolute | session | unknown, sonst nil; event:… wird
+                    mit Logger.warning verworfen (Zeile 360-381)
+  "fact_type"       Whitelist, sonst "ereignis"
+  "threads"         Liste getrimmter, nicht leerer, eindeutiger Labels
+  "source_refs"     die aufgelösten Block-IDs
+  "verified?"       false
+
+Was dabei wegfällt: beleg, cast_match und character als eigene Felder (sie
+gehen nur in character_alias ein), nummer und alle Felder mit „_“
+(_iter, _pos, _bestaetigt …), entscheidung. Der Moduldoc von Jack.Pipeline
+sagt dazu: „Jacks beleg und seine internen Felder fallen dabei weg — die
+Feldliste des Parsers ist fest.“ (jack/pipeline.ex:22-23).
+
+--- 7.3 Die Fakt-ID ---
+
+Parsing.fact_content_id/2 (recording/pipeline/parsing.ex:132-135):
+
+  quell_union = Vereinigung der quell_utterance_ids aller Blöcke aus
+                source_refs, ohne Doppelte (Zeile 244-245)
+  input       = Enum.join(Enum.sort(quell_union), ",") <> "|" <>
+                normalize_claim(claim)
+  id          = "f_" <> erste 16 Hex-Zeichen von SHA-256(input)
+
+normalize_claim/1 (Zeile 117-119): klein, Nicht-Wort-Zeichen → Leerzeichen,
+Leerraum gefaltet. Die ID hängt an den Roh-Utterances, nicht an den Block-IDs
+und nicht an Jacks Nummern. Zwei Aussagen mit gleichem normalisiertem claim
+und derselben Utterance-Menge werden zu einem Fakt (Dedup, Zeile 102).
+Umformulierungen ergeben verschiedene Fakten.
+
+--- 7.4 Zeit-Grounding ---
+
+grounde_zeitangabe/2 (Zeile 180-198) und belege/3 (Zeile 200-212). Für jeden
+Fakt mit nicht leerem in_game_date:
+
+  zeit_beleg     "woertlich"    der Ausdruck steht (ohne Rücksicht auf Groß-
+                                /Kleinschreibung) im Text
+                 "normalisiert" er steht dort nach Entfernen der Interpunktion
+                 "abgeleitet"   er steht nirgends
+  zeit_beleg_ref true, wenn er in den Blöcken der source_refs steht
+
+Der Text, gegen den geprüft wird, ist die ganze Kontextliste, die fakten/2
+übergibt. Bei Jack ist das die ganze Sitzung, nicht ein einzelner Abschnitt
+wie früher.
+
+Beispiel (Demo, phase2.md:525-538): Block 604 „Die Fabrik wurde 1761
+stillgelegt, seitdem steht sie leer.“; Aussage mit in_game_date "1761",
+source_refs [604] → zeit_beleg "woertlich", zeit_beleg_ref true.
+
+--- 7.5 Die Prüfflags ---
+
+extract_facts_raw/4 hängt jedem Fakt @geprueft an:
+
+  %{"grounded?" => true, "attributed?" => true, "verified?" => true}
+  (jack/pipeline.ex:54, 145)
+
+Begründung im Kommentar: jede Aussage hat Jacks Belegprüfung bestanden, ein
+zweiter Prüfer entfällt. Render liest verified?, die Dirty-Weiche liest
+grounded?/attributed? (Zeile 50-53).
+
+--- 7.6 extraction_saw ---
+
+extraction_saw/1 (jack/pipeline.ex:691-693): Block-ID →
+Smoothing.text_hash(text) für JEDEN Block der Kontextliste, auch für Blöcke
+ohne Aussage. Das ist die Zeit-Adresse, gegen die die Dirty-Weiche nach einer
+Kuration prüft (dirty.ex:245-257, classify/3).
+
+--- 7.7 SessionFactsExtracted ---
+
+extract_facts/4 (jack/pipeline.ex:79-88):
+
+  %{"kind" => "SessionFactsExtracted",
+    "session_id" => …, "campaign_id" => …,
+    "facts" => [Fakten aus 7.2 + Prüfflags],
+    "extraction_saw" => %{"b_…" => "…", …},
+    "verify_backend" => "jack",
+    "verify_model" => <model_stage2_local>}
+
+Veröffentlicht über Worker.Intents.publish/1. Es ist das einzige Fakten-Event
+dieses Laufs.
+
+Ein erfundenes Beispiel zu dem Datensatz aus 6.9:
+
+  {"id": "f_1a2b3c4d5e6f7a8b",
+   "claim": "Der Alte steht in der Werkstatttür.",
+   "entity_id": "der alte", "character_alias": "der Alte",
+   "in_game_date": null, "narration_time": "present", "time_offset": null,
+   "precision": null, "time_anchor": "session", "fact_type": "zustand",
+   "threads": ["die Werkstatt"], "source_refs": ["b_…"],
+   "verified?": true, "grounded?": true, "attributed?": true}
+
+--- 7.8 Was danach mit den Fakten geschieht (kurz) ---
+
+  EntityRegistry.resolve_campaign_entities/1 (recording/pipeline.ex:546-547):
+    clustert per LLM die character_alias der Kampagne zu kanonischen
+    entity_ids und schreibt sie per SessionFactsExtracted-Overwrite in die
+    Fakten zurück (Moduldoc entity_registry.ex:1-15). Best-effort: Fehler
+    → Fakten bleiben unverändert, Fehlerklasse unter "resolve"
+    (recording/pipeline.ex:662-677).
+  ThreadRegistry.resolve_campaign_threads/1 (Zeile 551-557): clustert neue
+    Roh-threads inkrementell zu kanonischen Strängen und schreibt einen
+    eigenen Snapshot (ThreadRegistryComputed). Die Fakten behalten ihre
+    Roh-Labels (Moduldoc thread_registry.ex:17-22). Best-effort, Klasse
+    "resolve_threads".
+  Beide laufen auf Jacks Modell und Endpunkt ohne num_ctx (Moduldoc
+    entity_registry.ex:18-24; ctx_jack nur zur Größenprüfung,
+    thread_registry.ex:497-500).
+  bestand_lesen/3: Repo.get_session_facts/1 (geprueft/1), der Bestand NACH
+    den Registries. Ein Fehler wird unter "verify" gemeldet
+    (recording/pipeline.ex:718-727).
+  Danach Resümee (with_status "render"), Zeitstrahl, Epos-Kapitel und
+    Bogen-Progressionen aus diesen Fakten (Zeile 581-636).
+
+
+== 8. Stand speichern und weitermachen ==
+
+--- 8.1 Was aufgehoben wird ---
+
+Worker.Jack.Pipeline.ablage/2 (jack/pipeline.ex:391-397):
+
+  %{"aussagen"    => [voll je eingetragener Aussage, mit allen internen
+                      Feldern, auch verworfene],
+    "fortsetzung" => Fortsetzung.daten(stand)   (register, kollisionen,
+                                                 beppo_pos),
+    "bloecke"     => [Block-IDs der Kontextliste, in Reihenfolge]}
+
+Das Journal des Stands (abgelehnt.jsonl, dubletten.jsonl, abschluss.jsonl …)
+wird NICHT aufgehoben. Offene GUIDs, Versuchszähler und Lesefortschritt auch
+nicht (Fortsetzung-Moduldoc Zeile 35-36).
+
+--- 8.2 Das Ereignis und der Fold ---
+
+stand_ablegen/3 (jack/pipeline.ex:177-187) veröffentlicht
+
+  %{"kind" => "JackStandAbgelegt", "session_id", "campaign_id",
+    "stand" => ablage}
+
+(Shared.Events.jack_stand_abgelegt/0 = "JackStandAbgelegt",
+apps/shared/lib/shared/events.ex:325). Das geschieht nach jedem
+ERFOLGREICHEN extract_facts_raw/4, also im ganzen Lauf, bei „noch N
+Iterationen“ und in der Dirty-Neuableitung.
+
+Fold: Worker.Materializer.JackStandFolds.jack_stand_abgelegt/3
+(materializer/jack_stand_folds.ex:22-43), angehängt in Apply2
+(materializer/apply2.ex:831-833). Er verwirft den Payload mit Warnung, wenn
+session_id/campaign_id keine Texte sind oder stand keine Map ist. Er
+schreibt nur, wenn die event_id die gespeicherte ablöst
+(event_id_supersedes?/2, LWW). Die Row in worker_jack_staende
+(schema/mnesia.ex:108) hat die Form
+
+  {tabelle, session_id, campaign_id, Jason.encode!(stand), ts, event_id}
+
+Eine Row je Sitzung, Vollersatz: nur der letzte Stand zählt. Kodiert wird
+erst im Fold (Moduldoc Zeile 10-12). Beim Löschen von Sitzung oder Kampagne
+wird die Row mit geräumt (materializer/cascade.ex:145, 363).
+
+Lesen: Worker.Repo.jack_stand_for_session/1 → Worker.Repo.JackStaende
+(repo/jack_staende.ex:17-26) liefert %{stand: dekodierte Map, ts:,
+event_id:} oder nil.
+
+--- 8.3 abgelegter_stand/2 ---
+
+jack/pipeline.ex:207-217:
+
+  ids = Block-IDs der aktuellen Kontextliste
+  Stand mit "bloecke" == ids   → {:ok, ablage}
+  Stand mit anderen "bloecke"  → {:error, {:extraction, {:jack, :blockliste_geaendert}}}
+  Stand ohne "bloecke"         → {:error, {:extraction, {:jack, :blockliste_unbekannt}}}
+  kein Stand                   → {:error, {:extraction, {:jack, :kein_stand}}}
+
+Der Vergleich ist exakt, Liste gegen Liste, mit Reihenfolge. Neu geglättet,
+ein Block als unbrauchbar kuratiert, ein zusätzlicher OOC-Block: in allen
+diesen Fällen lehnt „noch N Iterationen“ ab. Der Ausweg ist der ganze Lauf
+(„neu generieren“). Mit verrutschten Nummern arbeitet Jack so nie weiter.
+
+--- 8.4 gespeicherter_kontext/1 ---
+
+jack/pipeline.ex:224-235. Die Kontextliste aus der gespeicherten Glättung,
+ohne neu zu glätten:
+Repo.get_smoothed_blocks/1 → luecken_vorschlaege_for_session/1 +
+luecken_overrides_effective/2 → Smoothing.to_context/3. Ohne Glättung gibt
+es {:error, {:extraction, {:jack, :keine_glaettung}}}. Der Pipeline-Pfad
+jack_weiter/4 meldet das als Fehlschlag von "extract"
+(recording/pipeline.ex:379-380).
+
+--- 8.5 weiterlaufen/3 ---
+
+jack/pipeline.ex:457-478:
+
+  s = Fortsetzung.aus_daten(ablage["aussagen"], ablage["fortsetzung"],
+                            basis ++ [phase: 2])
+  verifizieren(s, opts[:iterationen] || 1, [], folgelauf(…), melde)
+
+Kein Gedächtnis- und kein Extraktionsteil. Jack bekommt Bestand, Gedächtnis
+samt Iterations-Notizen und Kollisionszähler, wie der letzte Lauf sie
+hinterlassen hat. :iterationen ist eine Obergrenze. Die Sättigungsregel
+(zwei ohne Neues) gilt auch hier, gezählt ab diesem Aufruf. durchgaenge
+beginnt leer: die Logzeile zeigt nur die Verifikationen dieses Aufrufs. Die
+Fakten danach sind der GANZE Bestand, alt und neu (Zeile 102-105), nicht nur
+das Neue.
+
+--- 8.6 Der Weg vom Knopf ---
+
+  Hub, CampaignLive, Resümee-Spalte, nur im Bearbeitenmodus
+    (Formular phx-submit="jack_iterationen", Zahlfeld n, min 1, max 8,
+     Default 1; apps/hub/lib/hub_web/live/campaign_live.html.heex ab
+     Zeile 1054, Klasse nur-bearbeiten, gesperrt während eines
+     Kampagnen-Replays)
+  → handle_event("jack_iterationen", …)
+    (apps/hub/lib/hub_web/live/campaign_live.ex:165-166)
+  → Recording.jack_iterationen/3
+    (apps/hub/lib/hub_web/live/campaign_live/recording.ex:182-209):
+    prüft das Recht :regenerate_session (HubWeb.Permissions.can?/3; ohne
+    Recht passiert nichts, auch keine Meldung), n = iterationen_zahl/1
+    (Zeile 215-221: Integer.parse, auf 1..8 begrenzt, Unlesbares → 1),
+    Flash „Jack: … gestartet — danach werden Resümee, Chronik und Epos neu
+    geschrieben.“ bzw. Fehler „Owner-Worker nicht verbunden …“
+  → Hub.Commands.request_jack_iterationen/4
+    (apps/hub/lib/hub/commands.ex:208-221): pick_leader/2 → Nachricht
+    {:start_jack_iterationen, …} an den Channel-Prozess
+  → HubWeb.WorkerChannel: push "start_jack_iterationen"
+    (apps/hub/lib/hub_web/channels/worker_channel.ex:232-233)
+  → Worker.HubClient.handle_message/4 (hub_client.ex:453-454)
+  → Worker.HubClient.Replay.on_jack_iterationen/2
+    (hub_client/replay.ex:39-58): prüft die Angaben (n ganze Zahl > 0),
+    begrenzt noch einmal auf höchstens 8 (min(n, 8), Zeile 51) und ruft im
+    Task Worker.Recording.Pipeline.run_for_session(sid, jack_weiter: n)
+  → run_stages/3 → jack_weiter/4 → run_wahrheitsbild/4 mit deps.jack =
+    [weiter: n] → Jack.Pipeline.extract_facts/4 → extract_facts_raw/4 →
+    vorher/3 → abgelegter_stand/2 → weiterlaufen/3
+
+--- 8.7 Zusammenspiel mit der Dirty-Neuableitung (am Code gelesen) ---
+
+Auch der Dirty-Pfad legt über extract_facts_raw/4 einen Stand ab. Der
+enthält Jacks vollständigen Bestand aus dem Neulauf und die aktuelle
+Blockliste. Veröffentlicht werden als Fakten aber nur carried ++ adopted
+(dirty.ex:366-379), nicht Jacks ganzer Bestand. Folgt danach „noch N
+Iterationen“, macht Jack auf dem abgelegten Stand weiter und veröffentlicht
+seinen ganzen Bestand. Die Fakten weichen dann von denen nach der Kuration
+ab (was die Kuration als „carried“ behalten hatte, wird durch Jacks
+Neubestand ersetzt). Das habe ich aus dem Code abgeleitet, nicht getestet.
+
+
+== 9. Beobachtung ==
+
+--- 9.1 Laufband ---
+
+Shared.PipelineStufen (apps/shared/lib/shared/pipeline_stufen.ex:44-84)
+führt Jacks drei Stufen mit Einheit :bloecke:
+
+  "jack_gedaechtnis"   Gedächtnis    Spalte fakten   Pflicht
+  "extract"            Extraktion    Spalte fakten   Pflicht
+  "jack_verifikation"  Verifikation  Spalte fakten   best-effort
+
+Die Extraktion heißt weiter "extract", weil /admin/errors und die
+Fehlerklassen daran hängen (Moduldoc Zeile 40-41). Die Verifikation ist
+best-effort: als Pflichtstufe hielte Fortschritt den Lauf bei ihrem
+Fehlschlag für beendet, und das Laufband verschwände (Kommentar Zeile 62-66).
+
+Der Rückruf :melde_stufe (Jack.Pipeline-Moduldoc Zeile 33-42) bekommt
+(stufe, ereignis):
+
+  :beginn                        → stufe_beginnt/2: notify_status "started"
+                                   + Fortschritt.stufe
+  {:ende, :ok | {:error, g}}     → stufe_endet/3: notify_status "ended"/
+                                   "failed", Fortschritt.stufe, bei
+                                   „failed“ publish_pipeline_error/5
+  {:zaehlung, gesamt, durchgang} → Fortschritt.abschnitt/4 (Zählung neu)
+  {:gelesen, block, durchgang}   → Fortschritt.fertig/4
+
+(stufen_melder/3, recording/pipeline.ex:885-894; Fortschritt,
+recording/pipeline/fortschritt.ex:85-111.)
+
+Die Verifikation beginnt als EINE Stufe (verifizieren/5 meldet einmal
+:beginn und einmal :ende, jack/pipeline.ex:516-527). Jede einzelne
+Verifikation zählt ihre Blöcke neu, mit Durchgangsnummer.
+
+--- 9.2 Der Melder ---
+
+Worker.Jack.Melder (jack/melder.ex). Je Phase startet gezaehlt/4
+(jack/pipeline.ex:575-580) einen eigenen Melder-Prozess und übergibt ihn der
+Phase als :stand_beobachter. Der Halter schickt ihm nach jedem Aufruf
+{:jack_stand, abbild}. Der Melder zählt daraus die Blöcke aus abbild
+["gelesen"], die in dieser Phase zum ersten Mal auftauchen, und meldet je
+Block {:gelesen, n, durchgang} (stand/3, Zeile 92-104). Zu Beginn meldet er
+{:zaehlung, max_block + 1, durchgang} (Zeile 47). Jeden Stand reicht er an
+die Laufsicht weiter (:weiter). stopp/1 wartet bis zu 5 s, bis der Melder
+gezählt hat, was noch im Postfach liegt (Zeile 57-68, 84-90).
+
+Als gelesen zählt nur, was bloecke() geliefert hat (gelesen/3 in
+lesen.ex:274-277). block() und suche() tragen nichts bei.
+
+Warum je Phase ein Melder: aus dem Stand allein lassen sich die Phasen nicht
+sicher trennen (Moduldoc Zeile 10-17, siehe 4.5).
+
+--- 9.3 Laufsicht ---
+
+Worker.Jack.Sicht (jack/sicht.ex), gestartet in der Application als
+Worker.Jack.Sicht.betrieb/2 mit dem Port aus :jack_sicht_port
+(application.ex:62-63; config/config.exs:14 → 8099; config/test.exs:17 →
+nil, in Tests aus). Sie bindet nur an Loopback 127.0.0.1, weil ein Lauf den
+Mitschnitt der echten Runde enthält (Moduldoc). Ist der Port belegt, gibt es
+eine Warnung und :ignore statt eines Startfehlers (betrieb/2-Doc).
+Ereignisse gehen über Server-Sent Events (/strom), den ganzen Zustand gibt es
+über /zustand (Moduldoc).
+
+Die Pipeline übergibt Process.whereis(Worker.Jack.Sicht) als :beobachter
+(jack/pipeline.ex:132). Die Sicht bekommt damit
+  * jede Protokollzeile der Laufzeit und die Deltas des Modells (Denken und
+    Text Stück für Stück, weil die Laufzeit mit Beobachter streamt,
+    agent/lauf.ex:70-74, 248-260),
+  * jeden Stand, vom Melder weitergereicht.
+Läuft keine Sicht, ist der Beobachter nil. Dann streamt der Client auch
+nicht.
+
+--- 9.4 Logzeile ---
+
+Nach einem erfolgreichen Lauf (jack/pipeline.ex:139-142):
+
+  jack <session_id>: <N> Fakten, Ende <ende>, neu je Durchgang [<neu>, …]
+
+Beispiel (erfundene Zahlen): „jack 0198…: 42 Fakten, Ende :gesaettigt,
+neu je Durchgang [40, 3, 0, 0]“. Der erste Wert ist die Extraktion, danach
+kommt je Verifikation einer. <N> ist die Zahl der Fakten nach Parser und
+Dedup, nicht die Zahl der Aussagen. Bei „noch N Iterationen“ fehlt der
+Extraktionswert (durchgaenge beginnt leer, 8.5).
+
+Außerdem loggt Jack „Sprecher ohne Namen“ als Warnung (Zeile 627), der
+Parser verworfene event:-Anker (parsing.ex:370-372), und die Pipeline
+„Pipeline[wahrheitsbild]: failed/completed …“ (recording/pipeline.ex:641-649).
+
+--- 9.5 Fehler in /admin/errors ---
+
+Stufe und Klasse:
+  stufe_endet/3 (recording/pipeline.ex:901-917) → publish_pipeline_error/5
+  (Zeile 922-938) mit "stage" = Stufenname und "error_type" =
+  Worker.Recording.ErrorClass.classify/1. classify entfernt das Tag
+  :extraction (error_class.ex:39-48) und klassifiziert den inneren Grund.
+
+  Grund                                             Stufe             Klasse
+  Phase 1 ohne fertig ({:jack, {:phase1_ohne_abschluss, …}})
+                                                    jack_gedaechtnis  other
+  Phase 2 ohne fertig                               extract           other
+  Verifikation ohne fertig ({:jack, {:iteration_ohne_abschluss, …}})
+                                                    jack_verifikation other
+  {:jack, :kein_stand | :blockliste_geaendert |
+          :blockliste_unbekannt | :keine_glaettung} extract           other
+  {:jack, {:sprecher_ohne_namen, ids}}              extract           other
+  {:extraction, :empty} (Bestand ohne gültige Aussage)
+                                                    extract           extraction_empty
+  {:ctx_jack_ungueltig, …}                          extract           ctx_jack_ungueltig
+  :no_local_endpoint_configured                     extract           no_local_endpoint_configured
+                                                                       (Atom-Rückfall, Zeile 136)
+  {:no_model_configured, 2}                         extract           other
+  {:auftrag_fehlt, pfad}                            extract           other
+
+Belege: für {:jack, _}, {:no_model_configured, _} und {:auftrag_fehlt, _}
+gibt es in error_class.ex keine Klausel (grep ohne Treffer); sie fallen auf
+den letzten Rückfall classify(_) → "other" (error_class.ex:137).
+extraction_empty: Zeile 31, ctx_jack_ungueltig: Zeile 67. Die Zuordnung zur
+Stufe "extract" für Fehler vor den Phasen macht melde_fehlschlag/2
+(jack/pipeline.ex:167-172). Den Punkt „Jack-eigene Gründe landen als other“
+nennt auch CLAUDE.md im Worktree (Abschnitt „Stufe 2 ist Jack“, letzte
+Grenze).
+
+In der Dirty-Neuableitung gibt es kein :melde_stufe (1.3), also auch keinen
+Eintrag über stufen_melder. Ob ein Fehler dort anderswo nach /admin/errors
+gelangt: nicht geprüft.
+
+--- 9.6 Was nicht auf die Platte geht ---
+
+Im Betrieb setzt die Pipeline weder :ablage noch :protokoll
+(lauf_opts, jack/pipeline.ex:126-135). Protokoll.oeffnen(nil, beobachter)
+öffnet keine Datei (agent/protokoll.ex:51), der Halter schreibt kein Abbild
+(halter.ex:81). Journal, Protokoll und Denkspur existieren nur im Speicher
+und, solange sie läuft, in der Laufsicht. Dauerhaft bleiben nur die Ereignisse
+JackStandAbgelegt und SessionFactsExtracted sowie die Logzeilen.
+
+
+== 10. Ehrliche Grenzen ==
+
+--- 10.1 Aus CLAUDE.md (Worktree, Abschnitt „Stufe 2 ist Jack“) ---
+
+  * Nach dem Abbau nicht gegen ein echtes Ollama gemessen: weder Jacks Regler
+    über /v1 noch die Registries ohne num_ctx noch der Grafikspeicher. Die
+    Defaults sind die Werte der Messreihe C, gemessen vor dem Umbau.
+    Dazu passt der Moduldoc des Ollama-Clients: das Streaming samt
+    Werkzeugaufrufen in Stücken ist gegen das echte Ollama noch nicht
+    geprüft (agent/modell/ollama.ex:26-28). Im Betrieb streamt der Client,
+    sobald die Laufsicht läuft (9.3).
+  * Der Regellauf fehlt. Er gehört in den Durchgang, ist aber nicht gebaut
+    (auch laufen/2-Doc, jack/pipeline.ex:404-405).
+  * Wie sich „gesättigt“ auf großen Sitzungen verhält, ist nur aus dem
+    Referenzlauf bekannt. Der zählt nach eigener Regel (ein Folgedurchgang
+    ohne Neues, jack/referenz/folge.ex:8-10), der Betrieb nach zwei.
+  * Die entfernten Eval-Gates haben keinen automatischen Ersatz. Eine
+    Regression der Extraktion rötet keinen Merge.
+  * Eine Kuration kostet einen ganzen Durchgang: die Dirty-Neuableitung ruft
+    Jack mit Gedächtnis, Extraktion und Verifikationen über die ganze
+    Sitzung (dirty.ex:333-334), auch wenn nur ein Block geändert wurde. Wie
+    lange das dauert, ist nicht gemessen.
+  * Jack-eigene Fehler haben keine eigene Fehlerklasse und stehen als
+    „other“ in /admin/errors (9.5).
+
+--- 10.2 Zusätzlich am Code gefunden ---
+
+  * Die Verifikation streicht nichts von sich aus. Eine Aussage verschwindet
+    aus dem Bestand nur, wenn Jack sie über aussage_entscheiden mit
+    "ersetzt" in weitere_guids nennt (verwerfen/4). Eine Einreichung, die
+    eine bestehende Aussage als falsch erweist, hat keinen eigenen Weg. Die
+    Vorlage bietet nur „dasselbe“, „neu“ und „ersetzt“ (Antwort.eine/0).
+    Bestätigt werden kann eine Aussage, widerlegt nicht.
+  * Ein Lauf ohne „noch N“ beginnt bei null. Der ganze Lauf und die
+    Dirty-Neuableitung starten mit Stand.neu/1 in Phase 1 (laufen/2) und
+    lesen den abgelegten Stand nicht. Nur weiterlaufen/3 setzt darauf auf.
+    Der Bestand eines vorigen Laufs geht in einen Neulauf also nicht ein,
+    auch nicht als Kollisionsgegner.
+  * Ohne fertig in Phase 1 oder 2 ist die ganze Arbeit verloren. Eingetragene
+    Aussagen aus einer abgebrochenen Extraktion werden weder zu Fakten noch
+    als Stand abgelegt (4.7). Die Deckel dafür sind 5000 Runden und
+    6 Stunden je Phase (phase.ex:63-64), in den Einstellungen nicht
+    verstellbar.
+  * Der Auftrag ist nicht angeheftet (phase.ex:54). Nach der ersten
+    Kompaktierung hat Jack von der mehrere hundert Zeilen langen Vorlage nur
+    noch die fünf Auftragszeilen aus Zusammenfassung.text/1 (3.7). Die
+    Verifikation bekommt dort denselben Text wie die Extraktion („Du sammelst
+    …“).
+  * Der Systemprompt ist pis Coding-Agent-Prompt. Sein eigener Moduldoc sagt,
+    er sei für J4 „nicht gedacht“ (systemprompt.ex:27-28). Im Betrieb wird er
+    trotzdem geschickt (phase.ex:52).
+  * „Eine Discord-ID erreicht Jack nie“ hat nach meiner Lesart eine Lücke.
+    Repo.fetch_users/1 gibt für ein Mitglied ohne Zeile in der
+    Nutzertabelle "display_name" => discord_id zurück (repo.ex:92-97).
+    resolve_speaker_names/1 übernimmt das (prompts.ex:450-455), und
+    namen_ergaenzen/3 ersetzt nur nil und "" (jack/pipeline.ex:620). Hat ein
+    solches Mitglied keinen Figurennamen, stünde seine Discord-ID als
+    Sprecher im Block. Das habe ich aus dem Code abgeleitet, nicht getestet.
+    Ob der Fall in echten Daten vorkommt, weiß ich nicht.
+  * Die Belegprüfung prüft Wortlaut, nicht Bedeutung. Ein korrekt zitiertes
+    Stück kann eine falsche Behauptung „belegen“, sofern das Zitat
+    irgendwo in den genannten Blöcken steht (Beleg.pruefen/3). Da die Flags
+    grounded?/attributed?/verified? pauschal auf true stehen (7.5), trägt
+    jede Aussage im Bestand das Prüfsiegel, egal wie weit der claim vom
+    Zitat entfernt ist. Das ist die Folge daraus, dass Stufe 3 entfallen
+    ist.
+  * Die Ähnlichkeitsprüfung des Tors legt jede Aussage vor, die einen Block
+    mit einer bestehenden teilt (Rang 20, tor.ex:73-74). In dichten Blöcken
+    führt fast jede Einreichung zu einer Vorlage und kostet einen weiteren
+    Modellaufruf zur Entscheidung. Den Aufwand dafür habe ich nicht gemessen.
+  * fertig lässt falsche Zahlen beim dritten Versuch durch (abschluss.ex:113).
+    Die Buchhaltungsprüfung stoppt einen Lauf also nicht, sie vermerkt nur
+    „zahlen_stimmten nein“ im Journal. Das Journal wird im Betrieb nicht
+    aufgehoben (9.6).
+  * Messlauf und Referenzlauf verwenden Aufträge aus Verzeichnissen
+    außerhalb des Repos (s1_*.md), der Betrieb die Vorlagen in priv/. Laut
+    LIES_MICH.md sind sie bis auf Platzhalter und Beispiele wortgleich. Ob
+    die lokalen Dateien heute noch mit priv/ übereinstimmen, habe ich nicht
+    geprüft.
+  * Die Dirty-Neuableitung und „noch N Iterationen“ können sich
+    widersprechen (8.7).
+
+
+== 11. Nicht geprüft ==
+
+  * Wie sich Jack in echten Läufen verhält (Laufzeit, Sättigungsverhalten,
+    Größe des Stand-Ereignisses). Ich habe nur Code gelesen.
+  * Die Quelltext-Wächter, die in Moduldocs genannt werden (Enums Felder ↔
+    Parsing; auftragsvorlagen_test.exs; Registries ohne num_ctx). Ich habe
+    ihre Existenz nicht nachgesehen.
+  * Worker.Agent.Schema im Detail (welche JSON-Schema-Schlüssel geprüft
+    werden) und Worker.Agent.Modell.Strom.
+  * Fortschritt im Detail: wie das Laufband die Durchgangszählung der
+    Verifikation darstellt, und wie es die Einheiten aufrechnet.
+  * Wie der Hub den Stand der Laufsicht rendert (Worker.Jack.Sicht.Lage,
+    priv/jack/sicht.html).
+  * Ob ein Fehler der Dirty-Neuableitung in /admin/errors erscheint.
+  * Worker.Jack.Beispiele (Werkzeuge beispiele/beispiel). Nach dem Code
+    kommen sie nur mit der Option :beispiele in den Werkzeugsatz
+    (jack/werkzeuge.ex:77-89), und die Pipeline setzt sie nicht.
+
+
+== Anhang: Dateien ==
+
+Jack (apps/worker/lib/worker/jack/)
+  pipeline.ex       Einbettung, Eingabe, Durchgang, Übersetzung, Stand-Ablage
+  phase.ex          eine Phase: Halter + Werkzeuge + Laufzeit, Nachhaken
+  stand.ex          der Stand als Struct
+  fortsetzung.ex    Übergabe zwischen Durchgängen
+  werkzeuge.ex      Werkzeugsatz je Phase
+  lesen.ex          bloecke, block, suche, weiter, cast, straenge
+  gedaechtnis.ex    notiz, notizen_lesen, abgeleitete Texte
+  aussage.ex        aussage, aussage_entscheiden
+  formregeln.ex     Feldprüfung
+  felder.ex         Felder, Enums, Schemas
+  beleg.ex          Belegprüfung
+  tor.ex            Ähnlichkeit, GUIDs
+  abschluss.ex      fertig
+  antwort.ex        einheitliche Antwort, Texte
+  halter.ex         Prozess mit dem Stand
+  probieren.ex      Hinweise gegen Abtasten
+  zusammenfassung.ex Arbeitsstand nach einer Kompaktierung
+  systemprompt.ex   pis Standard-Systemprompt
+  melder.ex         Lesefortschritt → Laufband
+  abbild.ex         Stand als Daten/Dateien
+  sicht.ex          lokale Laufsicht
+  messlauf.ex, referenz.ex, referenz/folge.ex, mcp.ex, demo.ex, abzug.ex,
+  beispiele.ex      Mess-, Referenz-, Demo- und Datenwerkzeuge
+Laufzeit (apps/worker/lib/worker/agent/)
+  lauf.ex, aufruf.ex, kontext.ex, werkzeug.ex, schema.ex, wiederholung.ex,
+  neuversuch.ex, protokoll.ex, modell.ex, modell/ollama.ex, modell/strom.ex
+Pipeline (apps/worker/lib/worker/recording/)
+  pipeline.ex, pipeline/dirty.ex, pipeline/parsing.ex, pipeline/smoothing.ex,
+  pipeline/ooc.ex, pipeline/prompts.ex, pipeline/fortschritt.ex,
+  error_class.ex
+Stand-Ereignis
+  materializer/jack_stand_folds.ex, repo/jack_staende.ex,
+  materializer/cascade.ex, schema/mnesia.ex
+Hub
+  apps/hub/lib/hub/commands.ex, hub_web/channels/worker_channel.ex,
+  hub_web/live/campaign_live.ex, …/campaign_live/recording.ex,
+  …/campaign_live.html.heex, …/einstellungen_live/jack_block.ex
+Gemeinsam
+  apps/shared/lib/shared/pipeline_stufen.ex, apps/shared/lib/shared/events.ex
+Aufträge
+  apps/worker/priv/jack/auftraege/phase1.md, phase2.md, folgelauf.md,
+  LIES_MICH.md
+Mix-Tasks (apps/worker/lib/mix/tasks/lore/)
+  jack_lauf.ex, jack_referenz.ex, jack_mcp.ex, jack_demo.ex, jack_schauen.ex,
+  jack_abzug.ex, jack_denkprobe.ex
