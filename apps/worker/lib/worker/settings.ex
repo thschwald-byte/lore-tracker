@@ -590,7 +590,11 @@ defmodule Worker.Settings do
     #
     # **Er muss über `discord_flush_slow_ms` liegen**, sonst ist die Warnung
     # dort wieder unerreichbar (`voice_session_shutdown_test.exs` hält das fest).
-    discord_flush_shutdown_ms: 30_000
+    discord_flush_shutdown_ms: 30_000,
+    # Issue #1050: Abstand zwischen zwei Anläufen, den Empfang nach einem
+    # Voice-Handshake scharfzuschalten. Der häufigste Fehlschlag heisst „noch
+    # nicht verbunden" und ist nach einem Augenblick vorbei.
+    discord_listen_retry_ms: 500
   }
 
   # Abgeleitet aus @settings — kein Zwei-Listen-Drift (s. @moduledoc).

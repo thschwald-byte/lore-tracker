@@ -220,6 +220,17 @@ defmodule Worker.Discord.VoiceSession do
     end
   end
 
+  @doc """
+  Issue #1050: der Voice-Handshake dieser Guild ist (wieder) fertig. Kommt vom
+  Consumer bei JEDEM Handshake, also auch nach einem Reconnect.
+  """
+  def voice_ready(guild_id) do
+    case Registry.lookup(Worker.Discord.Registry, guild_id) do
+      [{pid, _}] -> GenServer.cast(pid, :voice_ready)
+      [] -> :ok
+    end
+  end
+
   @impl true
   def init(cfg) do
     # Bug (echter Live-Test-Fund, #987-Nacharbeit): OHNE trap_exit killt
@@ -323,6 +334,13 @@ defmodule Worker.Discord.VoiceSession do
     |> Map.put(:frames_total, 0)
     |> Map.put(:frames_unresolved, 0)
     # Issue #989: Ansage-Kette (wav + Deadline + Poll-Timer).
+    # Issue #1050: Anläufe, den Empfang nach einem Voice-Handshake wieder
+    # scharfzuschalten. Beide Felder werden per `%{state | …}` geschrieben und
+    # MÜSSEN deshalb hier stehen — ein fehlendes Feld wirft `KeyError`, der
+    # Prozess stirbt, `restart: :transient` startet ihn neu, und die Ansage läuft
+    # in Schleife (der #1005-Prod-Crash-Loop).
+    |> Map.put(:listen_retries, 0)
+    |> Map.put(:retry_listen_timer, nil)
     |> Map.put(:announce_wav, nil)
     |> Map.put(:announce_deadline, nil)
     |> Map.put(:announce_timer, nil)
@@ -512,6 +530,11 @@ defmodule Worker.Discord.VoiceSession do
   #
   # Bewusst `Logger.warning` statt stillem `:ok`: eine unerwartete Nachricht ist
   # kein Normalfall, sondern ein Hinweis auf einen fehlenden Handler.
+  # Issue #1050: zweiter Anlauf fürs Scharfschalten (s. `rearm_listen/1`).
+  def handle_info(:retry_listen, state) do
+    {:noreply, rearm_listen(%{state | retry_listen_timer: nil})}
+  end
+
   def handle_info(msg, state) do
     Logger.warning(
       "Worker.Discord.VoiceSession: unerwartete Nachricht ignoriert " <>
@@ -692,38 +715,69 @@ defmodule Worker.Discord.VoiceSession do
     {:noreply, state}
   end
 
-  # Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
-  # Nur UNSER Kanal zählt — ein Wechsel in einen anderen Kanal derselben Guild
-  # ist für uns ein Verlassen. Wer geht, verliert auch seinen Sprech-Zeitstempel
-  # (sonst wüchse die Map über eine lange Session monoton mit jedem Gast).
+  # Issue #1050: VOR dem ersten Zuhören ist nichts zu tun — die reguläre Kette
+  # (Ansage abspielen, dann `begin_listening/1`) schaltet scharf. Hier schon
+  # scharfzuschalten würde die Reihenfolge aus #989 umkehren und den Anfang der
+  # Sitzung aufzeichnen, BEVOR die Einwilligungs-Ansage gelaufen ist.
+  @impl true
+  def handle_cast(:voice_ready, %{listening?: false} = state), do: {:noreply, state}
+
+  # Ab hier ist es ein RE-Handshake: der Socket ist neu und passiv, die Sitzung
+  # läuft aber schon. Ohne erneutes Scharfschalten endet der Empfang hier
+  # endgültig — das ist der Defekt aus #1050.
+  def handle_cast(:voice_ready, state) do
+    {:noreply, rearm_listen(%{state | listen_retries: 0})}
+  end
+
   @impl true
   def handle_cast({:voice_state, user_id, channel_id, display_name}, state) do
     did = to_string(user_id)
 
-    # Issue #1013: der Bot selbst löst hier nichts aus — sein eigener Join käme
-    # sonst als „Beitritt" an (Begrüßung des Bots durch den Bot). Konsistent zu
-    # `initial_participants/1`, das ihn aus dem Anfangsbestand filtert.
-    if did == Worker.Discord.NostrumSafe.me_did() do
-      {:noreply, state}
-    else
-      joined? = channel_id == state.voice_channel_id and did not in state.participants
+    ich? = did == Worker.Discord.NostrumSafe.me_did()
 
-      participants =
-        if channel_id == state.voice_channel_id do
-          Enum.uniq([did | state.participants])
-        else
-          List.delete(state.participants, did)
-        end
+    # Issue #1050: das eigene Austritts-Ereignis ist das EINE Signal, mit dem
+    # Discord einen Abriss zuverlässig meldet — rausgeworfen, verschoben, Kanal
+    # gelöscht. Bis hierher prüfte die Session „bin ich das selbst?" und tat dann
+    # bewusst nichts; der Empfang war damit zu Ende, während die Oberfläche
+    # weiter „Discord nimmt auf" zeigte. Jetzt endet die Aufnahme definiert:
+    # melden, Puffer sichern (das macht `terminate/2` über `shutdown_sequence/1`),
+    # Schluss. `:normal` ist Absicht — `restart: :transient` startet dann NICHT
+    # neu, und ein Neustart wäre hier auch falsch: der Bot darf ja gerade nicht
+    # in den Kanal.
+    #
+    # Die `listening?`-Bedingung schützt den Beitritt selbst: bis zum Ende der
+    # Consent-Ansage sind Zwischenzustände normal, und ein `channel_id`, das noch
+    # nicht unser Kanal ist, wäre dort kein Abriss.
+    cond do
+      ich? and state.listening? and channel_id != state.voice_channel_id ->
+        Worker.Discord.VoiceErrors.report_channel_lost(state, channel_id)
+        {:stop, :normal, state}
 
-      state =
-        %{
-          state
-          | participants: participants,
-            last_packet_at: Presence.prune(state.last_packet_at, participants)
-        }
-        |> Worker.Discord.Announcer.on_voice_state(did, display_name, joined?, channel_id)
+      # Issue #1013: der Bot selbst löst sonst nichts aus — sein eigener Join
+      # käme als „Beitritt" an (Begrüßung des Bots durch den Bot). Konsistent zu
+      # `initial_participants/1`, das ihn aus dem Anfangsbestand filtert.
+      ich? ->
+        {:noreply, state}
 
-      {:noreply, state}
+      true ->
+        joined? = channel_id == state.voice_channel_id and did not in state.participants
+
+        participants =
+          if channel_id == state.voice_channel_id do
+            Enum.uniq([did | state.participants])
+          else
+            List.delete(state.participants, did)
+          end
+
+        state =
+          %{
+            state
+            | participants: participants,
+              last_packet_at: Presence.prune(state.last_packet_at, participants)
+          }
+          |> Worker.Discord.Announcer.on_voice_state(did, display_name, joined?, channel_id)
+
+        {:noreply, state}
     end
   end
 
@@ -745,6 +799,8 @@ defmodule Worker.Discord.VoiceSession do
   # canceln ist hier also nicht bloß Hygiene.
   @timer_keys [
     :start_listen_timer,
+    # Issue #1050: der zweite Anlauf fürs Scharfschalten.
+    :retry_listen_timer,
     :announce_timer,
     :presence_timer,
     :flush_timer,
@@ -756,6 +812,51 @@ defmodule Worker.Discord.VoiceSession do
   @spec timer_keys() :: [atom()]
   def timer_keys, do: @timer_keys
 
+  # Drei Anläufe: der erwartbare Fehlschlag („noch nicht verbunden") ist nach
+  # einem Augenblick vorbei; wer danach immer noch scheitert, scheitert dauerhaft
+  # und gehört gemeldet statt endlos wiederholt. Die Anzahl ist keine Frist und
+  # deshalb bewusst keine Einstellung (#1062: die Liste soll eine Bedeutung
+  # behalten) — der ABSTAND dagegen schon.
+  @listen_max_retries 3
+  defp listen_retry_ms, do: Worker.Settings.get(:discord_listen_retry_ms, 500)
+
+  # Issue #1050: ein Fehlschlag wird nicht verschluckt, sondern wiederholt und,
+  # wenn er bleibt, gemeldet. `{:error, "Must be connected…"}` heisst schlicht
+  # „der Handshake war noch nicht ganz fertig"; ein kurzer zweiter Anlauf ist
+  # dann richtig. Gedeckelt, damit daraus keine Endlosschleife wird.
+  defp rearm_listen(state) do
+    case Worker.Discord.NostrumSafe.start_listen(state.guild_id) do
+      :ok ->
+        Logger.info(
+          "Worker.Discord.VoiceSession: Empfang nach neuem Voice-Handshake wieder " <>
+            "scharfgeschaltet campaign=#{state.campaign_id} guild=#{state.guild_id}"
+        )
+
+        %{state | listen_retries: 0, retry_listen_timer: nil}
+
+      {:error, reason} when state.listen_retries < @listen_max_retries ->
+        Logger.warning(
+          "Worker.Discord.VoiceSession: Scharfschalten fehlgeschlagen " <>
+            "(#{inspect(reason)}), Versuch #{state.listen_retries + 1} von " <>
+            "#{@listen_max_retries} campaign=#{state.campaign_id}"
+        )
+
+        %{
+          state
+          | listen_retries: state.listen_retries + 1,
+            retry_listen_timer: Process.send_after(self(), :retry_listen, listen_retry_ms())
+        }
+
+      {:error, reason} ->
+        Worker.Discord.VoiceErrors.report_listen_failed(state, reason)
+        %{state | retry_listen_timer: nil}
+    end
+  end
+
+  # Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
+  # Nur UNSER Kanal zählt — ein Wechsel in einen anderen Kanal derselben Guild
+  # ist für uns ein Verlassen. Wer geht, verliert auch seinen Sprech-Zeitstempel
+  # (sonst wüchse die Map über eine lange Session monoton mit jedem Gast).
   defp cancel_timers(state) do
     Enum.each(@timer_keys, fn key ->
       case Map.get(state, key) do
