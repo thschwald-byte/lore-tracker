@@ -163,8 +163,10 @@ defmodule Worker.Discord.VoiceErrors do
       state.session_id,
       :consent_missing,
       "Für einen Sprecher lag keine Einwilligung vor — seine Tonspur wurde " <>
-        "verworfen (nicht gespeichert, nicht transkribiert). Er kann beim nächsten " <>
-        "Beitritt zustimmen, indem er den in der Ansage genannten Satz spricht."
+        "verworfen (nicht gespeichert, nicht transkribiert). Zustimmen kann er " <>
+        "jederzeit über den Knopf, den der Bot beim Betreten in den Sprachkanal " <>
+        "stellt; die Einwilligung gilt dann ab dem Klick. Bereits verworfenes " <>
+        "Audio kommt dadurch nicht zurück."
     )
   end
 
