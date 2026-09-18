@@ -100,7 +100,7 @@ defmodule Worker.Jack.Chronik.Pipeline do
 
     with {:ok, r} <- Chronik.laufen(eingabe, lauf_opts) do
       messen(session, campaign, r)
-      {:ok, veroeffentlichen(session, campaign, r)}
+      {:ok, veroeffentlichen(session, campaign, r, Map.get(eingabe, :fakten, []))}
     end
   end
 
@@ -134,9 +134,27 @@ defmodule Worker.Jack.Chronik.Pipeline do
 
   Ein Lauf, eine `generation`: der Ordnungsschlüssel für LWW bei gleicher ID.
   """
-  @spec veroeffentlichen(map(), map(), map()) :: [map()]
-  def veroeffentlichen(session, campaign, r) do
+  @spec veroeffentlichen(map(), map(), map(), [map()]) :: [map()]
+  def veroeffentlichen(session, campaign, r, fakten \\ []) do
+    session
+    |> payloads(campaign, r, fakten)
+    |> Enum.map(fn payload ->
+      {:ok, _} = Worker.Intents.publish(payload)
+      fuer_leser(payload)
+    end)
+  end
+
+  @doc """
+  Die Ereignisse, die `veroeffentlichen/4` publiziert — gebaut, aber nicht
+  publiziert. Getrennt, damit prüfbar ist, WAS ein Eintrag trägt: genau das
+  war am 18.09.2026 der Defekt (leere `source_refs`), und über den
+  Publish-Pfad allein wäre er in keinem Test aufgefallen — der braucht einen
+  laufenden Materializer.
+  """
+  @spec payloads(map(), map(), map(), [map()]) :: [map()]
+  def payloads(session, campaign, r, fakten \\ []) do
     generation = UUIDv7.generate()
+    nach_id = Map.new(fakten, &{&1.fakt_id, &1})
     raenge = Map.new(Enum.with_index(r.rangfolge, 1), fn {id, i} -> {id, i} end)
 
     # Die Daten, soweit ein Anker sie trägt (#1211). Einträge ohne Anker in
@@ -163,7 +181,17 @@ defmodule Worker.Jack.Chronik.Pipeline do
         # Eintrag gehört: eine Phase gehört keiner. Der Reader sortiert seit
         # #1211 über den Rang, nicht über die Sitzung.
         "session_id" => session.id,
-        "source_refs" => [],
+        # Die Blöcke, aus denen die Fakten dieses Eintrags stammen — dieselbe
+        # Regel wie beim Resümee (`Resuemee.Pipeline.quellen/2`) und beim Epos.
+        # Sie standen bis zum 18.09.2026 leer, und damit hing die ganze
+        # Oberflächen-Anbindung der Chronik in der Luft: kein 🕳-Lückenmarker,
+        # keine Sprungmarke ins Protokoll, kein Eintrag im Scroll-Sync — alle
+        # drei lösen über `source_refs` auf (`Worker.Repo.GlattQuellen`).
+        "source_refs" => refs_von(e.fakt_ids, nach_id),
+        # Welche Sitzungen den Eintrag tragen. Eine Phase gehört keiner
+        # einzelnen — `session_id` nennt nur die, die den Lauf ausgelöst hat,
+        # und wird bei jeder Verfeinerung überschrieben.
+        "sitzungen" => sitzungen_von(e.fakt_ids, nach_id),
         "generation" => generation,
         "wichtigkeit" => e.wichtigkeit,
         "fakt_ids" => e.fakt_ids,
@@ -188,8 +216,7 @@ defmodule Worker.Jack.Chronik.Pipeline do
             })
         end
 
-      {:ok, _} = Worker.Intents.publish(payload)
-      fuer_leser(payload)
+      payload
     end)
   end
 
@@ -205,6 +232,23 @@ defmodule Worker.Jack.Chronik.Pipeline do
   # Die Rückgabe hat deshalb die Gestalt des Repo-Lesers: Atom-Schlüssel, und
   # ein fehlendes Datum steht als `nil` statt gar nicht. Im Ereignis bleibt es
   # weggelassen — dort ist das Absicht.
+  # Die Belegblöcke der genannten Fakten, ohne Dubletten. Ein Fakt, den die
+  # Eingabe nicht kennt (aus einem früheren Lauf, inzwischen neu extrahiert),
+  # trägt nichts bei, statt den Eintrag scheitern zu lassen.
+  defp refs_von(fakt_ids, nach_id) do
+    fakt_ids
+    |> Enum.flat_map(&(nach_id |> Map.get(&1, %{}) |> Map.get(:refs, [])))
+    |> Enum.uniq()
+  end
+
+  defp sitzungen_von(fakt_ids, nach_id) do
+    fakt_ids
+    |> Enum.map(&(nach_id |> Map.get(&1, %{}) |> Map.get(:sitzung)))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
   @spec fuer_leser(map()) :: map()
   def fuer_leser(payload) do
     %{
@@ -218,6 +262,7 @@ defmodule Worker.Jack.Chronik.Pipeline do
       fakt_ids: payload["fakt_ids"],
       zeit_bezug: payload["zeit_bezug"],
       rang: payload["rang"],
+      sitzungen: payload["sitzungen"] || [],
       in_game_day: payload["in_game_day"],
       in_game_date: payload["in_game_date"],
       precision: payload["precision"],
