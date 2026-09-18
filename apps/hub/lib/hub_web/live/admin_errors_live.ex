@@ -325,6 +325,9 @@ defmodule HubWeb.AdminErrorsLive do
     do: "Discord: Audio ohne Sprecher-Zuordnung (nichts gespeichert)"
 
   defp type_label("clip_build_failed"), do: "Discord: Tonspur nicht in Audiodatei umwandelbar"
+
+  # Issue #1052: die Kennung wurde im selben Fenster zwei Personen zugeordnet.
+  defp type_label("ambiguous_ssrc"), do: "Discord: Sprecher nicht eindeutig zuzuordnen"
   defp type_label("consent_missing"), do: "Discord: keine Einwilligung — Tonspur verworfen"
 
   defp type_label("consent_button_unavailable"),

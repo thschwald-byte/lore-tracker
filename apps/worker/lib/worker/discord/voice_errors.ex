@@ -151,6 +151,38 @@ defmodule Worker.Discord.VoiceErrors do
     )
   end
 
+  @doc """
+  Issue #1052: ein SSRC trägt im selben Fenster mehrere Identitäten.
+
+  Discord vergibt die technische Sprecherkennung nach einem Reconnect neu.
+  Fällt eine neue Vergabe mit einer alten zusammen, liessen sich die Frames
+  nicht mehr eindeutig zuordnen — und Audio unter fremder Identität zu
+  speichern hiesse, es unter fremder **Einwilligung** zu speichern. Deshalb
+  wird hier nicht geraten, sondern verworfen und gemeldet.
+
+  Noch nicht in freier Wildbahn beobachtet; die Meldung existiert, damit der
+  Fall beim ersten Auftreten sichtbar ist statt als stille Lücke im Mitschnitt.
+  """
+  @spec report_ambiguous_ssrc(map(), term(), [String.t()]) :: :ok
+  def report_ambiguous_ssrc(state, ssrc, dids) do
+    Logger.error(
+      "Worker.Discord.Flush: ssrc=#{inspect(ssrc)} trägt mehrere Identitäten " <>
+        "(#{Enum.join(dids, ", ")}) campaign=#{state.campaign_id} — Clip VERWORFEN"
+    )
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      state.campaign_id,
+      "discord_voice",
+      state.session_id,
+      :ambiguous_ssrc,
+      "Eine Sprecherkennung wurde im selben Aufnahme-Fenster zwei verschiedenen " <>
+        "Personen zugeordnet (#{Enum.join(dids, ", ")}). Die Tonspur wurde verworfen, " <>
+        "weil sie sonst unter fremder Einwilligung gespeichert würde. Typische " <>
+        "Ursache ist ein Verbindungsabbruch im Sprachkanal, nach dem Discord die " <>
+        "Kennungen neu vergibt."
+    )
+  end
+
   def report_missing_consent(state, discord_id) do
     Logger.warning(
       "Worker.Discord.VoiceSession: keine Einwilligung für did=#{discord_id} " <>

@@ -26,7 +26,7 @@ defmodule Worker.Discord.Flush do
 
   require Logger
 
-  alias Worker.Discord.{AudioBridge, FrameBuffer, NostrumSafe, VoiceErrors, VoiceSession}
+  alias Worker.Discord.{AudioBridge, FrameBuffer, VoiceErrors, VoiceSession}
 
   @doc """
   Schreibt das laufende Fenster weg und öffnet das nächste.
@@ -96,16 +96,20 @@ defmodule Worker.Discord.Flush do
   `Worker.Discord.AudioBridge`-Moduledoc) und speist ihn in denselben
   `AudioBuffer.append/6`-Pfad ein, den der Browser-Mic nutzt (`:per_player`).
 
-  SSRC→Discord-User-ID-Mapping kommt aus `Voice.get_ssrc_map/1` — best-effort
-  (Spike-Vorbild `safe_ssrc_map/1`): ein nicht auflösbarer SSRC verwirft den
-  Clip (kein Audio unter falscher Identität), statt zu raten.
+  **Die Identität kommt aus den Frames, nicht aus einer Tabelle** (#1052). Jeder
+  Frame trägt sie seit #988 mit sich, aufgelöst im Moment des Empfangs. Bis
+  #1052 holte dieser Pfad stattdessen `Voice.get_ssrc_map/1` **beim Speichern**
+  erneut — also nach dem Fenster, das er gerade schreibt. War die
+  Voice-Verbindung in diesem Moment tot, war die Tabelle leer und das ganze
+  Fenster verloren (bis zu eine Minute, alle Sprecher); war sie erneuert,
+  konnte eine neu vergebene Kennung Audio unter fremder Identität speichern.
+  Die Warnung davor stand wörtlich an der Paket-Stelle — der Speicherpfad tat
+  es trotzdem. Seitdem fragt dieses Modul Nostrum gar nicht mehr.
   """
   @spec all(map()) :: :ok
   def all(%{frames: []}), do: :ok
 
   def all(state) do
-    ssrc_map = NostrumSafe.ssrc_map(state.guild_id)
-
     # Issue #1005: DIE Durchsetzung der Invariante — „kein Frame außerhalb eines
     # Grant-Intervalls wird gespeichert". Der Filter läuft VOR dem Clip-Bau, weil
     # nur hier die Frame-Zeitachse noch vorliegt; ein Clip ist danach ein
@@ -135,12 +139,18 @@ defmodule Worker.Discord.Flush do
     # er wirklich braucht, weiß bisher niemand — ohne Zahl bliebe die Frage „ist
     # das Budget groß genug" für immer eine Vermutung. Pro Sprecher sind es zwei
     # ffmpeg-Aufrufe (Decode + Re-Encode), sequenziell.
+    # Issue #1052: die Identität kommt aus den Frames (s. Moduledoc).
+    # `keepable/2` oben hat jeden Frame ohne Identität bereits entfernt.
+    identitaeten = identitaeten_aus_frames(kept, state)
+
     {us, _} =
       :timer.tc(fn ->
         kept
         |> FrameBuffer.rebase(state.window_start_ms)
         |> AudioBridge.build_speaker_clips()
-        |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
+        |> Enum.each(fn {ssrc, result} ->
+          handle_clip(state, Map.get(identitaeten, ssrc), ssrc, result)
+        end)
       end)
 
     VoiceErrors.log_flush_duration(state, kept, div(us, 1000))
@@ -171,11 +181,33 @@ defmodule Worker.Discord.Flush do
     |> Enum.sort_by(& &1.arrival_ms)
   end
 
-  defp handle_clip(state, ssrc_map, ssrc, {:ok, base64_webm}) do
-    case Map.get(ssrc_map, ssrc) do
-      discord_id when is_integer(discord_id) ->
-        did = to_string(discord_id)
+  # Issue #1052: die Zuordnung SSRC → Identität, abgeleitet aus den Frames
+  # dieses Fensters. Jeder trägt beides; welche Kennung Discord dem Sprecher
+  # INZWISCHEN zugeteilt hat, ist für bereits empfangenes Audio bedeutungslos.
+  #
+  # Trägt ein SSRC im selben Fenster MEHRERE Identitäten, wird nicht geraten:
+  # Discord vergibt Kennungen nach einem Reconnect neu, und eine kollidierende
+  # würde Audio unter fremder Identität speichern — also unter fremder
+  # Einwilligung. Das ist der schwerste denkbare Fehler an dieser Stelle, und
+  # er ist strukturell möglich, auch wenn er noch nicht beobachtet wurde.
+  defp identitaeten_aus_frames(frames, state) do
+    frames
+    |> Enum.group_by(& &1.ssrc, & &1.did)
+    |> Map.new(fn {ssrc, dids} ->
+      case Enum.uniq(dids) do
+        [did] ->
+          {ssrc, did}
 
+        mehrere ->
+          VoiceErrors.report_ambiguous_ssrc(state, ssrc, mehrere)
+          {ssrc, nil}
+      end
+    end)
+  end
+
+  defp handle_clip(state, did, ssrc, {:ok, base64_webm}) do
+    case did do
+      did when is_binary(did) ->
         # Issue #1002: DIE Durchsetzungs-Stelle. Ohne Einwilligung wird die Spur
         # verworfen statt gespeichert — dieselbe Regel wie beim fehlenden
         # SSRC-Mapping direkt darunter (kein Audio ohne geklärte Grundlage),
@@ -205,14 +237,20 @@ defmodule Worker.Discord.Flush do
         end
 
       nil ->
+        # Issue #1052: hier landet nur noch die Mehrdeutigkeit — Frames ohne
+        # Identität hat `keepable/2` längst entfernt, und der Vorfall ist in
+        # `identitaeten_aus_frames/2` bereits nach `/admin/errors` gemeldet.
+        # Vorher stand an dieser Stelle „kein SSRC->User-Mapping", und zwar
+        # als EINZIGER Fehlerpfad im Flush ohne Eintrag dort: ein verworfener
+        # Clip war nur im Log zu finden.
         Logger.error(
-          "Worker.Discord.Flush: kein SSRC->User-Mapping für ssrc=#{ssrc} " <>
-            "campaign=#{state.campaign_id} — Clip verworfen (keine Audio-Zuordnung ohne Identität)."
+          "Worker.Discord.Flush: keine eindeutige Identität für ssrc=#{ssrc} " <>
+            "campaign=#{state.campaign_id} — Clip verworfen (kein Audio unter ungeklärter Identität)."
         )
     end
   end
 
-  defp handle_clip(state, _ssrc_map, ssrc, {:error, reason}) do
+  defp handle_clip(state, _did, ssrc, {:error, reason}) do
     VoiceErrors.report_clip_failed(state, ssrc, reason)
   end
 end
