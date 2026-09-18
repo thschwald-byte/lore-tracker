@@ -104,7 +104,7 @@ Genauer Modell-Name in `/settings` checken. Format: `name:tag` (Tag = Quantisier
 
 **Was**: die Fakten-Extraktion hat 0 Fakten geliefert. Seit J4 (#1207) heißt das: Jacks Bestand enthielt keine gültige Aussage.
 
-**Fix**: In der lokalen Laufsicht des Workers (`http://127.0.0.1:8099`, nur auf dem Worker-Rechner) mitlesen, was Jack tut. Anderes Modell in `/settings` → „Jack: Extract/verify“ (`model_stage2_local`) wählen — Jack arbeitet mit Werkzeugaufrufen über `/v1/chat/completions`, das Modell muss sie beherrschen. Prüfen, ob das Fenster, mit dem Ollama das Modell lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`), zu `ctx_jack` passt — der Worker setzt es für Jack nicht selbst.
+**Fix**: In der lokalen Laufsicht des Workers mitlesen, was Jack tut — der Port steht im Worker-Log (`Jack-Laufsicht: http://127.0.0.1:<port>`), Default 8099, eine Teststage nimmt Stage-Port + 10. **Antwortet dort eine leere Sicht, ist es womöglich die eines anderen Workers:** ein belegter Port lässt die eigene Sicht gar nicht starten (Warnung im Log), und der Lauf ist dann nicht beobachtbar. Anderes Modell in `/settings` → „Jack: Extract/verify“ (`model_stage2_local`) wählen — Jack arbeitet mit Werkzeugaufrufen über `/v1/chat/completions`, das Modell muss sie beherrschen. Prüfen, ob das Fenster, mit dem Ollama das Modell lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`), zu `ctx_jack` passt — der Worker setzt es für Jack nicht selbst.
 
 #### Jack (Stufe 2): `ctx_jack_ungueltig` und `other` mit `{:jack, …}`
 

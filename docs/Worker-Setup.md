@@ -77,7 +77,7 @@ Worker-Restart bei Setting-Änderungen.
 | `4001-4005` | PR-Test-Hubs (siehe Dev-Workflow) | nur bei lokalem PR-Test |
 | `4080` | Worker-Setup-Endpoint (Pair-Flow im Browser) | bei jeder Worker-Erst-Pairing |
 | `11434` | Ollama-Daemon | immer (Jack, Stufe 2) |
-| `8099` | Lokale Laufsicht für Jack-Läufe (`Worker.Jack.Sicht`, nur `127.0.0.1`) | optional; ein belegter Port ist eine Warnung, kein Startfehler |
+| `8099` | Lokale Laufsicht für Jack-Läufe (`Worker.Jack.Sicht`, nur `127.0.0.1`) | optional; über `LORE_JACK_SICHT_PORT` verschiebbar — eine Teststage nimmt Stage-Port + 10 (#1211). Ein belegter Port ist eine Warnung, kein Startfehler: der Worker läuft dann **ohne** Laufsicht, und das Denken dieses Laufs ist danach nicht mehr nachlesbar |
 
 Discord-OAuth-Redirects müssen in der Discord-App-Console hinterlegt sein:
 `http://localhost:4000/auth/discord/callback` für den Standard-Hub, weitere
