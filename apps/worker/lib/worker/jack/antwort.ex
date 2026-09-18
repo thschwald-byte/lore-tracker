@@ -26,7 +26,7 @@ defmodule Worker.Jack.Antwort do
 
   alias Worker.Jack.Stand
 
-  @felder ~w(claim beleg source_refs character cast_match fact_type threads narration_time
+  @felder ~w(claim beleg source_refs characters fact_type threads narration_time
              time_anchor precision in_game_date time_offset entscheidung)
 
   @doc """
@@ -119,12 +119,19 @@ defmodule Worker.Jack.Antwort do
 
   # Bestand aus Läufen vor dem 10.09. trägt noch den alten Escape-Wert. Nur
   # dort umschreiben — die eigene Eingabe zeigt, was Jack geschickt hat.
-  defp alter_escape_raus(%{"cast_match" => c} = e, status)
-       when status != "vorgelegt" and is_binary(c) do
-    if String.trim(c) == Stand.alter_escape(), do: Map.put(e, "cast_match", ""), else: e
+  # Issue #1066: je Figur statt einmal je Aussage.
+  defp alter_escape_raus(%{"characters" => figuren} = e, status)
+       when status != "vorgelegt" and is_list(figuren) do
+    Map.put(e, "characters", Enum.map(figuren, &figur_ohne_escape/1))
   end
 
   defp alter_escape_raus(e, _status), do: e
+
+  defp figur_ohne_escape(%{"cast" => c} = figur) when is_binary(c) do
+    if String.trim(c) == Stand.alter_escape(), do: Map.put(figur, "cast", ""), else: figur
+  end
+
+  defp figur_ohne_escape(figur), do: figur
 
   @doc "Fehler und Hinweis, wenn das Gerüst im Gedächtnis fehlt."
   @spec geruest(Stand.t(), [String.t()]) :: {String.t(), String.t()}

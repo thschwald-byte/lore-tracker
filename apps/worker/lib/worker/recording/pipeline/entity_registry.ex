@@ -26,31 +26,55 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
 
   alias Worker.{Intents, Repo}
   alias Worker.LLM
+  alias Worker.Recording.Pipeline.Parsing
 
   require Logger
 
-  @doc "Distinkte, nicht-leere `character_alias`-Oberflächenformen aus den Fakten."
+  @doc """
+  Distinkte, nicht-leere Figuren-Oberflächenformen aus den Fakten.
+
+  Issue #1066: liest ALLE Figuren eines Fakts (`Parsing.fact_characters/1`),
+  nicht mehr nur die erstgenannte. Eine Nebenfigur, die sonst nirgends handelt,
+  kam vorher im Clustering gar nicht vor — ihre Gestalten konnten also nie
+  zusammengeführt werden.
+  """
   @spec distinct_aliases([map()]) :: [String.t()]
   def distinct_aliases(facts) when is_list(facts) do
     facts
-    |> Enum.map(fn f -> f |> Map.get("character_alias", "") |> to_string() |> String.trim() end)
+    |> Enum.flat_map(&Parsing.fact_characters/1)
+    |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.uniq()
   end
 
   @doc """
-  Re-keyt `entity_id` jedes Fakts über die Registry (`normalisierter_alias →
-  kanonische entity_id`). Alias nicht in der Registry → der Fakt behält seine
-  bestehende `entity_id` (Extraktions-Default). PURE, behält alle Fakten.
+  Re-keyt die `entity_ids` jedes Fakts über die Registry (`normalisierter_alias
+  → kanonische entity_id`). Ein Alias, den die Registry nicht kennt, behält
+  seine bestehende ID (Extraktions-Default). PURE, behält alle Fakten.
+
+  Issue #1066: re-keyt JEDE Figur, nicht nur die erstgenannte, und hält dabei
+  `entity_id` (Skalar) mit der ersten gleich — feldkonservativ für Leser, die
+  noch nicht auf `Parsing.fact_entity_ids/1` umgestellt sind.
   """
   @spec apply_registry([map()], %{optional(String.t()) => String.t()}) :: [map()]
   def apply_registry(facts, registry) when is_list(facts) and is_map(registry) do
     Enum.map(facts, fn fact ->
-      key = fact |> Map.get("character_alias", "") |> normalize()
+      namen = Parsing.fact_characters(fact)
+      bestand = Parsing.fact_entity_ids(fact)
 
-      case Map.get(registry, key) do
-        nil -> fact
-        canonical -> Map.put(fact, "entity_id", canonical)
+      ids =
+        namen
+        |> Enum.with_index()
+        |> Enum.map(fn {name, i} ->
+          Map.get(registry, normalize(name)) || Enum.at(bestand, i) || normalize(name)
+        end)
+
+      if ids == [] do
+        fact
+      else
+        fact
+        |> Map.put("entity_ids", ids)
+        |> Map.put("entity_id", List.first(ids))
       end
     end)
   end
@@ -80,8 +104,13 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   @spec registry_from_facts([map()]) :: %{optional(String.t()) => String.t()}
   def registry_from_facts(facts) when is_list(facts) do
     facts
-    |> Enum.map(fn fact ->
-      {normalize(Map.get(fact, "character_alias", "")), normalize(Map.get(fact, "entity_id", ""))}
+    |> Enum.flat_map(fn fact ->
+      # Issue #1066: Alias und ID stehen paarweise in derselben Reihenfolge —
+      # `zip` hält die Zuordnung, die im Fakt selbst schon gepaart ist.
+      Enum.zip(
+        Enum.map(Parsing.fact_characters(fact), &normalize/1),
+        Enum.map(Parsing.fact_entity_ids(fact), &normalize/1)
+      )
     end)
     |> Enum.filter(fn {alias_key, entity_id} ->
       alias_key != "" and entity_id != "" and alias_key != entity_id

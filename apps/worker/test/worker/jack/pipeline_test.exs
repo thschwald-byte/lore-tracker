@@ -74,8 +74,7 @@ defmodule Worker.Jack.PipelineTest do
       %{
         "nummer" => 1,
         "claim" => "Mira öffnet die Tür.",
-        "character" => "Mira",
-        "cast_match" => "Mira",
+        "characters" => [%{"name" => "Mira", "cast" => "Mira"}],
         "narration_time" => "present",
         "time_anchor" => "session",
         "in_game_date" => "",
@@ -90,7 +89,7 @@ defmodule Worker.Jack.PipelineTest do
       %{
         "nummer" => 3,
         "claim" => "Mira tritt ein.",
-        "character" => "Mira",
+        "characters" => [%{"name" => "Mira", "cast" => ""}],
         "source_refs" => [2, 7]
       },
       # Ohne Nummer ist es keine eingetragene Aussage.

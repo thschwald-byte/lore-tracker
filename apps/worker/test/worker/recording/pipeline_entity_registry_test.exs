@@ -25,6 +25,37 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
     assert ER.distinct_aliases(facts) == ["König", "Holmes"]
   end
 
+  # Issue #1066: die Registry sieht jetzt JEDE Figur eines Fakts.
+  defp mehrfach(figuren, ids) do
+    %{"characters" => figuren, "entity_ids" => ids, "claim" => "c"}
+  end
+
+  describe "mehrere Figuren je Fakt" do
+    test "distinct_aliases sammelt auch die Nebenfigur ein" do
+      # Vorher unsichtbar: „der Alte" handelt nicht und stand nie im Skalar —
+      # sein Alias kam damit nie ins Clustering, seine Gestalten konnten nie
+      # zusammengeführt werden.
+      facts = [mehrfach(["Verrin", "der Alte"], ["verrin", "der alte"])]
+      assert ER.distinct_aliases(facts) == ["Verrin", "der Alte"]
+    end
+
+    test "apply_registry re-keyt jede Figur, nicht nur die erste" do
+      facts = [mehrfach(["Verrin", "der Greis"], ["verrin", "der greis"])]
+      registry = %{"der greis" => "der alte"}
+
+      assert [f] = ER.apply_registry(facts, registry)
+      assert f["entity_ids"] == ["verrin", "der alte"]
+      # Der Skalar bleibt die erstgenannte Figur — feldkonservativ.
+      assert f["entity_id"] == "verrin"
+    end
+
+    test "registry_from_facts liest die Paare stellungsrichtig zurück" do
+      facts = [mehrfach(["Verrin", "der Greis"], ["verrin", "der alte"])]
+      # Nur der ECHTE Merge zählt: „der greis" → „der alte".
+      assert ER.registry_from_facts(facts) == %{"der greis" => "der alte"}
+    end
+  end
+
   describe "parse_clustering/1" do
     test "Cluster → Registry-Map (Alias + canonical → normalisierte canonical-id)" do
       raw =

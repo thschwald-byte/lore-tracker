@@ -258,6 +258,25 @@ defmodule Worker.RepoNachleseTest do
     assert npc.fact_count == 2
   end
 
+  # Issue #1066: DER Fall des Tickets. „Verrin versorgt die Wunde des Alten"
+  # zählt für beide — vorher war die Aussage für den Alten unsichtbar, weil nur
+  # die handelnde Figur im Fakt stand. An der Fable-Referenz gemessen betraf das
+  # 42 von 419 Aussagen, bei einer Figur jede fünfte.
+  test "who: eine Aussage mit zwei Beteiligten zählt bei beiden" do
+    beide =
+      fact("f1", "die Werkstatt", alias: "Verrin", entity: "verrin")
+      |> Map.put("characters", ["Verrin", "der Alte"])
+      |> Map.put("entity_ids", ["verrin", "der alte"])
+
+    seed_facts!(1, [beide], 101)
+
+    who = nachlese().who
+
+    assert length(who) == 2, "beide Beteiligten gehören in die Karteikarten"
+    assert Enum.map(who, & &1.alias) |> Enum.sort() == ["Verrin", "der Alte"]
+    assert Enum.all?(who, &(&1.fact_count == 1))
+  end
+
   test "who: Fakten ohne Figur fallen raus; unverifizierte zählen nicht" do
     seed_facts!(
       1,

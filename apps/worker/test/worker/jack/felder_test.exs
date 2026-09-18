@@ -36,7 +36,12 @@ defmodule Worker.Jack.FelderTest do
       assert Enum.sort(p["required"]) == Enum.sort(Felder.inhaltsfelder() -- Felder.optional())
       assert p["additionalProperties"] == false
       assert p["properties"]["claim"]["minLength"] == 1
-      assert p["properties"]["cast_match"]["minLength"] == 0
+      # Issue #1066: die Strenge greift rekursiv durch `items` — `name` wird
+      # Pflicht mit minLength 1, `cast` behält seine 0.
+      figur = p["properties"]["characters"]["items"]
+      assert Enum.sort(figur["required"]) == ["cast", "name"]
+      assert figur["properties"]["name"]["minLength"] == 1
+      assert figur["properties"]["cast"]["minLength"] == 0
     end
 
     test "entscheiden: dazu die vier Steuerfelder als Pflicht" do
@@ -49,8 +54,7 @@ defmodule Worker.Jack.FelderTest do
 
       args = %{
         "claim" => "c",
-        "character" => "",
-        "cast_match" => "",
+        "characters" => [],
         "narration_time" => "",
         "time_anchor" => "session",
         "in_game_date" => "",

@@ -238,7 +238,8 @@ defmodule Worker.Recording.Pipeline.Parsing do
     if claim == "" do
       nil
     else
-      alias_name = resolve_character_alias(f)
+      figuren = resolve_characters(f)
+      alias_name = List.first(figuren) || ""
       refs = resolve_source_refs(f["source_refs"], index_map, valid_ids)
 
       quell_union =
@@ -247,6 +248,14 @@ defmodule Worker.Recording.Pipeline.Parsing do
       %{
         "id" => fact_content_id(quell_union, claim),
         "claim" => claim,
+        # Issue #1066: eine Aussage kann mehrere Figuren tragen. `characters`
+        # und `entity_ids` sind die vollständige Angabe, die beiden Skalare
+        # bleiben als **erstgenannte** Figur erhalten — feldkonservativ wie
+        # `thread` → `threads` (#953): Bestandsleser brechen nicht, und es
+        # gibt keinen Regenerate-Zwang. Erstgenannt heisst: die handelnde
+        # Figur, denn genau die wählt das Modell zuverlässig an erster Stelle.
+        "characters" => figuren,
+        "entity_ids" => Enum.map(figuren, &normalize_entity_id/1),
         "entity_id" => normalize_entity_id(alias_name),
         "character_alias" => alias_name,
         "in_game_date" => nil_if_blank(f["in_game_date"]),
@@ -301,16 +310,31 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Schema selbst schon einen validen Wert, für Cloud-Backends (kein GBNF-
   # Zwang, #783) bleibt cast_match effektiv Freitext-Vertrauen — identisch
   # zum bisherigen Vertrauensniveau von character, keine Verschlechterung.
-  defp resolve_character_alias(f) do
-    character = f |> Map.get("character") |> trim_or_empty()
-    cast_match = f |> Map.get("cast_match") |> trim_or_empty()
-
-    if cast_match != "" and cast_match != no_cast_match_sentinel() do
-      cast_match
-    else
-      character
-    end
+  # Issue #1066: aus zwei Skalaren wird eine Liste. Je Figur gilt dieselbe
+  # Regel wie vorher je Aussage — der Cast-Treffer gewinnt, sonst der Freitext
+  # aus dem Text. Gelesen werden BEIDE Formen, damit Bestandsfakten ohne
+  # Regenerate weiterleben (Muster `fact_threads/1`, #953).
+  defp resolve_characters(f) do
+    f
+    |> figuren_roh()
+    |> Enum.map(&figur_name/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
   end
+
+  defp figuren_roh(%{"characters" => liste}) when is_list(liste), do: liste
+  defp figuren_roh(f), do: [%{"name" => f["character"], "cast" => f["cast_match"]}]
+
+  defp figur_name(%{} = figur) do
+    name = figur |> Map.get("name") |> trim_or_empty()
+    cast = figur |> Map.get("cast") |> trim_or_empty()
+
+    if cast != "" and cast != no_cast_match_sentinel(), do: cast, else: name
+  end
+
+  # Eine Figur, die als blanker String kommt (Alt-Bestand, Modell-Garbage).
+  defp figur_name(s) when is_binary(s), do: String.trim(s)
+  defp figur_name(_), do: ""
 
   @narration_times ~w(present flashback future unknown)
   defp normalize_narration(t) when is_binary(t) do
@@ -409,6 +433,78 @@ defmodule Worker.Recording.Pipeline.Parsing do
   @spec fact_threads(map()) :: [String.t()]
   def fact_threads(f) when is_map(f), do: normalize_threads(f["threads"] || f["thread"])
   def fact_threads(_), do: []
+
+  @doc """
+  Issue #1066: die Figuren eines (gespeicherten) Fakts als Liste, die
+  handelnde zuerst. Liest das neue `characters`-Array ODER (Bestandsfakt vor
+  #1066) den Alt-Skalar `character_alias` als einelementige Liste. Die EINE
+  migrations-taugliche Lese-Stelle für alle Reader — wer stattdessen selbst
+  `fact["character_alias"]` liest, sieht bei einem neuen Fakt nur noch die
+  erstgenannte Figur und merkt es nicht.
+
+  Gelesen wird der AUFGELÖSTE Name (Cast-Treffer vor Freitext), nicht das
+  Roh-Objekt: das ist der Wert, der auch in `character_alias` steht.
+  """
+  @spec fact_characters(map()) :: [String.t()]
+  def fact_characters(%{"characters" => liste}) when is_list(liste) do
+    liste
+    |> Enum.map(&figur_name/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  def fact_characters(%{"character_alias" => a}) when is_binary(a) do
+    case String.trim(a) do
+      "" -> []
+      name -> [name]
+    end
+  end
+
+  def fact_characters(_), do: []
+
+  @doc """
+  Issue #1066: die Entitäts-IDs eines Fakts als Liste, in derselben Reihenfolge
+  wie `fact_characters/1`. Alt-Bestand fällt auf den Skalar `entity_id` zurück.
+  """
+  @spec fact_entity_ids(map()) :: [String.t()]
+  def fact_entity_ids(%{"entity_ids" => liste}) when is_list(liste) do
+    liste |> Enum.map(&trim_or_empty/1) |> Enum.reject(&(&1 == "")) |> Enum.uniq()
+  end
+
+  def fact_entity_ids(%{"entity_id" => e}) when is_binary(e) do
+    case String.trim(e) do
+      "" -> []
+      id -> [id]
+    end
+  end
+
+  def fact_entity_ids(_), do: []
+
+  @doc """
+  Issue #1066: die Figuren eines Fakts als Paare `{entity_id, anzeigename}`, in
+  der Reihenfolge des Fakts (handelnde zuerst).
+
+  Für jede Aggregation, die bisher „ein Fakt, eine Identität" annahm — der
+  Cast-Roster, das Who-is-who der Nachlese, die Entitäten eines Strangs. Ein
+  Fakt gehört jetzt in mehrere Gruppen, und ohne die Paarung müsste jede
+  Aufrufstelle Namen und IDs selbst zusammenstecken (und könnte sie
+  vertauschen).
+
+  Fehlt einer Figur die ID (Alt-Bestand, in dem nur der Skalar steht), springt
+  der normalisierte Name ein — dieselbe Regel wie in der Extraktion.
+  """
+  @spec fact_identities(map()) :: [{String.t(), String.t()}]
+  def fact_identities(f) when is_map(f) do
+    namen = fact_characters(f)
+    ids = fact_entity_ids(f)
+
+    namen
+    |> Enum.with_index()
+    |> Enum.map(fn {name, i} -> {Enum.at(ids, i) || normalize_entity_id(name), name} end)
+    |> Enum.reject(fn {id, name} -> id == "" and name == "" end)
+  end
+
+  def fact_identities(_), do: []
 
   # Issue #953: Roh-`threads` → Liste getrimmter, nicht-leerer, deduplizierter
   # Kurzlabels. Akzeptiert eine Liste (Neu-Schema), einen Alt-Skalar-String

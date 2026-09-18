@@ -227,7 +227,7 @@ findest du Rückbezüge, ohne alles erneut zu lesen.
 Eintragen nachzusehen, ob eine Aussage wirklich dort steht.
 
 **`cast()`** — die Liste der bekannten handelnden Personen. Sie ist die einzige
-zulässige Quelle für das Feld `cast_match`.
+zulässige Quelle für das Feld `cast` einer Figur in `characters`.
 
 **`straenge()`** — die Liste der bereits bekannten Themen. Sie ist die Quelle
 für das Feld `threads`.
@@ -284,16 +284,38 @@ zur Tatsache. Dasselbe gilt für Gerüchte, Vermutungen und Erinnerungen: die
 Quelle der Aussage gehört in den Satz, wenn sie seinen Wahrheitsanspruch
 begrenzt.
 
-**`character`** — wer in dieser Aussage handelt oder spricht, aus dem Zusammen-
-hang aufgelöst. **Maßgeblich ist der Text, nicht die Sprecher-Spalte.** Die
-Spalte nennt, wer am Tisch redet; eine Person spricht oft für mehrere Figuren
-nacheinander, und wer angesprochen wird („du hast die Tür geöffnet"), handelt,
-ohne selbst zu reden. Bei einer Aussage über die Welt selbst bleibt das Feld
-leer.
+**`characters`** — **alle**, die in dieser Aussage handeln, sprechen oder an
+ihr beteiligt sind, als **Liste**; die handelnde Figur zuerst. Jeder Eintrag
+ist ein Objekt mit zwei Feldern:
 
-**Handelt niemand, bleibt das Feld leer.** Findest du keine handelnde Figur —
-weil die Aussage die Welt beschreibt —, dann ist `character` **leer** (`""`). Ein Text im Feld, der keine Figur benennt, macht aus einer
-Weltaussage eine Aussage über jemanden, den es nicht gibt.
+```
+{"name": "Verrin", "cast": "Verrin"}
+```
+
+- **`name`** — der Figurenname, wie er im Text steht.
+- **`cast`** — der Abgleich mit `cast()`. Passt ein Eintrag der Liste genau auf
+  diesen Namen, trage ihn in **identischer Schreibweise** ein. Passt keiner,
+  bleibt `cast` **leer** (`""`) — die Figur bleibt trotzdem in der Liste.
+
+**Maßgeblich ist der Text, nicht die Sprecher-Spalte.** Die Spalte nennt, wer
+am Tisch redet; eine Person spricht oft für mehrere Figuren nacheinander, und
+wer angesprochen wird („du hast die Tür geöffnet"), handelt, ohne selbst zu
+reden.
+
+**Die Reihenfolge trägt Bedeutung: die handelnde Figur steht vorn.** „Verrin
+versorgt die Wunde des Alten" ist eine Aussage über Verrins Handlung — und
+zugleich eine über den Alten, die sonst niemand mehr findet, der nach ihm
+sucht. Beide gehören hinein, Verrin zuerst.
+
+**Nimm auf, wer beteiligt ist — nicht, wer erwähnt wird.** Wer etwas tut,
+etwas erleidet, spricht oder angesprochen wird, gehört in die Liste. Wer nur
+als Ortsangabe oder Vergleich vorkommt („vor dem Alten liegt ein Balkon"), gehört
+nicht hinein.
+
+**Handelt niemand, bleibt die Liste leer** (`[]`). Beschreibt die Aussage die
+Welt selbst, ist das der richtige Wert. Ein Name in der Liste, der keine Figur
+benennt, macht aus einer Weltaussage eine Aussage über jemanden, den es nicht
+gibt.
 
 **Wer über jemanden redet, besitzt ihn nicht.** Sagt eine Person „der Alte
 ist so ein Geizhals“, dann handelt der **Alte**, nicht die Person am Tisch —
@@ -301,15 +323,11 @@ und er gehört ihr auch nicht. Schreibe „der Alte“, nicht „ihr Alter“. E
 besitzanzeigendes Wort („sein", „ihr", „X' …") gehört nur dorthin, wo der Text
 den Besitz wirklich nennt.
 
-**`cast_match`** — der Abgleich mit `cast()`. Passt ein Eintrag der Liste genau
-auf `character`, trage ihn in **identischer Schreibweise** ein. Passt keiner
-oder ist `character` leer, bleibt `cast_match` **leer** (`""`).
-
-**Die Regel:** trage einen Listeneintrag ein, wenn du ihn **benennen** kannst —
-also wenn im Text ein Name, Spitzname oder eine eindeutige Rolle steht, die auf
-genau einen Eintrag zeigt. Bleibt ein Zweifel, welcher es ist, lass das Feld
-leer. Eine falsche Zuordnung ist teurer als keine, weil sie später
-niemand mehr als Fehler erkennt.
+**Die Regel für `cast`:** trage einen Listeneintrag ein, wenn du ihn
+**benennen** kannst — also wenn im Text ein Name, Spitzname oder eine
+eindeutige Rolle steht, die auf genau einen Eintrag zeigt. Bleibt ein Zweifel,
+welcher es ist, lass das Feld leer. Eine falsche Zuordnung ist teurer als
+keine, weil sie später niemand mehr als Fehler erkennt.
 
 **`narration_time`** — wann das Geschilderte geschieht, gemessen an der Szene,
 die gerade läuft:
@@ -515,12 +533,48 @@ den Inhalt.
 ```
 ```
 claim          Der Alte steht in der Werkstatttür.
-character      der Alte        cast_match     ""
+characters     [{"name": "der Alte", "cast": ""}]
 narration_time present         time_anchor    session
 in_game_date   ""              fact_type      zustand
 threads        ["die Werkstatt"] source_refs  [118]
 beleg          Der Alte steht in der Werkstatttür
 ```
+
+**Zwei Beteiligte — beide gehören hinein**
+
+```
+331  Verrin kniet neben dem Alten und drückt ein Tuch auf die Wunde.
+332  SL: Der Alte hält still.
+```
+```
+claim          Verrin versorgt die Wunde des Alten.
+characters     [{"name": "Verrin", "cast": ""}, {"name": "der Alte", "cast": ""}]
+narration_time present         time_anchor    session
+in_game_date   ""              fact_type      ereignis
+threads        ["die Werkstatt"] source_refs  [331]
+beleg          Verrin kniet neben dem Alten und drückt ein Tuch auf die Wunde
+```
+
+Verrin handelt, deshalb steht sie vorn. Der Alte handelt nicht — aber die
+Aussage ist auch eine über ihn, und wer später nach ihm sucht, findet sie nur,
+wenn er in der Liste steht.
+
+**Erwähnt ist nicht beteiligt**
+
+```
+352  Vor dem Alten liegt ein Balkon, nicht hoch, aber offen.
+```
+```
+claim          Vor dem Alten liegt ein offener Balkon.
+characters     []
+narration_time present         time_anchor    session
+in_game_date   ""              fact_type      zustand
+threads        ["die Werkstatt"] source_refs  [352]
+beleg          Vor dem Alten liegt ein Balkon, nicht hoch, aber offen
+```
+
+Der Alte kommt im Satz vor, aber nur als Ortsangabe: er tut nichts, ihm
+geschieht nichts. Die Liste bleibt leer.
 
 **Zwei Behauptungen in einem Satz — zwei Einträge**
 
@@ -529,7 +583,7 @@ beleg          Der Alte steht in der Werkstatttür
 ```
 ```
 claim          Der Mineneingang liegt am Hang.
-character      ""              cast_match     ""
+characters     []
 narration_time present         time_anchor    session
 in_game_date   ""              fact_type      zustand
 threads        ["die Salzmine"] source_refs  [205]
@@ -537,7 +591,7 @@ beleg          Der Mineneingang liegt am Hang
 ```
 ```
 claim          Der Mineneingang ist mit Brettern vernagelt.
-character      ""              cast_match     ""
+characters     []
 narration_time present         time_anchor    session
 in_game_date   ""              fact_type      zustand
 threads        ["die Salzmine"] source_refs  [205]
@@ -555,7 +609,7 @@ einem Eintrag ginge das verloren.
 
 ```
 claim          Die Fabrik wurde stillgelegt.
-character      ""              cast_match     ""
+characters     []
 narration_time flashback       time_anchor    absolute
 in_game_date   1761            fact_type      zustandsänderung
 threads        ["die Fabrik"]   source_refs   [604]
@@ -563,7 +617,7 @@ beleg          Die Fabrik wurde 1761 stillgelegt
 ```
 ```
 claim          Die Fabrik steht leer.
-character      ""              cast_match     ""
+characters     []
 narration_time present         time_anchor    session
 in_game_date   ""              fact_type      zustand
 threads        ["die Fabrik"]   source_refs   [604]
@@ -577,7 +631,7 @@ beleg          seitdem steht sie leer
 ```
 ```
 claim          Verrin hat den Boten vor drei Jahren zuletzt gesehen.
-character      Verrin          cast_match     ""
+characters     [{"name": "Verrin", "cast": ""}]
 narration_time flashback       time_anchor    session
 in_game_date   ""              time_offset    {"value":-3,"unit":"year"}
 fact_type      ereignis        threads        []
@@ -626,12 +680,12 @@ oben:
 2. Steht der Satz allein und behauptet dann noch etwas? Zustimmung,
    Aufforderung, Reden über das Gespräch, bloßes Was-wäre-wenn? Nicht
    eintragen. **Ein Vorhaben schon.**
-3. Zehn Pflichtfelder: `claim` `character` `cast_match` `narration_time`
-   `time_anchor` `in_game_date` `fact_type` `threads` `source_refs` `beleg`.
+3. Neun Pflichtfelder: `claim` `characters` `narration_time` `time_anchor`
+   `in_game_date` `fact_type` `threads` `source_refs` `beleg`.
 4. `claim`: genau **eine** Behauptung — „und" trennt oft zwei.
-5. `character`: aus dem Text, **nicht** aus der Sprecher-Spalte; bei einer
-   Weltaussage **leer** (`""`).
-6. `cast_match`: Listeneintrag nur, wenn benennbar — sonst `""`.
+5. `characters`: **alle** Beteiligten, die handelnde zuerst; aus dem Text,
+   **nicht** aus der Sprecher-Spalte; bei einer Weltaussage **leer** (`[]`).
+6. `cast` je Figur: Listeneintrag nur, wenn benennbar — sonst `""`.
 7. `in_game_date`: Zeitausdruck **wörtlich** abschreiben, sonst `""`.
 8. `time_anchor`: **`absolute`, sobald `in_game_date` gefüllt ist**, `session`
    wenn es zur laufenden Zeit gehört, sonst `unknown`.
