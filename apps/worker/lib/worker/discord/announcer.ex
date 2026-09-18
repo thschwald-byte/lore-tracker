@@ -347,6 +347,7 @@ defmodule Worker.Discord.Announcer do
   defp item_text({:join, name, consented?}), do: Announcement.text_for_join(name, consented?)
   defp item_text({:pending, names}), do: Announcement.text_for_pending(names)
   defp item_text({:granted, name}), do: Announcement.text_for_granted(name)
+  defp item_text({:pause, angehalten?}), do: Announcement.text_for_pause(angehalten?)
 
   # TTS im supervisten Task — piper braucht Sekunden, und der Session-Prozess
   # nimmt 50 Audio-Casts/s/Sprecher an. Das Ergebnis kommt als

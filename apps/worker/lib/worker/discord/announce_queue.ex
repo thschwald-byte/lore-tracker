@@ -52,6 +52,8 @@ defmodule Worker.Discord.AnnounceQueue do
           {:join, String.t() | nil, boolean()}
           | {:pending, [String.t() | nil]}
           | {:granted, String.t() | nil}
+          # Issue #1058: true = angehalten, false = fortgesetzt.
+          | {:pause, boolean()}
 
   @type t :: %{
           items: [item()],

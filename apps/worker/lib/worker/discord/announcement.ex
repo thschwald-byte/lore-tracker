@@ -211,6 +211,22 @@ defmodule Worker.Discord.Announcement do
   def text_for_pending(_), do: nil
 
   @doc """
+  Issue #1058: die Aufnahme wurde angehalten beziehungsweise fortgesetzt.
+
+  **Warum das überhaupt angesagt wird:** Wer im Sprachkanal sitzt, sieht die
+  Weboberfläche nicht. Ohne Ansage ist für die Runde nicht unterscheidbar, ob
+  gerade aufgezeichnet wird — und genau darüber soll sie Bescheid wissen. Das
+  ist dieselbe Begründung wie bei der Beitritts-Ansage (#1032).
+
+  Bewusst kurz: #1032 hat die Redezeit einer typischen Sitzung von 65 auf rund
+  24 Sekunden gekürzt, weil jede überflüssige Silbe am Spieltisch stört. Ein
+  Satz genügt, und er sagt den Zustand, nicht die Bedienung.
+  """
+  @spec text_for_pause(boolean()) :: String.t()
+  def text_for_pause(true), do: "Die Aufnahme ist angehalten."
+  def text_for_pause(false), do: "Die Aufnahme läuft wieder."
+
+  @doc """
   „X hat der Aufnahme zugestimmt." — die Bestätigung, dass der Klick ankam. Ohne
   sie weiß niemand, ob es funktioniert hat, und man wundert sich hinterher über
   eine fehlende Spur.
