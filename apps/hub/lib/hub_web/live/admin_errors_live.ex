@@ -351,6 +351,16 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("source_webm_missing"),
     do: "Stage 1: Quell-Audio fehlt (Re-Transkription auf bereinigte Datei)"
 
+  # Issue #1054: eine abgebrochene Spur reisst die anderen nicht mehr mit. Die
+  # Sammelmeldung ist die wichtigere von beiden — sie sagt, dass die Sitzung
+  # unvollständig ist und das Audio noch liegt.
+  defp type_label("spur_abgebrochen"),
+    do: "Stage 1: einzelne Spur abgebrochen (übrige liefen weiter)"
+
+  defp type_label("spuren_unvollstaendig"),
+    do:
+      "Stage 1: Sitzung unvollständig transkribiert — Audio bleibt für den zweiten Anlauf liegen"
+
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 

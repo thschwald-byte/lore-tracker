@@ -26,6 +26,7 @@ defmodule Worker.Recording.Transcribe do
 
   alias Worker.Intents
   alias Worker.Recording.Transcribe.Confidence
+  alias Worker.Recording.Transcribe.Spuren
 
   # Issue #791: die reinen Confidence-/Halluzinations-/Dedup-Value-Transformer
   # wohnen jetzt in Worker.Recording.Transcribe.Confidence (God-Module-Split
@@ -74,15 +75,14 @@ defmodule Worker.Recording.Transcribe do
     try do
       started_at = session_started_at(session_id)
 
-      pp_count =
+      {pp_count, pp_offen} =
         transcribe_per_player_files(session_id, campaign_id, per_player_files, started_at)
 
-      ms_count =
-        Enum.reduce(multi_files, 0, fn {key, path}, acc ->
-          acc + transcribe_single_source_file(session_id, campaign_id, key, path, started_at)
-        end)
+      {ms_count, ms_offen} =
+        transcribe_multi_files(session_id, campaign_id, multi_files, started_at)
 
       count = pp_count + ms_count
+      offen = pp_offen ++ ms_offen
 
       Logger.info(
         "Transcribe: session=#{session_id} → #{count} utterances (per_player=#{pp_count}, multi=#{ms_count})"
@@ -99,8 +99,17 @@ defmodule Worker.Recording.Transcribe do
           "utterance_count" => count
         })
 
-      notify_stage1(campaign_id, "ended", nil)
-      :ok
+      # Issue #1054: der Ausgang ist die Auskunft, nach der der `AudioBuffer`
+      # entscheidet, ob das Audio ins Archiv darf. Bei offenen Spuren ist das
+      # KEIN "ended" — sonst stünde im Dashboard „fertig" über einem
+      # unvollständigen Transkript.
+      if offen == [] do
+        notify_stage1(campaign_id, "ended", nil)
+        :ok
+      else
+        Spuren.melde_offene(campaign_id, offen, length(per_player_files) + length(multi_files))
+        {:teilweise, offen}
+      end
     rescue
       e ->
         notify_stage1(campaign_id, "failed", Exception.message(e))
@@ -126,8 +135,9 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  # Per-Spieler-Files → je discord_id eine Spur. Liefert die Utterance-Anzahl.
-  defp transcribe_per_player_files(_session_id, _campaign_id, [], _started_at), do: 0
+  # Per-Spieler-Files → je discord_id eine Spur. Liefert `{Utterance-Anzahl,
+  # Schlüssel der gescheiterten Spuren}` (Issue #1054).
+  defp transcribe_per_player_files(_session_id, _campaign_id, [], _started_at), do: {0, []}
 
   defp transcribe_per_player_files(session_id, campaign_id, files, started_at) do
     # Issue #469: der `flat_key` aus `AudioBuffer` kann jetzt `<did>` ODER
@@ -138,9 +148,26 @@ defmodule Worker.Recording.Transcribe do
     # dem per-Segment Sidecar (#757, `manifest_key = flat_key`).
     files
     |> Enum.map(fn {flat_key, path} ->
-      transcribe_one(session_id, campaign_id, base_did(flat_key), path, started_at)
+      Spuren.isoliert(campaign_id, flat_key, fn ->
+        transcribe_one(session_id, campaign_id, base_did(flat_key), path, started_at)
+      end)
     end)
-    |> Enum.sum()
+    |> Spuren.summiere()
+  end
+
+  # Raummikro-Files → je Gerät eine diarisierte Spur, Issue #642. Gleiche
+  # Rückgabe-Form wie der Per-Spieler-Pfad; bis #1054 lief das als `Enum.reduce`
+  # direkt in `run_mixed`, ohne Absicherung um die einzelne Datei.
+  defp transcribe_multi_files(_session_id, _campaign_id, [], _started_at), do: {0, []}
+
+  defp transcribe_multi_files(session_id, campaign_id, files, started_at) do
+    files
+    |> Enum.map(fn {key, path} ->
+      Spuren.isoliert(campaign_id, key, fn ->
+        transcribe_single_source_file(session_id, campaign_id, key, path, started_at)
+      end)
+    end)
+    |> Spuren.summiere()
   end
 
   # Issue #469: "did-alice.1" → "did-alice"; "did-alice" → "did-alice". Erlaubt
