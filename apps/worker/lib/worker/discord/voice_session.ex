@@ -46,6 +46,11 @@ defmodule Worker.Discord.VoiceSession do
   alias Nostrum.Voice
   alias Worker.Discord.{AnnounceQueue, Presence}
 
+  # Issue #1058: der Ereignis-Name als Compile-Zeit-Konstante — im
+  # Pattern-Head ist kein Funktionsaufruf erlaubt, und ein Literal wäre
+  # Wire-Drift, den nichts bemerkt (#571-Muster wie in `Pipeline`).
+  @recording_state_kind Shared.Events.recording_state_changed()
+
   # Issue #1062: aus den Settings, Default unverändert.
   defp join_settle_ms, do: Worker.Settings.get(:discord_join_settle_ms)
 
@@ -244,6 +249,12 @@ defmodule Worker.Discord.VoiceSession do
     # trap_exit hat hier keine Nebenwirkungen auf andere Signale.
     Process.flag(:trap_exit, true)
 
+    # Issue #1058: den Aufnahme-Zustand mithören. Er lebt in der Sitzungszeile,
+    # geschrieben vom `RecordingStateChanged`-Fold — der Recorder selbst kennt
+    # ihn nicht, es gibt also niemanden, der ihn hierher reichen könnte. Muster
+    # wie `Pipeline.Dirty`: dieselbe `:applied`-Quelle, eigene Filterung.
+    Phoenix.PubSub.subscribe(Worker.PubSub, Worker.Materializer.topic())
+
     Logger.info(
       "Worker.Discord.VoiceSession: join campaign=#{cfg.campaign_id} " <>
         "guild=#{cfg.guild_id} channel=#{cfg.voice_channel_id}"
@@ -328,6 +339,13 @@ defmodule Worker.Discord.VoiceSession do
     # `FrameBuffer.rebase/2` den Clip verschiebt. Beginnt bei 0 = Session-Start.
     |> Map.put(:window_start_ms, 0)
     |> Map.put(:flush_timer, nil)
+    # Issue #1058: hält der Spielleiter die Aufnahme an, muss auch der Bot
+    # aufhören. Beim Browser-Mikro endet der Datenstrom an der Quelle; der Bot
+    # hängt dagegen am Kanal, nicht am Aufnahme-Zustand — er lief bisher weiter
+    # und schrieb das Pausengespräch mit, während die Oberfläche „pausiert"
+    # zeigte. Die Einwilligung deckt die Spielsitzung; ob sie das Gespräch über
+    # Arbeit und Privates in der Pause deckt, ist mindestens fragwürdig.
+    |> Map.put(:pausiert?, false)
     # Issue #1008: Session-weite Zähler für die Abschluss-Diagnose. Sie müssen
     # session-weit sein, weil `frames` seit #1009 periodisch geleert wird — beim
     # Terminieren stünde dort fast immer eine kurze Restliste.
@@ -530,6 +548,25 @@ defmodule Worker.Discord.VoiceSession do
   #
   # Bewusst `Logger.warning` statt stillem `:ok`: eine unerwartete Nachricht ist
   # kein Normalfall, sondern ein Hinweis auf einen fehlenden Handler.
+  # ─── Issue #1058: der Aufnahme-Zustand ───────────────────────────
+  #
+  # Der Zustand lebt in der Sitzungszeile (`RecordingStateChanged`-Fold). Der
+  # Recorder kennt ihn nicht, es gibt also niemanden, der ihn hierher reichen
+  # könnte — deshalb hört dieser Prozess selbst mit.
+  #
+  # Die zweite Klausel ist PFLICHT, nicht Kosmetik: das Abo liefert JEDES
+  # angewendete Ereignis, und der Catch-all unten schreibt eine
+  # `Logger.warning`. Ohne sie würde jeder Mitschnitt das Log fluten.
+  def handle_info({:applied, %{"payload" => %{"kind" => @recording_state_kind} = payload}}, state) do
+    if payload["session_id"] == state.session_id do
+      {:noreply, zustand_wechseln(state, payload["state"])}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:applied, _}, state), do: {:noreply, state}
+
   # Issue #1050: zweiter Anlauf fürs Scharfschalten (s. `rearm_listen/1`).
   def handle_info(:retry_listen, state) do
     {:noreply, rearm_listen(%{state | retry_listen_timer: nil})}
@@ -656,18 +693,19 @@ defmodule Worker.Discord.VoiceSession do
     # Audio: die Consent-Frames selbst bleiben dem #1002-Pfad vorbehalten.
     state = note_speaking(state, speaker_id, arrival_ms)
 
-    # Issue #1005: EIN Puffer, keine Weiche. Im Hot-Path (50 Casts/s/Sprecher)
-    # darf keine Zustandsannahme sitzen — divergierte sie, landeten Frames eines
-    # Zugestimmten im falschen Eimer und würden verworfen (stiller Audioverlust).
-    # Was gespeichert werden darf, entscheidet der Flush anhand der Zeitachse.
-    {:noreply,
-     %{
-       state
-       | frames: [frame | state.frames],
-         # Issue #1008: mitzählen, nicht später aus dem Puffer rekonstruieren.
-         frames_total: state.frames_total + 1,
-         frames_unresolved: state.frames_unresolved + if(frame.did, do: 0, else: 1)
-     }}
+    # Issue #1058: bei angehaltener Aufnahme wird das Paket HIER verworfen —
+    # nicht gepuffert und später weggeworfen. Sonst läge das Pausengespräch
+    # minutenlang im Speicher, und ein Absturz oder ein Flush dazwischen
+    # schriebe genau das weg, was niemand im Protokoll haben will.
+    #
+    # Die Präsenz-Anzeige oben läuft weiter: wer spricht, bleibt sichtbar —
+    # nur eben ohne Mitschnitt. Das ist gewollt, sonst sähe die Runde während
+    # der Pause aus wie ausgestorben.
+    if state.pausiert? do
+      {:noreply, state}
+    else
+      speichere_frame(state, frame)
+    end
   end
 
   # Issue #1005: ein Consent-Button-Klick. Die Gültigkeitsprüfung ist schon
@@ -1035,4 +1073,57 @@ defmodule Worker.Discord.VoiceSession do
 
   # Eine verworfene Spur ist für den GM eine wichtige Information (im Protokoll
   # fehlt ein Mitspieler) — deshalb sichtbar in /admin/errors, nicht nur im Log.
+
+  # Issue #1058: Aufnahme angehalten oder fortgesetzt.
+  #
+  # Beim Anhalten wird das laufende Fenster noch weggeschrieben: alles bis zu
+  # diesem Moment ist gedeckte Aufnahme, und es im Puffer liegen zu lassen
+  # hiesse, es bei einem Absturz zu verlieren. Erst danach greift die Sperre.
+  #
+  # Beim Fortsetzen beginnt ein FRISCHES Fenster. Ohne das trüge der erste
+  # Clip danach die ganze Pause als führende Stille — `FrameBuffer.rebase/2`
+  # füllt von `window_start_ms` an auf, und das läge dann vor der Pause.
+  defp zustand_wechseln(state, "paused") when not :erlang.map_get(:pausiert?, state) do
+    Logger.info(
+      "Worker.Discord.VoiceSession: Aufnahme angehalten campaign=#{state.campaign_id} " <>
+        "— eingehende Pakete werden verworfen"
+    )
+
+    state
+    |> Worker.Discord.Flush.window()
+    |> Map.put(:pausiert?, true)
+    |> ansage_pause(true)
+  end
+
+  defp zustand_wechseln(state, "recording") when :erlang.map_get(:pausiert?, state) do
+    Logger.info("Worker.Discord.VoiceSession: Aufnahme fortgesetzt campaign=#{state.campaign_id}")
+
+    %{state | pausiert?: false, window_start_ms: elapsed_ms(state)}
+    |> ansage_pause(false)
+  end
+
+  # Jeder andere Übergang: schon im Zielzustand, oder ein Zustand, der den
+  # Mitschnitt nicht betrifft (`scheduled`, `ended` — das Ende räumt
+  # `terminate/2` ab).
+  defp zustand_wechseln(state, _andere), do: state
+
+  defp ansage_pause(state, angehalten?) do
+    %{state | announce_queue: AnnounceQueue.push(state.announce_queue, {:pause, angehalten?})}
+    |> Worker.Discord.Announcer.kick()
+  end
+
+  defp speichere_frame(state, frame) do
+    # Issue #1005: EIN Puffer, keine Weiche. Im Hot-Path (50 Casts/s/Sprecher)
+    # darf keine Zustandsannahme sitzen — divergierte sie, landeten Frames eines
+    # Zugestimmten im falschen Eimer und würden verworfen (stiller Audioverlust).
+    # Was gespeichert werden darf, entscheidet der Flush anhand der Zeitachse.
+    {:noreply,
+     %{
+       state
+       | frames: [frame | state.frames],
+         # Issue #1008: mitzählen, nicht später aus dem Puffer rekonstruieren.
+         frames_total: state.frames_total + 1,
+         frames_unresolved: state.frames_unresolved + if(frame.did, do: 0, else: 1)
+     }}
+  end
 end
