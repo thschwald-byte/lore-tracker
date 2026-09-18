@@ -248,9 +248,21 @@ defmodule Worker.Schema.Migrations.Chronik do
         :sitzungen
       ]
 
+      # SECHS neue Felder, also sechs `nil`: `target_attrs` listet 18 Attribute,
+      # die Row braucht damit 19 Elemente (Tabellenname + 18). Hier standen
+      # fünf — `:mnesia.transform_table` lehnte mit `{"Bad arity", …}` ab, der
+      # Bootstrap warf, und `worker_prod` kam über zwanzig Neustarts nicht hoch
+      # (18.09.2026, worker 0.203.0, Prod ohne Worker).
+      #
+      # **Auf einer Teststage ist das unsichtbar**: dort ist die Mnesia leer,
+      # `ensure_table!` legt die Tabelle gleich vollständig an, und diese
+      # Migration läuft nie. Sie greift ausschliesslich, wo Bestandsdaten
+      # liegen — ein voller Pipeline-Lauf über zwei Sitzungen hat sie nicht
+      # berührt. `chronik_migration_test.exs` baut die Tabelle deshalb auf den
+      # Stand vor #1211 zurück und prüft sie gegen eine Alt-Row.
       transform = fn {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen, pos} ->
         {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen, pos, nil, nil,
-         nil, nil, nil}
+         nil, nil, nil, nil}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
