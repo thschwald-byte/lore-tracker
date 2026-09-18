@@ -32,7 +32,15 @@ defmodule Worker.Recording.AudioBuffer do
   also nicht verloren. Damit das eindeutig ist, wird ein erfolgreich
   transkribiertes Session-Dir aus `audio_dir` **heraus** verschoben (nach
   `audio_done_dir`, oder gelöscht wenn das `nil` ist). Ein im Live-`audio_dir`
-  verbliebenes Dir bedeutet damit immer „abgestürzt, noch nicht transkribiert".
+  verbliebenes Dir bedeutet damit immer „noch nicht (vollständig) transkribiert".
+
+  Issue #1054: seitdem wandert nicht mehr das ganze Verzeichnis, sondern die
+  Dateien **je Spur**. Reisst eine einzelne Spur ab, bleiben genau ihre Dateien
+  liegen, die übrigen gehen ins Archiv — der Scan findet beim nächsten Durchgang
+  also nur das Offene vor und wiederholt nicht, was längst im Protokoll steht.
+  Was mit dem Audio geschieht, entscheidet seitdem der **gemeldete Ausgang** des
+  Transkriptions-Laufs, nicht mehr der Ende-Grund des Tasks allein
+  (`AudioBuffer.Archivierung`).
 
   Hartes Strom-/Maschinen-Aus (un-fsync'ter Tail im Page-Cache verloren) ist
   bewusst out-of-scope — fsync pro Chunk wäre für den 500ms-Hot-Path zu teuer.
@@ -43,7 +51,7 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
-  alias Worker.Recording.AudioBuffer.{Presence, Recovery, Segments}
+  alias Worker.Recording.AudioBuffer.{Archivierung, Presence, Recovery, Segments}
   alias Worker.Recording.AudioBuffer.Retention
 
   # Issue #948: der ALTE feste audio_dir-Default (vor der per-Worker-Ableitung).
@@ -248,7 +256,11 @@ defmodule Worker.Recording.AudioBuffer do
        # existieren, sonst wirft das Map-Update einen KeyError und der
        # GenServer stirbt in eine Restart-Schleife (die #1005-Lehre).
        recover_attempts: %{},
-       recover_reported: MapSet.new()
+       recover_reported: MapSet.new(),
+       # Issue #1054: was der Transkriptions-Task gemeldet hat, je Task-Pid.
+       # Er meldet, BEVOR er endet; die `:DOWN`-Nachricht trifft danach ein und
+       # entscheidet damit auf einer Auskunft statt auf dem Ende-Grund allein.
+       transcribe_ergebnisse: %{}
      }}
   end
 
@@ -469,25 +481,28 @@ defmodule Worker.Recording.AudioBuffer do
     end
   end
 
+  # Issue #1054: der Ausgang des Transkriptions-Laufs, gemeldet vom Task selbst.
+  # Er trifft vor der `:DOWN`-Nachricht desselben Prozesses ein (die Reihenfolge
+  # der Signale zwischen zwei Prozessen ist in Erlang garantiert), steht dort
+  # also bereit.
+  @impl true
+  def handle_info({:transcribe_ergebnis, pid, ergebnis}, state) do
+    {:noreply,
+     %{state | transcribe_ergebnisse: Map.put(state.transcribe_ergebnisse, pid, ergebnis)}}
+  end
+
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+    {ergebnis, erg_rest} = Map.pop(state.transcribe_ergebnisse, pid)
+
     case Map.pop(state.pending_transcribes, pid) do
       {nil, _} ->
-        {:noreply, state}
+        {:noreply, %{state | transcribe_ergebnisse: erg_rest}}
 
       {session_id, rest} ->
-        if reason == :normal do
-          # Issue #466/#467: Transkription fertig → Audio aus dem Live-`audio_dir`
-          # heraus archivieren (oder löschen), damit der Crash-Recovery-Scan es
-          # nicht für einen Absturz hält und re-transkribiert.
-          archive_session_audio(session_id)
-        else
-          Logger.warning(
-            "AudioBuffer: Transcribe task for session=#{session_id} exited abnormally: #{inspect(reason)} — Audio bleibt in #{audio_dir()} für Crash-Recovery-Retry"
-          )
-        end
+        entscheide_archivierung(session_id, reason, ergebnis)
 
-        {:noreply, %{state | pending_transcribes: rest}}
+        {:noreply, %{state | pending_transcribes: rest, transcribe_ergebnisse: erg_rest}}
     end
   end
 
@@ -898,14 +913,26 @@ defmodule Worker.Recording.AudioBuffer do
         key == "single_source" or String.starts_with?(key, "multi_")
       end)
 
+    # Issue #1054: `self()` MUSS hier gebunden werden, nicht in der Closure —
+    # dort wäre es die Pid des Tasks, und die Meldung ginge an ihn selbst
+    # (dieselbe Falle wie bei `start_async` in der CampaignLive, #1149).
+    puffer = self()
+
     {:ok, pid} =
       Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-        Worker.GpuQueue.run(
-          fn ->
-            Worker.Recording.Transcribe.run_mixed(session_id, per_player_files, multi_files)
-          end,
-          label: "transcribe:#{session_id}"
-        )
+        ergebnis =
+          Worker.GpuQueue.run(
+            fn ->
+              Worker.Recording.Transcribe.run_mixed(session_id, per_player_files, multi_files)
+            end,
+            label: "transcribe:#{session_id}"
+          )
+
+        # Der Rückgabewert wurde bis #1054 verworfen. Weil die `GpuQueue` jede
+        # Ausnahme abfängt und als Wert zurückgibt, endete der Task danach
+        # NORMAL — und der `:DOWN`-Zweig archivierte Audio, das nie
+        # transkribiert wurde. Jetzt reist der Ausgang mit.
+        send(puffer, {:transcribe_ergebnis, self(), ergebnis})
       end)
 
     Process.monitor(pid)
@@ -917,38 +944,112 @@ defmodule Worker.Recording.AudioBuffer do
   # `audio_dir` entfernen. `audio_done_dir` gesetzt → dorthin verschieben
   # (Rohaudio bleibt erhalten); `nil` → löschen. Rename fällt bei FS-Grenzen
   # (EXDEV, z.B. tmpfs → Disk) auf cp+rm zurück. Public für Unit-Tests.
-  def archive_session_audio(session_id) do
+  #
+  # Issue #1054: `offene_keys` sind die Spuren, die NICHT transkribiert werden
+  # konnten. Ihre Dateien bleiben liegen, alles andere wandert ins Archiv —
+  # damit findet der Wiederherstellungs-Lauf (`Recovery`) beim nächsten
+  # Durchgang genau die offenen Spuren vor und wiederholt nur sie. Ohne diese
+  # Feinheit hiesse „nicht archivieren" zwangsläufig „alles noch einmal
+  # transkribieren", also ein doppeltes Protokoll.
+  def archive_session_audio(session_id, offene_keys \\ []) do
     src = Path.join(audio_dir(), session_id)
 
     if File.dir?(src) do
-      case done_dir() do
-        nil ->
+      {ins_archiv, bleibt} = Archivierung.aufteilen(File.ls!(src), offene_keys)
+      raeume_ab(session_id, src, ins_archiv)
+
+      case bleibt do
+        [] ->
+          # Nur wenn wirklich nichts mehr offen ist, verschwindet das
+          # Verzeichnis — sonst bliebe ein leerer Ordner stehen, den der
+          # Wiederherstellungs-Scan als „leer" einsortieren müsste.
           File.rm_rf(src)
-          Logger.info("AudioBuffer: session=#{session_id} Audio gelöscht (audio_done_dir=nil)")
 
-        dest_root when is_binary(dest_root) ->
-          File.mkdir_p!(dest_root)
-          dest = Path.join(dest_root, session_id)
-          File.rm_rf(dest)
-
-          case File.rename(src, dest) do
-            :ok ->
-              Retention.stamp_purge_after(dest, retention_days())
-              Logger.info("AudioBuffer: session=#{session_id} Audio archiviert → #{dest}")
-
-            {:error, reason} ->
-              Logger.warning(
-                "AudioBuffer: rename #{src} → #{dest} fehlgeschlagen (#{inspect(reason)}), copy-Fallback"
-              )
-
-              File.cp_r!(src, dest)
-              File.rm_rf(src)
-              Retention.stamp_purge_after(dest, retention_days())
-          end
+        offen ->
+          Logger.warning(
+            "AudioBuffer: session=#{session_id} — #{length(offen)} Datei(en) bleiben in " <>
+              "#{src} liegen (offene Spuren: #{Enum.join(offene_keys, ", ")}); der " <>
+              "Wiederherstellungs-Lauf nimmt sie beim nächsten Durchgang auf"
+          )
       end
     end
 
     :ok
+  end
+
+  defp raeume_ab(session_id, src, namen) do
+    case done_dir() do
+      nil ->
+        Enum.each(namen, &File.rm_rf(Path.join(src, &1)))
+
+        Logger.info(
+          "AudioBuffer: session=#{session_id} #{length(namen)} Datei(en) gelöscht (audio_done_dir=nil)"
+        )
+
+      dest_root when is_binary(dest_root) ->
+        dest = Path.join(dest_root, session_id)
+        File.mkdir_p!(dest)
+        Enum.each(namen, fn name -> verschiebe(Path.join(src, name), Path.join(dest, name)) end)
+        Retention.stamp_purge_after(dest, retention_days())
+
+        Logger.info(
+          "AudioBuffer: session=#{session_id} #{length(namen)} Datei(en) archiviert → #{dest}"
+        )
+    end
+  end
+
+  # Issue #1054: verschoben wird Datei für Datei, und das Ziel-Verzeichnis wird
+  # NIE vorab geleert. Vorher lief hier `File.rm_rf(dest)` gefolgt vom Rename
+  # des ganzen Ordners — solange eine Sitzung genau einmal archiviert wurde,
+  # war das harmlos. Mit dem zweiten Anlauf einer teilweise archivierten
+  # Sitzung wäre es Datenverlust im Archiv geworden: der erste Lauf hat dort
+  # die geglückten Spuren abgelegt, und der zweite hätte sie gelöscht, bevor er
+  # den Rest hinlegt.
+  defp verschiebe(von, nach) do
+    case File.rename(von, nach) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        # FS-Grenze (EXDEV, z.B. tmpfs → Disk): kopieren und die Quelle lösen.
+        Logger.warning(
+          "AudioBuffer: rename #{von} → #{nach} fehlgeschlagen (#{inspect(reason)}), copy-Fallback"
+        )
+
+        File.cp_r!(von, nach)
+        File.rm_rf(von)
+        :ok
+    end
+  end
+
+  # Issue #466/#467: Transkription fertig → Audio aus dem Live-`audio_dir`
+  # heraus archivieren (oder löschen), damit der Wiederherstellungs-Scan es
+  # nicht für einen Absturz hält und erneut transkribiert.
+  #
+  # Issue #1054: der Entscheid hängt seitdem am gemeldeten Ausgang, nicht am
+  # Ende-Grund allein — der ist nach einer abgefangenen Ausnahme `:normal` und
+  # taugte damit nicht als Beleg für Erfolg. Die Regeln stehen pur in
+  # `Archivierung.entscheide/2`.
+  defp entscheide_archivierung(session_id, reason, ergebnis) do
+    case Archivierung.entscheide(reason, ergebnis) do
+      :alles ->
+        archive_session_audio(session_id)
+
+      {:teilweise, offene_keys} ->
+        Logger.warning(
+          "AudioBuffer: session=#{session_id} unvollständig transkribiert — " <>
+            "#{length(offene_keys)} Spur(en) offen, ihr Audio bleibt in #{audio_dir()} liegen"
+        )
+
+        archive_session_audio(session_id, offene_keys)
+
+      :liegen_lassen ->
+        Logger.warning(
+          "AudioBuffer: Transcribe task for session=#{session_id} ohne verwertbaren Ausgang " <>
+            "(reason=#{inspect(reason)}, ergebnis=#{inspect(ergebnis)}) — Audio bleibt in " <>
+            "#{audio_dir()} für den Wiederherstellungs-Lauf"
+        )
+    end
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)

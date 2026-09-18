@@ -62,6 +62,17 @@ defmodule Worker.Recording.Stage1Status do
   # (kein strukturierter atom), daher Pattern-Match per `String.contains?`.
   def classify(msg) when is_binary(msg) do
     cond do
+      # Issue #1054: die beiden Klassen der Spur-Isolierung stehen GANZ vorn.
+      # Ihre Meldungen tragen den Grund der Ausnahme wörtlich mit, und der kann
+      # jedes der Stichwörter unten enthalten — dann verschwände die Aussage
+      # „eine einzelne Spur ist abgebrochen, die übrigen laufen" hinter einer
+      # Whisper-Klasse, die den Vorgang falsch beschreibt.
+      String.contains?(msg, "spuren_unvollstaendig") ->
+        "spuren_unvollstaendig"
+
+      String.contains?(msg, "spur_abgebrochen") ->
+        "spur_abgebrochen"
+
       String.contains?(msg, "Sidecar offline") ->
         "whisper_sidecar_offline"
 

@@ -953,6 +953,86 @@ erneut drei Anläufe. Das entspricht dem bisherigen Verhalten (der Bootpfad
 versuchte es immer erneut) und ist keine Verschlechterung — aber es ist auch
 kein dauerhaftes Aufgeben.
 
+### Eine abgebrochene Spur reißt die anderen nicht mehr mit (Issue #1054)
+
+Am 13.08.2026 starb die Transkription einer Aufnahme bei **Spur 2 von 18**. Die
+restlichen 16 wurden nie transkribiert, und das Audio wurde trotzdem als
+erledigt weggeräumt. Gerettet hat den Abend allein, dass ein Archiv-Verzeichnis
+gesetzt war — bei `audio_done_dir = nil` heißt Archivieren **löschen**, und der
+Mitschnitt wäre weg gewesen. Der auslösende Absturz (#1027) ist längst behoben;
+die Struktur dahinter wiederholte das Muster bei jeder künftigen Ausnahme.
+
+**Zwei Mechanismen griffen unglücklich ineinander.** Die Spuren liefen in einem
+blanken `Enum.map` ohne Absicherung um die einzelne Datei — die erste Ausnahme
+beendete die Schleife. Und der Fehlschlag wurde unterwegs in einen Erfolg
+verwandelt: die `GpuQueue` fängt jede Ausnahme im Job-Prozess ab und reicht sie
+als **Rückgabewert** weiter, der Task verwarf diesen Wert und endete damit
+**normal**. Der `:DOWN`-Zweig sah `:normal` und archivierte. Der `else`-Zweig
+daneben, der „Audio bleibt liegen für Crash-Recovery-Retry" verspricht, war für
+jede Ausnahme in der Transkription **toter Code** — erreichbar nur noch bei
+einem harten Kill von außen.
+
+**Gebaut sind drei Dinge:**
+
+- **Isolierung pro Spur** (`Worker.Recording.Transcribe.Spuren.isoliert/3`,
+  eigenes Modul aus demselben Grund wie `Transcribe.Confidence` #791: der
+  `Transcribe` steht an der 600-Zeilen-Grenze). Vorbild ist die Fehlerisolierung
+  pro Handlungsbogen (#838). **`catch` neben `rescue`** ist kein Zierrat: ein
+  `throw` oder `exit` erzeugte vorher **gar keinen** Fehlereintrag, nur die
+  Erfolgsmeldung der Warteschlange.
+- **Der Ausgang reist mit.** `run_mixed/3` liefert `:ok` oder
+  `{:teilweise, keys}`, der Task meldet ihn dem Puffer
+  (`{:transcribe_ergebnis, …}`), und `AudioBuffer.Archivierung.entscheide/2`
+  entscheidet daraus — nicht mehr aus dem Ende-Grund allein. Bei offenen Spuren
+  meldet Stufe 1 **nicht** „ended": im Dashboard stünde sonst „fertig" über
+  einem unvollständigen Transkript.
+- **Archiviert wird je Spur, nicht je Verzeichnis.** Die geglückten Spuren
+  wandern ins Archiv, die gescheiterten bleiben liegen.
+
+**Warum die letzte Feinheit den Ausschlag gibt.** Naheliegend wäre „sobald
+etwas schiefging, alles liegen lassen". Das wäre eine **Verschlechterung**: die
+Wiederherstellung (`Recovery.recover_files/2`) baut ihre Arbeitsliste aus den
+`.webm`-Dateien, die sie im Verzeichnis **vorfindet**. Läge alles noch da,
+transkribierte sie beim nächsten Durchgang auch die geglückten Spuren erneut —
+in einer Discord-Sitzung sind das hunderte Segmente (real gemessen: 651 Spuren
+in einer Sitzung), und jede erzeugte ihre Utterances ein zweites Mal. Aus einem
+Loch im Protokoll würde ein doppeltes Protokoll. So braucht die vorhandene
+Wiederherstellung **keine Zeile Änderung**: sie findet genau das Offene vor.
+
+**Fail-closed, wenn nichts gemeldet wurde.** Ein Task, der normal endet, ohne
+sein Ergebnis gemeldet zu haben, ist kein Beleg für Erfolg, sondern ein
+unbekannter Zustand — dann bleibt alles liegen. Das Risiko ist damit ein
+doppeltes Protokoll (sichtbar, korrigierbar) statt eines verlorenen Abends
+(unsichtbar, endgültig).
+
+**Fund im Bestand, im selben Zug behoben:** das Archivieren löschte das
+**Ziel**-Verzeichnis vorab (`File.rm_rf(dest)`) und benannte dann das
+Quellverzeichnis um. Solange eine Sitzung genau einmal archiviert wurde, war das
+harmlos; mit dem zweiten Anlauf einer teilweise archivierten Sitzung wäre es
+Datenverlust **im Archiv** geworden — der erste Lauf legt dort die geglückten
+Spuren ab, der zweite hätte sie gelöscht. Verschoben wird jetzt Datei für Datei,
+das Ziel wird nie geleert.
+
+**Sichtbar** sind zwei neue Klassen in `/admin/errors` (Stage `stage1`):
+`spur_abgebrochen` je Spur und `spuren_unvollstaendig` als Abschluss-Befund über
+die Sitzung — letzterer nennt die Zahl der offenen Spuren und sagt zu, dass das
+Audio liegen bleibt. Beide stehen in `Stage1Status.classify/1` **ganz vorn**:
+ihre Meldungen tragen den Grund der Ausnahme wörtlich mit, und der kann jedes
+Stichwort der übrigen Zweige enthalten.
+
+**Ehrliche Grenzen.** Der Transkriptions-Pfad ist ohne Whisper, GPU und
+Mnesia-Sitzung **nicht end-to-end fahrbar** — geprüft sind die pure
+Entscheidungslogik, die echte Dateibewegung und per Quelltext-Wächter die
+Stellen, an denen die Verdrahtung still bricht (`self()` vor der Closure, die
+Meldung an den Puffer, der Entscheid über die pure Regel). Dass eine echte
+Ausnahme in einer echten Spur so durchläuft, zeigt erst der nächste Vorfall.
+Der „automatische zweite Anlauf" ist der bestehende 15-Minuten-Scan aus #1055
+mit seinen drei Versuchen; sein Zähler lebt im Arbeitsspeicher, ein Neustart
+setzt ihn zurück. Und die vom Ticket mitgeführten kleineren Funde bleiben
+**offen**: ein leeres Whisper-Ergebnis gilt weiterhin als Erfolg, es gibt
+keinen Abgleich „so viele Audio-Dateien, so viele Utterances", und das
+Whisper-Zeitlimit hängt nicht an der Spurlänge.
+
 ### Deploy-Gate: aktive Aufnahme erkennen (Issue #703)
 
 Ein Auto-Deploy restartet den Prod-Hub mitten in einer laufenden Session-
