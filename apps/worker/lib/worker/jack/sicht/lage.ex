@@ -76,7 +76,15 @@ defmodule Worker.Jack.Sicht.Lage do
       "kompaktierungen" => 0,
       "ende" => nil,
       "letzte" => [],
-      "bestand_start" => nil
+      "bestand_start" => nil,
+      # Bezugspunkt der Kachel „neu in diesem Lauf": der Bestand zu Beginn des
+      # AKTUELLEN Durchgangs, nicht des ganzen Laufs. Gegen `bestand_start`
+      # gerechnet zeigte sie im Erstlauf zwangsläufig dieselbe Zahl wie die
+      # Kachel daneben (Maintainer, 18.09.2026). Je Durchgang gerechnet ist sie
+      # die Zahl, an der die Sättigung hängt: zwei Durchgänge ohne neue Aussage
+      # beenden die Verifikation (#1207).
+      "durchgang_start" => nil,
+      "durchgang_nr" => nil
     }
   end
 
@@ -103,14 +111,44 @@ defmodule Worker.Jack.Sicht.Lage do
   @spec stand(t(), map()) :: {t(), [map()]}
   def stand(%__MODULE__{} = l, abbild) do
     l = %{l | stand: abbild}
+    bestand? = Map.has_key?(abbild, "bestand")
 
-    if l.lauf["start"] && is_nil(l.lauf["bestand_start"]) && Map.has_key?(abbild, "bestand") do
-      l = put_in(l.lauf["bestand_start"], abbild["bestand"])
+    l =
+      cond do
+        l.lauf["start"] && is_nil(l.lauf["bestand_start"]) && bestand? ->
+          lauf_setzen(l, %{
+            "bestand_start" => abbild["bestand"],
+            "durchgang_start" => abbild["bestand"],
+            "durchgang_nr" => abbild["durchgang"]
+          })
+
+        bestand? && durchgang_neu?(l, abbild) ->
+          lauf_setzen(l, %{
+            "durchgang_start" => abbild["bestand"],
+            "durchgang_nr" => abbild["durchgang"]
+          })
+
+        true ->
+          l
+      end
+
+    if l.lauf["durchgang_nr"] == abbild["durchgang"] && bestand? &&
+         l.lauf["durchgang_start"] == abbild["bestand"] do
       stempeln(l, [%{"art" => "stand", "stand" => abbild}, lauf_nachricht(l, false)])
     else
       stempeln(l, [%{"art" => "stand", "stand" => abbild}])
     end
   end
+
+  # Ein Durchgang ist neu, sobald der Halter eine andere Nummer meldet. `nil`
+  # zählt nicht: Resümee-, Epos- und Chronik-Jack führen keinen Durchgang, ihr
+  # Abbild darf den Bezugspunkt nicht verschieben.
+  defp durchgang_neu?(l, abbild) do
+    nr = abbild["durchgang"]
+    is_integer(nr) and nr != l.lauf["durchgang_nr"]
+  end
+
+  defp lauf_setzen(l, werte), do: %{l | lauf: Map.merge(l.lauf, werte)}
 
   @doc "Ein Ereignis der Laufzeit."
   @spec ereignis(t(), map()) :: {t(), [map()]}

@@ -165,9 +165,20 @@ function zeichnen(){
 
 function faktenKacheln(s,l){
   const gel=abdeckung(s), j=s.journal||{};
-  const neuHier=(l.bestand_start!=null&&s.bestand!=null)?s.bestand-l.bestand_start:null;
+  // Bezugspunkt ist der Beginn des AKTUELLEN Durchgangs (durchgang_start),
+  // nicht der des Laufs: gegen den Lauf gerechnet zeigte die Kachel im
+  // Erstlauf dieselbe Zahl wie ihre Nachbarin. Aeltere Staende ohne das
+  // Feld fallen auf bestand_start zurueck.
+  const bezug=(l.durchgang_start!=null)?l.durchgang_start:l.bestand_start;
+  const neuHier=(bezug!=null&&s.bestand!=null)?s.bestand-bezug:null;
+  // „verifiziert" = in mehr als einem Durchgang unabhaengig wiedergefunden,
+  // Verworfene zaehlen nicht — dieselbe Regel wie `mehrfach_gefunden` in
+  // Worker.Jack.Abschluss (abschluss.ex:142). Das ist die Ausbeute der
+  // Verifikationsdurchgaenge: in Durchgang 1 steht sie zu Recht auf 0.
+  const verifiziert=(s.aussagen||[]).filter(a=>!a._verworfen&&(a._bestaetigt||0)>1).length;
   return kachel(s.bestand??0,'Aussagen im Bestand')+
     (s.phase===2&&neuHier!=null?kachel(neuHier,'neu in diesem Lauf',neuHier>0?'ok':''):'')+
+    kachel(verifiziert,'verifiziert',verifiziert>0?'ok':'')+
     // Wie schauen.py: gezählt wird abgelehnt.jsonl (Felder, Beleg, Gerüst). Der
     // Zähler `abgelehnt` im Stand zählt dazu die GUID- und Entscheidungsfehler.
     kachel(j['abgelehnt.jsonl']||0,'Ablehnungen',(j['abgelehnt.jsonl']||0)>0?'warn':'')+
