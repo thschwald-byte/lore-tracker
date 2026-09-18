@@ -10,7 +10,9 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
 
   alias Worker.Jack.Chronik.Entwurf
 
-  defp fakten(ids), do: MapSet.new(ids)
+  # Die Karte kurze ID -> echte ID. In den Tests sind beide gleich, damit die
+  # Erwartungen lesbar bleiben; die Übersetzung selbst prüft `notizen_test`.
+  defp fakten(ids), do: Map.new(ids, &{&1, &1})
 
   defp anlegen!(e, p, bekannt \\ ["f1", "f2", "f3"]) do
     assert {:ok, neu, _} = Entwurf.anlegen(e, p, fakten(bekannt))
@@ -25,6 +27,85 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
       "wichtigkeit" => "phase",
       "zeit_bezug" => bezug
     }
+  end
+
+  describe "kurze ID hinein, echte ID gespeichert" do
+    # Der Eintrag trägt die inhaltsadressierte ID — sonst zeigte er nach dem
+    # nächsten Regenerate stumm auf andere Fakten (Review vom 18.09.2026: bis
+    # dahin wurde die kurze Positions-ID gespeichert, entgegen der Doku).
+    test "der Eintrag speichert die echte ID, die Antwort nennt die kurze" do
+      karte = %{"S1-F1" => "f_9c1e", "S1-F2" => "f_77ab"}
+      assert {:ok, [e], _} = Entwurf.anlegen([], phase("Auftrag", ["S1-F1", "S1-F2"]), karte)
+      assert e.fakt_ids == ["f_9c1e", "f_77ab"]
+      refute "S1-F1" in e.fakt_ids
+    end
+
+    test "die Eintrags-ID hängt an den echten Fakten — dieselben Fakten, dieselbe ID" do
+      a = %{"S1-F1" => "f_9c1e"}
+      b = %{"S3-F7" => "f_9c1e"}
+      assert {:ok, [ea], _} = Entwurf.anlegen([], phase("A", ["S1-F1"]), a)
+      assert {:ok, [eb], _} = Entwurf.anlegen([], phase("B", ["S3-F7"]), b)
+      assert ea.id == eb.id
+    end
+
+    test "„liegt schon in“ nennt die kurze ID, die das Modell kennt" do
+      karte = %{"S1-F1" => "f_9c1e"}
+      {:ok, vorher, _} = Entwurf.anlegen([], phase("A", ["S1-F1"]), karte)
+      assert {:error, m} = Entwurf.anlegen(vorher, phase("B", ["S1-F1"]), karte)
+      assert m =~ "S1-F1 (liegt in"
+      refute m =~ "f_9c1e"
+    end
+  end
+
+  describe "zeit_bezug ist eine Liste (18.09.2026)" do
+    test "gleichzeitig mit A und nach B in einem Eintrag" do
+      {:ok, vorher, _} = Entwurf.anlegen([], phase("A", ["f1"]), fakten(["f1"]))
+      {:ok, vorher, _} = Entwurf.anlegen(vorher, phase("B", ["f2"]), fakten(["f2"]))
+      [a, b] = vorher
+
+      bezuege = [
+        %{"art" => "gleichzeitig_mit", "ziel" => a.id},
+        %{"art" => "nach", "ziel" => b.id}
+      ]
+
+      assert {:ok, [_, _, x], _} =
+               Entwurf.anlegen(vorher, phase("X", ["f3"], bezuege), fakten(["f3"]))
+
+      assert x.zeit_bezug == bezuege
+    end
+
+    test "isoliert wird zur leeren Liste, eine einzelne Map wird angenommen" do
+      assert {:ok, [e], _} =
+               Entwurf.anlegen([], phase("A", ["f1"], %{"art" => "isoliert"}), fakten(["f1"]))
+
+      assert e.zeit_bezug == []
+
+      assert {:ok, [e2], _} = Entwurf.anlegen([], phase("A", ["f1"], []), fakten(["f1"]))
+      assert e2.zeit_bezug == []
+    end
+
+    test "ein falsches Element lehnt die ganze Liste ab — mit dem Grund" do
+      {:ok, vorher, _} = Entwurf.anlegen([], phase("A", ["f1"]), fakten(["f1"]))
+      [a] = vorher
+
+      bezuege = [
+        %{"art" => "nach", "ziel" => a.id},
+        %{"art" => "vor", "ziel" => "chr-gibts-nicht"}
+      ]
+
+      assert {:error, m} = Entwurf.anlegen(vorher, phase("X", ["f2"], bezuege), fakten(["f2"]))
+      assert m =~ "chr-gibts-nicht"
+      assert m =~ "leere Liste"
+    end
+
+    test "streichen scheitert, wenn ein Bezug in einer Liste auf den Eintrag zeigt" do
+      {:ok, vorher, _} = Entwurf.anlegen([], phase("A", ["f1"]), fakten(["f1"]))
+      [a] = vorher
+      bezuege = [%{"art" => "gleichzeitig_mit", "ziel" => a.id}]
+      {:ok, beide, _} = Entwurf.anlegen(vorher, phase("X", ["f2"], bezuege), fakten(["f2"]))
+      assert {:error, m} = Entwurf.streichen(beide, %{"id" => a.id, "grund" => "test"})
+      assert m =~ "bezieh"
+    end
   end
 
   describe "anlegen" do
@@ -67,7 +148,7 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
       p = phase("X", ["f1"], %{"art" => "nach", "ziel" => "gibtsnicht"})
       assert {:error, m} = Entwurf.anlegen([], p, fakten(["f1"]))
       assert m =~ "gibtsnicht"
-      assert m =~ "isoliert"
+      assert m =~ "leere Liste"
     end
 
     test "absolut braucht eine Zeitangabe und verlangt keine Umrechnung" do
@@ -155,7 +236,7 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
                })
 
       geaendert = Enum.find(neu, &(&1.id == b.id))
-      assert geaendert.zeit_bezug == %{"art" => "nach", "ziel" => a.id}
+      assert geaendert.zeit_bezug == [%{"art" => "nach", "ziel" => a.id}]
       assert geaendert.text == b.text
       assert m =~ "eingeordnet"
     end
@@ -182,7 +263,8 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
                })
 
       k = Enum.find(neu, &(&1.id == "chr-k"))
-      assert k.zeit_bezug["ziel"] == a.id
+      assert [%{"ziel" => ziel}] = k.zeit_bezug
+      assert ziel == a.id
       assert k.text == "Text"
     end
 

@@ -95,10 +95,17 @@ defmodule Worker.Jack.Chronik.Lesen do
   defp kuratiert(%{kuratiert?: true}), do: ", VOM SPIELLEITER KURATIERT (nicht streichen)"
   defp kuratiert(_), do: ""
 
-  defp bezug(%{"art" => "isoliert"}), do: "ohne"
-  defp bezug(%{"art" => "absolut", "zeit" => z}), do: "absolut, #{z}"
-  defp bezug(%{"art" => a, "ziel" => z}), do: "#{a} #{z}"
-  defp bezug(_), do: "ohne"
+  # Die Bezüge als Text — beide gespeicherten Formen über die eine Lesestelle.
+  defp bezug(wert) do
+    case Ordnung.bezuege(wert) do
+      [] -> "ohne"
+      liste -> Enum.map_join(liste, "; ", &einer/1)
+    end
+  end
+
+  defp einer(%{"art" => "absolut", "zeit" => z}), do: "absolut, #{z}"
+  defp einer(%{"art" => a, "ziel" => z}), do: "#{a} #{z}"
+  defp einer(_), do: "ohne"
 
   defp gekuerzt(text) when byte_size(text) <= 200, do: text
   defp gekuerzt(text), do: binary_part(text, 0, 200) <> " …"

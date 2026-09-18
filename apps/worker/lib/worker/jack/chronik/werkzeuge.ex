@@ -12,8 +12,9 @@ defmodule Worker.Jack.Chronik.Werkzeuge do
     * **Schreiben** (voller Aufbau) und **Verfeinerung** (Normalbetrieb):
       dieselben Werkzeuge. Der Unterschied liegt im Auftrag und im Bestand,
       nicht im Werkzeugkasten — die Verfeinerung findet Einträge vor und
-      schreibt sie fort, der Aufbau legt sie an. `notiz` gibt es hier nicht;
-      die Notizen stammen aus dem Überblick, und die Verfeinerung hat keinen.
+      schreibt sie fort, der Aufbau legt sie an. `notiz` gibt es hier nur für
+      NICHT_ZEITLEISTE (und OFFEN); die Gruppen stammen aus dem Überblick,
+      und die Verfeinerung hat keinen.
     * **Durchsicht**: die Lesebasis, `chronik`, `durchsicht`,
       `eintrag_bestaetigen`, `eintrag_ersetzen` und `fertig`. Kein
       `chronik_eintrag` — angelegt wird hier nichts mehr.
@@ -33,7 +34,11 @@ defmodule Worker.Jack.Chronik.Werkzeuge do
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
 
   @eigen_ueberblick ~w(chronik notiz notizen_lesen fertig)
-  @eigen_schreiben ~w(chronik notizen_lesen chronik_eintrag eintrag_ergaenzen
+  # `notiz` auch im Schreiben und in der Verfeinerung: dort nur, um Geschehen
+  # begründet aus der Zeitleiste herauszuhalten (NICHT_ZEITLEISTE) — sonst
+  # zwänge `fertig()` es in eine Phase. Die Verfeinerung hat keinen Überblick,
+  # aus dem so ein Ausschluss sonst käme.
+  @eigen_schreiben ~w(chronik notiz notizen_lesen chronik_eintrag eintrag_ergaenzen
                       eintrag_einordnen eintrag_streichen fertig)
   @eigen_durchsicht ~w(chronik notizen_lesen durchsicht eintrag_bestaetigen
                        eintrag_ersetzen eintrag_ergaenzen eintrag_einordnen fertig)

@@ -8,7 +8,9 @@ defmodule Worker.Jack.Chronik.AbschlussTest do
   alias Worker.Jack.Chronik.Abschluss
   alias Worker.Jack.Resuemee.Stand
 
-  defp fakt(id, typ \\ "ereignis"), do: %{id: id, typ: typ}
+  # `fakt_id` ist die echte ID; in den Tests gleich der kurzen, damit die
+  # Erwartungen lesbar bleiben. Die Übersetzung prüft notizen_test eigens.
+  defp fakt(id, typ \\ "ereignis"), do: %{id: id, fakt_id: id, typ: typ}
 
   defp eintrag(id, fakt_ids, wichtigkeit \\ "phase") do
     %{
@@ -32,6 +34,49 @@ defmodule Worker.Jack.Chronik.AbschlussTest do
       eintraege: eintraege,
       chronik: chronik
     }
+  end
+
+  # Eine Notiz unter NICHT_ZEITLEISTE, wie der Überblick sie hinterlässt.
+  defp ausserhalb(fakt_ids) do
+    %{
+      abschnitt: "NICHT_ZEITLEISTE",
+      schluessel: "würfel",
+      zeile: "Mechanik",
+      fakten: fakt_ids,
+      boegen: []
+    }
+  end
+
+  describe "begründet ausserhalb (NICHT_ZEITLEISTE)" do
+    test "ein ausgeschlossenes Geschehen hält das Schreiben nicht auf" do
+      s = %{
+        stand([fakt("f1"), fakt("f2")], [eintrag("chr-a", ["f1"])])
+        | notizen: [ausserhalb(["f2"])]
+      }
+
+      assert Abschluss.hindernisse(s) == []
+    end
+
+    test "der Trichter zählt es getrennt von verschluckt" do
+      s = %{
+        stand([fakt("f1"), fakt("f2"), fakt("f3")], [eintrag("chr-a", ["f1"])])
+        | notizen: [ausserhalb(["f2"])]
+      }
+
+      t = Abschluss.trichter(s)
+      assert t["fakten_ausserhalb"] == 1
+      assert t["fakten_ohne_eintrag"] == 1
+      assert t["fakten_ereignis"] == 3
+    end
+
+    test "ein Zustand unter NICHT_ZEITLEISTE zählt nicht als ausserhalb — er war nie drin" do
+      s = %{
+        stand([fakt("f1"), fakt("welt", "zustand")], [eintrag("chr-a", ["f1"])])
+        | notizen: [ausserhalb(["welt"])]
+      }
+
+      assert Abschluss.trichter(s)["fakten_ausserhalb"] == 0
+    end
   end
 
   describe "Hindernisse" do

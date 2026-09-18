@@ -64,6 +64,11 @@ defmodule Worker.Jack.Resuemee.Mitschnitte do
       " Im Epos-Kapitel dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die " <>
         "Fakten."
 
+  defp zum_verstehen(%{art: :chronik}),
+    do:
+      " In der Chronik dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die " <>
+        "Fakten."
+
   defp zum_verstehen(_s),
     do: " Im Resümee dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die Fakten."
 

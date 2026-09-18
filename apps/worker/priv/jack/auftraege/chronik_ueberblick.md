@@ -57,22 +57,55 @@ einer Zeitleiste hat es nichts verloren. Solche Fakten tragen die Art
 Du **liest und gruppierst**, du schreibst noch nichts.
 
 Geh die Fakten der Kampagne durch — es sind **{{anzahl_fakten}}** — und
-notiere dir mit `notiz()`, welche Abschnitte der Handlung du siehst. Für jeden
-Abschnitt:
+gruppiere sie mit `notiz()` zu den Abschnitten der Handlung.
 
-- ein **Schlüssel**, unter dem du ihn wiedererkennst (`insel-auftrag`,
-  `tod-kodex`),
-- eine **Zeile**, die sagt, worum es geht,
-- die **Fakten**, die dazugehören,
-- die **Wichtigkeit**: `phase` oder `schluesselszene`.
+**Dein Ziel: Am Ende liegt jedes Geschehen in genau einer Gruppe.** Das ist
+die Aufgabe, nicht bloß eine Bedingung am Schluss. Ein Geschehen, das du in
+keiner Gruppe unterbringst, wäre aus der Zeitleiste verschwunden — und von
+aussen sähe das genauso aus wie ein gut gebündelter Abschnitt. Deshalb zählt
+jeder einzelne. Was du dabei bündelst, bleibt dir überlassen: zwanzig
+Abschnitte für hunderte Fakten sind das Ziel, nicht hundert Abschnitte.
+
+Ausgenommen sind **Zustände** — dauerhaftes Weltwissen ohne Zeitpunkt. Sie
+dürfen in einer Phase aufgehen, müssen aber nicht; du erkennst sie an ihrer
+Art `zustand`.
+
+**Nicht alles, was als Geschehen dasteht, gehört in eine Zeitleiste.**
+Würfelmechanik, ein Gespräch am Tisch ohne Folge für die Handlung, ein
+Regelhinweis — so etwas bekommt keinen Eintrag und wird auch in keine Phase
+gezwängt. Leg es unter `NICHT_ZEITLEISTE` ab, mit den Fakten und einer
+Begründung in der Zeile. Dann gilt es als behandelt. Was in der Handlung
+geschieht, gehört dagegen in eine Phase — auch wenn es klein ist.
+
+Jede Gruppe ist eine `notiz()` mit:
+
+- einem **Abschnitt**: `PHASEN` für einen Abschnitt der Handlung,
+  `SCHLUESSELSZENEN` für das, was die Kampagne oder die Welt verändert (Tod
+  einer Spielerfigur, Krieg, Seuche, Epochenereignis), `NICHT_ZEITLEISTE`
+  für Geschehen, das keinen Platz in der Zeit hat. Der Abschnitt ist
+  zugleich die Wichtigkeit des späteren Eintrags — ein eigenes Feld dafür
+  gibt es nicht.
+- einem **Schlüssel**, unter dem du sie wiedererkennst (`insel-auftrag`,
+  `tod-kodex`). Derselbe Schlüssel erneut geschrieben ersetzt die Gruppe —
+  so nimmst du später Fakten hinzu.
+- einer **Zeile**, die sagt, worum es geht,
+- den **Fakten**, die dazugehören.
+
+Daneben steht `OFFEN` für Stellen, an denen die Fakten zum Verstehen nicht
+reichen; dort schlägt das Schreiben nach. Eine OFFEN-Notiz braucht keine
+Fakten.
 
 Nutze `fakten()`, `fakt()`, `suche_bisher()` und die übrigen Werkzeuge, um zu
 verstehen, was zusammengehört. Die Handlungsbögen (`boegen_kampagne()`) sind
 ein guter Ausgangspunkt — aber ein Bogen ist nicht dasselbe wie eine Phase: Ein
 Bogen kann sich über die ganze Kampagne ziehen und mehrere Phasen enthalten.
 
-**`fertig()` lehnt ab, solange ein Geschehen in keiner Gruppe liegt.** Zustände
-zählen nicht mit. Die Ablehnung nennt dir die offenen Fakten beim Namen.
+**So kommst du ans Ziel:** Leg zuerst die Abschnitte an, die du siehst. Dann
+ruf `notizen_lesen()` — es sagt dir, wie viele Geschehen noch in keiner
+Gruppe liegen. Ordne sie zu, bis keines mehr offen ist: in eine bestehende
+Gruppe (denselben Schlüssel erneut schreiben, mit der längeren Faktenliste),
+in eine neue — oder begründet unter `NICHT_ZEITLEISTE`. `fertig()` nennt dir die offenen Fakten beim
+Namen, falls doch noch welche übrig sind.
 
 ## Wie hier gearbeitet wird
 

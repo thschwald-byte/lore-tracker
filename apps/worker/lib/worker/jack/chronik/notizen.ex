@@ -14,6 +14,15 @@ defmodule Worker.Jack.Chronik.Notizen do
     * **SCHLUESSELSZENEN** — was die Kampagne oder die Welt verändert und
       deshalb einen eigenen Eintrag bekommt: der Tod einer Spielerfigur, ein
       Krieg, eine Seuche, ein Epochenereignis. Gleiche Form wie eine Phase.
+    * **NICHT_ZEITLEISTE** — Geschehen, das in keine Zeitleiste gehört
+      (Würfelmechanik, Tischgespräch ohne Handlungsfolge, ein Ereignis ohne
+      Platz in der Zeit), mit Begründung in der Zeile. Diese Fakten gelten
+      als **behandelt**, werden aber nie ein Eintrag. Ohne diesen Abschnitt
+      zwang `fertig()` Jack, jedes Geschehen irgendwo unterzubringen — also
+      auch das, was nicht hineingehört (Maintainer, 18.09.2026: das Werkzeug
+      soll verhindern, dass er Sachen hinschreibt, die nicht in die Timeline
+      gehören). Der Trichter zählt sie getrennt (`fakten_ausserhalb`), damit
+      „bewusst draussen" von „verschluckt" unterscheidbar bleibt.
     * **OFFEN** — wo die Fakten zum Verstehen nicht reichen; dort schlägt das
       Schreiben nach. Braucht keine Fakten.
 
@@ -49,6 +58,7 @@ defmodule Worker.Jack.Chronik.Notizen do
   alias Worker.Jack.Resuemee.Notizen, as: Mechanik
 
   @gruppen ~w(PHASEN SCHLUESSELSZENEN)
+  @ausserhalb "NICHT_ZEITLEISTE"
 
   @type ergebnis :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
 
@@ -66,10 +76,13 @@ defmodule Worker.Jack.Chronik.Notizen do
             "dem EIN Chronik-Eintrag wird — ein ganzer Auftrag von der Annahme bis zur " <>
             "Abrechnung, nicht zwölf Ereignisse), SCHLUESSELSZENEN (was die Kampagne oder " <>
             "die Welt verändert und deshalb einen eigenen Eintrag bekommt: Tod einer " <>
-            "Spielerfigur, Krieg, Seuche, Epochenereignis), OFFEN (wo die Fakten zum " <>
-            "Verstehen nicht reichen; braucht keine Fakten). Der Abschnitt ist zugleich die " <>
-            "Wichtigkeit des späteren Eintrags. Jedes Geschehen gehört in höchstens eine " <>
-            "Gruppe.",
+            "Spielerfigur, Krieg, Seuche, Epochenereignis), NICHT_ZEITLEISTE (Geschehen, das in " <>
+            "keine Zeitleiste gehört — Würfelmechanik, Tischgespräch ohne Handlungsfolge; die " <>
+            "Zeile ist die Begründung; diese Fakten gelten als behandelt und werden nie ein " <>
+            "Eintrag), OFFEN (wo die Fakten zum Verstehen nicht reichen; braucht keine " <>
+            "Fakten). Der Abschnitt ist zugleich die Wichtigkeit des späteren Eintrags. Jedes " <>
+            "Geschehen gehört in höchstens eine Gruppe — oder unter NICHT_ZEITLEISTE, nicht " <>
+            "beides.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -82,7 +95,7 @@ defmodule Worker.Jack.Chronik.Notizen do
                   "abschnitt" => %{
                     "type" => "string",
                     "enum" => Stand.abschnitte(:chronik),
-                    "description" => "PHASEN, SCHLUESSELSZENEN oder OFFEN"
+                    "description" => "PHASEN, SCHLUESSELSZENEN, NICHT_ZEITLEISTE oder OFFEN"
                   },
                   "schluessel" => %{
                     "type" => "string",
@@ -134,9 +147,9 @@ defmodule Worker.Jack.Chronik.Notizen do
 
   defp lesen_beschreibung(%Stand{}),
     do:
-      "Gibt die Notizen aus dem Überblick zurück (PHASEN, SCHLUESSELSZENEN, OFFEN) — die " <>
-        "Gruppierung, aus der die Chronik-Einträge werden. Nutze es, wenn du nicht mehr " <>
-        "weißt, welche Abschnitte du gesehen hast."
+      "Gibt die Notizen zurück (PHASEN, SCHLUESSELSZENEN, NICHT_ZEITLEISTE, OFFEN) — die " <>
+        "Gruppierung aus dem Überblick und was begründet draussen bleibt. Nutze es, wenn " <>
+        "du nicht mehr weißt, welche Abschnitte du gesehen hast."
 
   # ─── notiz ────────────────────────────────────────────────────────────
 
@@ -181,6 +194,11 @@ defmodule Worker.Jack.Chronik.Notizen do
          "#{a}/#{k}: der Abschnitt nennt keinen Fakt. Eine Phase fasst Geschehen zusammen " <>
            "— nenn ihre IDs in `fakten`."}
 
+      a == @ausserhalb and fakten == [] ->
+        {:fehler,
+         "#{a}/#{k}: kein Fakt genannt. Nenn in `fakten`, was du aus der Zeitleiste " <>
+           "heraushältst, und in der Zeile, warum."}
+
       doppelt != nil ->
         {fakt, wo} = doppelt
 
@@ -197,12 +215,12 @@ defmodule Worker.Jack.Chronik.Notizen do
   # Der erste Fakt, der schon in einer ANDEREN Gruppe liegt — samt ihrem
   # Schlüssel. Der Eintrag unter demselben Schlüssel zählt nicht mit: ihn
   # ersetzt dieser Aufruf gerade.
-  defp doppelt(_s, a, _k, _fakten) when a not in @gruppen, do: nil
+  defp doppelt(_s, a, _k, _fakten) when a not in @gruppen and a != @ausserhalb, do: nil
 
   defp doppelt(s, _a, k, fakten) do
     belegt =
       for n <- s.notizen,
-          n.abschnitt in @gruppen,
+          n.abschnitt in @gruppen or n.abschnitt == @ausserhalb,
           n.schluessel != k,
           id <- n.fakten,
           into: %{},
@@ -237,8 +255,26 @@ defmodule Worker.Jack.Chronik.Notizen do
   die offenen Geschehen rechnet — dieselbe Menge, gegen die `fertig` prüft.
   """
   @spec gruppiert(Stand.t()) :: [String.t()]
-  def gruppiert(%Stand{notizen: notizen}),
-    do: for(n <- notizen, n.abschnitt in @gruppen, id <- n.fakten, uniq: true, do: id)
+  def gruppiert(%Stand{} = s), do: echt(s, @gruppen)
+
+  @doc "Die ECHTEN IDs der Fakten unter NICHT_ZEITLEISTE — begründet draussen."
+  @spec ausgeschlossen(Stand.t()) :: [String.t()]
+  def ausgeschlossen(%Stand{} = s), do: echt(s, [@ausserhalb])
+
+  # Die Notizen halten die kurzen IDs (das Gespräch mit dem Modell); der
+  # Abgleich mit Einträgen und Trichter läuft auf den echten. Eine kurze ID
+  # ohne Fakt (kann nach dem Prüfen in `pruefen/4` nicht vorkommen) fällt weg.
+  defp echt(%Stand{notizen: notizen, fakten: fakten}, abschnitte) do
+    karte = Map.new(fakten, &{&1.id, &1.fakt_id})
+
+    for n <- notizen,
+        n.abschnitt in abschnitte,
+        kurz <- n.fakten,
+        echt = karte[kurz],
+        echt != nil,
+        uniq: true,
+        do: echt
+  end
 
   @doc "Die Notizen der beiden Gruppen-Abschnitte."
   @spec gruppen(Stand.t()) :: [map()]
@@ -250,7 +286,8 @@ defmodule Worker.Jack.Chronik.Notizen do
     offen = Worker.Jack.Chronik.Abschluss.offene_geschehen(s)
     {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
 
-    "#{length(phasen)} Phasen, #{length(szenen)} Schlüsselszenen; " <>
+    "#{length(phasen)} Phasen, #{length(szenen)} Schlüsselszenen, " <>
+      "#{length(ausgeschlossen(s))} Fakten begründet ausserhalb; " <>
       case offen do
         [] -> "jedes Geschehen liegt in einer Gruppe."
         ids -> "noch #{length(ids)} Geschehen ohne Gruppe."
@@ -297,8 +334,10 @@ defmodule Worker.Jack.Chronik.Notizen do
         "Chronik der Kampagne. Bestand: #{length(s.chronik)} Einträge.",
         "Fakten: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
           noch_ungelesen(Stand.ungelesen(s)),
-        "PHASEN: #{length(phasen)}, SCHLUESSELSZENEN: #{length(szenen)}.",
-        "Geschehen in einer Gruppe: #{geschehen - length(offen)} von #{geschehen}."
+        "PHASEN: #{length(phasen)}, SCHLUESSELSZENEN: #{length(szenen)}, " <>
+          "NICHT_ZEITLEISTE: #{length(ausgeschlossen(s))} Fakten.",
+        "Geschehen behandelt (in einer Gruppe oder begründet ausserhalb): " <>
+          "#{geschehen - length(offen)} von #{geschehen}."
       ],
       "\n"
     )

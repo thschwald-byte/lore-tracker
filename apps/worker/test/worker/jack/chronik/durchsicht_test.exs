@@ -22,7 +22,36 @@ defmodule Worker.Jack.Chronik.DurchsichtTest do
     }
   end
 
-  defp stand(eintraege), do: %Stand{art: :chronik, lauf: :durchsicht, eintraege: eintraege}
+  # Der Stand kennt die Fakten f1..f3 — kurze und echte ID gleich, damit die
+  # Erwartungen lesbar bleiben; das Ersetzen übersetzt seit dem ID-Fix über
+  # diese Karte und lehnt Unbekanntes ab.
+  defp stand(eintraege) do
+    fakten = for id <- ~w(f1 f2 f3), do: %{id: id, fakt_id: id, typ: "ereignis"}
+    %Stand{art: :chronik, lauf: :durchsicht, eintraege: eintraege, fakten: fakten}
+  end
+
+  describe "IDs beim Ersetzen und in der Anzeige" do
+    test "ersetzen lehnt eine Fakt-ID ab, die es nicht gibt — Regel 1 gilt auch hier" do
+      s = stand([e("chr-a")])
+
+      assert {_s, {:error, m}} =
+               ruf(s, "eintrag_ersetzen", %{
+                 "nummer" => 1,
+                 "titel" => "T",
+                 "text" => "neu",
+                 "fakt_ids" => ["f9"],
+                 "wichtigkeit" => "phase",
+                 "grund" => "Test"
+               })
+
+      assert m =~ "gibt es nicht"
+    end
+
+    test "ein Fakt, den es nicht mehr gibt, wird in der Vorlage als solcher gezeigt" do
+      assert {:ok, t} = Durchsicht.vorlage(stand([e("chr-a", fakt_ids: ["f1", "f_alt"])]), 1)
+      assert t =~ "f_alt (nicht mehr im Bestand)"
+    end
+  end
 
   describe "vorlegen" do
     test "zeigt den Eintrag mit allem, was zum Urteilen nötig ist" do

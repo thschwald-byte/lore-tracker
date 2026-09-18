@@ -90,6 +90,12 @@ und `eintrag_ergaenzen()` geht.
 **Wiederhol dich nicht.** Beim vierten gleichen Aufruf passiert nichts mehr,
 beim sechsten wird der Lauf abgebrochen.
 
+**Nicht jedes Geschehen gehört in eine Zeitleiste.** Würfelmechanik, ein
+Gespräch am Tisch ohne Folge für die Handlung, ein Regelhinweis — das bekommt
+keinen Eintrag und wird in keine Phase gezwängt: leg es mit `notiz()` unter
+`NICHT_ZEITLEISTE` ab, mit den Fakten und der Begründung in der Zeile. Dann
+gilt es als behandelt.
+
 **`fertig()` lehnt ab, solange ein Geschehen in keinem Eintrag liegt** — und
 nennt dir die offenen Fakten. Zustände zählen nicht mit.
 

@@ -123,6 +123,13 @@ defmodule Worker.Jack.Resuemee.Lesen do
 
   defp boegen_zweck(%Stand{art: :epos}), do: "Sie sind die Grundlage deiner Szenen."
 
+  # Der Chronik-Jack (#1211) hat kein fertig(ausgelassen) und schreibt kein
+  # Resümee — ohne eigene Klausel bekäme er hier eine Regel des Resümee-Jack
+  # genannt (Fund des Reviews vom 18.09.2026).
+  defp boegen_zweck(%Stand{art: :chronik}),
+    do:
+      "Ein Bogen kann mehrere Phasen der Chronik umfassen; er ist ein Ausgangspunkt, keine Phase."
+
   defp boegen_zweck(%Stand{lauf: :schreiben}),
     do:
       "Jeder Bogen der Art arc kommt im Resümee vor oder steht begründet in fertig(ausgelassen)."
@@ -318,6 +325,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
             "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Deine Szenen nennen " <>
             "diese Titel, wie sie hier stehen."
+
+        {:chronik, _} ->
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Ein Bogen kann " <>
+            "mehrere Phasen der Chronik umfassen."
 
         {_, :schreiben} ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder kommt " <>

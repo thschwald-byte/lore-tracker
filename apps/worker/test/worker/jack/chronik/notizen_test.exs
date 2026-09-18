@@ -21,7 +21,7 @@ defmodule Worker.Jack.Chronik.NotizenTest do
   alias Worker.Jack.Chronik.{Abschluss, Notizen}
   alias Worker.Jack.Resuemee.Stand
 
-  defp fakt(id, typ \\ "ereignis"), do: %{id: id, typ: typ}
+  defp fakt(id, typ \\ "ereignis"), do: %{id: id, fakt_id: "echt-" <> id, typ: typ}
 
   defp stand(fakten, notizen \\ []) do
     %Stand{
@@ -140,6 +140,82 @@ defmodule Worker.Jack.Chronik.NotizenTest do
         ])
 
       assert [%{abschnitt: "OFFEN"}] = s.notizen
+    end
+  end
+
+  describe "NICHT_ZEITLEISTE — begründet draussen (Maintainer, 18.09.2026)" do
+    test "ohne Fakten wird der Ausschluss abgelehnt" do
+      s = stand([fakt("f1")])
+
+      {_s, {:error, antwort}} =
+        notieren(s, [
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "würfel",
+            "zeile" => "Mechanik",
+            "fakten" => [],
+            "boegen" => []
+          }
+        ])
+
+      assert Jason.encode!(antwort) =~ "kein Fakt genannt"
+    end
+
+    test "ein ausgeschlossener Fakt gilt als behandelt — fertig lässt durch" do
+      s = stand([fakt("f1"), fakt("f2")])
+
+      {s, {:ok, _}} =
+        notieren(s, [
+          phase("a", ["f1"]),
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "würfel",
+            "zeile" => "Probenmechanik ohne Handlungsfolge",
+            "fakten" => ["f2"],
+            "boegen" => []
+          }
+        ])
+
+      assert Abschluss.offene_geschehen(s) == []
+      assert Abschluss.ausserhalb(s) == ["echt-f2"]
+      assert Abschluss.hindernisse(s) == []
+    end
+
+    test "ein Fakt kann nicht zugleich in einer Gruppe und draussen liegen" do
+      s = stand([fakt("f1")])
+      {s, {:ok, _}} = notieren(s, [phase("a", ["f1"])])
+
+      {_s, {:error, antwort}} =
+        notieren(s, [
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "x",
+            "zeile" => "Grund",
+            "fakten" => ["f1"],
+            "boegen" => []
+          }
+        ])
+
+      assert Jason.encode!(antwort) =~ "liegt schon in"
+    end
+  end
+
+  describe "kurze IDs im Gespräch, echte im Abgleich" do
+    test "die Notizen halten die kurzen IDs, gruppiert/1 liefert die echten" do
+      s = stand([fakt("f1"), fakt("f2")])
+      {s, {:ok, _}} = notieren(s, [phase("a", ["f1", "f2"])])
+
+      assert [%{fakten: ["f1", "f2"]}] = s.notizen
+      assert Notizen.gruppiert(s) == ["echt-f1", "echt-f2"]
+    end
+
+    test "die Ablehnung nennt dem Modell die kurze ID, nicht die echte" do
+      s = stand([fakt("f1"), fakt("f2")])
+      {s, {:ok, _}} = notieren(s, [phase("a", ["f1"])])
+
+      assert [m] = Abschluss.hindernisse(s)
+      assert m =~ "f2"
+      refute m =~ "echt-f2"
     end
   end
 

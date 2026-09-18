@@ -167,6 +167,65 @@ defmodule Worker.Jack.Chronik.OrdnungTest do
     end
   end
 
+  describe "mehrere Bezüge je Eintrag (Liste, 18.09.2026)" do
+    test "gleichzeitig mit A UND nach B — vorher nicht ausdrückbar" do
+      assert {:ok, %{reihenfolge: r}} =
+               Ordnung.ordne([
+                 e("b"),
+                 e("a"),
+                 e("x", [gleichzeitig("a"), nach("b")])
+               ])
+
+      # x steht mit a in einer Klasse, und die Klasse liegt nach b.
+      assert r == [["b"], ["a", "x"]]
+    end
+
+    test "dieselben Bezüge in anderer Reihenfolge angegeben ergeben dieselbe Ordnung" do
+      hin =
+        Ordnung.ordne([
+          e("b"),
+          e("a"),
+          e("x", [gleichzeitig("a"), nach("b")]),
+          e("c", [vor("b")])
+        ])
+
+      her =
+        Ordnung.ordne([
+          e("c", [vor("b")]),
+          e("x", [nach("b"), gleichzeitig("a")]),
+          e("a"),
+          e("b")
+        ])
+
+      assert hin == her
+    end
+
+    test "mehr Kanten, mehr Kreise: der Befund nennt sie" do
+      assert {:zyklus, ids} =
+               Ordnung.ordne([
+                 e("a", [nach("b")]),
+                 e("b", [nach("c")]),
+                 e("c", [nach("a"), vor("z")]),
+                 e("z")
+               ])
+
+      assert ids == ["a", "b", "c"]
+    end
+
+    test "die alte Ein-Map-Form wird weiter gelesen" do
+      assert Ordnung.ordne([e("x", nach("y")), e("y")]) ==
+               Ordnung.ordne([e("x", [nach("y")]), e("y")])
+    end
+
+    test "bezuege/1 normalisiert: Map, Liste, isoliert, Unfug" do
+      assert Ordnung.bezuege(nil) == []
+      assert Ordnung.bezuege(%{"art" => "isoliert"}) == []
+      assert Ordnung.bezuege([%{"art" => "isoliert"}, nach("y")]) == [nach("y")]
+      assert Ordnung.bezuege(nach("y")) == [nach("y")]
+      assert Ordnung.bezuege("kaputt") == []
+    end
+  end
+
   describe "Ränder" do
     test "keine Einträge" do
       assert {:ok, %{reihenfolge: [], verwaist: []}} = Ordnung.ordne([])

@@ -1669,6 +1669,47 @@ seitdem der **ganze Weg** (notieren → Ablehnung → vollständig zuordnen →
 Abschluss, `chronik/notizen_test.exs`). Kein bestehender Test hat die
 Ablehnung je erreicht.
 
+**Drei Korrekturen aus dem ersten Review der gerenderten Aufträge (18.09.2026),
+alle vor dem zweiten Lauf gebaut:**
+
+- **Der Eintrag speichert die ECHTEN Fakt-IDs.** Jack kennt Fakten nur als
+  `S1-F12` (Position im Bestand); bis zum Review speicherten die Werkzeuge
+  genau diese kurze Form — entgegen dem Moduledoc der Eingabe, das das
+  Gegenteil behauptete, und ohne einen Test, der die Formen unterschied. Nach
+  einem Regenerate hätte jeder Eintrag stumm auf andere Fakten gezeigt (die
+  K6-Klasse). Jetzt übersetzt `Entwurf.fakt_ids/2` an genau EINER Stelle in
+  die inhaltsadressierte ID; zurück in die kurze übersetzen nur die Anzeige
+  der Durchsicht und die Ablehnungen (das Modell kennt nur die kurze). Die
+  Eintrags-ID (`chr-<sha1 der sortierten echten IDs>`) ist damit über Läufe
+  stabil, solange die Fakten es sind.
+- **`zeit_bezug` ist eine LISTE.** „Gleichzeitig mit A und nach B" war mit
+  einem Bezug nicht sagbar. `Ordnung.bezuege/1` ist die eine Lesestelle für
+  beide Formen (eine gespeicherte Map wird zur Ein-Element-Liste, `isoliert`
+  zur leeren Liste) — Bestand bleibt lesbar, geschrieben wird die Liste.
+  Der Sortierer war schon ein Graph (Union-Find + Kahn), die Liste ändert
+  nur den Kantenbau; weil dadurch mehr Kreise möglich sind, meldet
+  `{:zyklus, ids}` seitdem nur den **Kern** (Knoten auf einem Kreis), nicht
+  den Anhang dahinter. Permutationstest: dieselben Bezüge in anderer
+  Reihenfolge ergeben dieselbe Ordnung.
+- **`NICHT_ZEITLEISTE`** (Notiz-Abschnitt, in allen drei Läufen): Geschehen,
+  das in keine Zeitleiste gehört (Würfelmechanik, Tischgespräch ohne
+  Handlungsfolge), legt Jack mit Begründung dort ab; es gilt als behandelt,
+  wird nie ein Eintrag, und der Trichter zählt es als `fakten_ausserhalb` —
+  getrennt von `fakten_ohne_eintrag`, damit „bewusst draussen" von
+  „verschluckt" unterscheidbar bleibt. Ohne den Abschnitt zwang `fertig()`
+  Jack, alles irgendwo unterzubringen — also auch das, was nicht hineingehört
+  (Maintainer-Anweisung). Dazu haben die **geteilten Werkzeugbeschreibungen**
+  (`bloecke`, `block`, `boegen`) jetzt Chronik-Klauseln — vorher nannten sie
+  dem Chronik-Jack das Resümee und ein `fertig(ausgelassen)`, das er nicht
+  hat: dieselbe Klasse wie der `notiz`-Defekt.
+
+**Offen aus demselben Review:** `eintrag_ergaenzen` hängt Text an; werden
+die Fakten einer Sitzung neu extrahiert und umformuliert, gelten sie als
+offen, und die Phase wird ein zweites Mal geschrieben. Provenienz je
+Textsegment ist eigene Arbeit. **Kein Eval gegen synthetische Seeds**
+(Maintainer, 18.09.2026): Referenz ist seattleV5 bzw. der gesicherte
+Teststage-Stand.
+
 **Gemessene Laufzeit der Pipeline** (seattleV5 S1, 2.168 Utterances, 746
 Blöcke, 112 Fakten, `qwen3.8:27b-text`, Teststage): **5,78 h** für den ganzen
 Lauf. Davon Jacks Verifikation 2,6 h (6 Durchgänge, 46 %), Extraktion 47 min,

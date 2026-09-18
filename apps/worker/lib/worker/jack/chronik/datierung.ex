@@ -89,7 +89,9 @@ defmodule Worker.Jack.Chronik.Datierung do
   defp feste_punkte(geordnet, cal, anker) do
     aus_absolut =
       for e <- geordnet,
-          %{"art" => "absolut", "zeit" => z} <- [e.zeit_bezug],
+          # Der erste absolute Bezug des Eintrags datiert ihn; ein zweiter
+          # wäre ein Widerspruch, den die Datierung nicht entscheidet.
+          %{"art" => "absolut", "zeit" => z} <- Enum.take(absolute(e), 1),
           {:ok, ymd} <- [Calendar.parse(cal, z)],
           into: %{} do
         {e.id,
@@ -134,6 +136,12 @@ defmodule Worker.Jack.Chronik.Datierung do
         acc
     end
   end
+
+  defp absolute(e),
+    do:
+      e.zeit_bezug
+      |> Worker.Jack.Chronik.Ordnung.bezuege()
+      |> Enum.filter(&(&1["art"] == "absolut"))
 
   defp letzter_fester(geordnet, feste, bereich) do
     bereich

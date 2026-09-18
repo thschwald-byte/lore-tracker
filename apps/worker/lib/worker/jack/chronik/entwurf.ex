@@ -48,6 +48,7 @@ defmodule Worker.Jack.Chronik.Entwurf do
   """
 
   alias Worker.Jack.Chronik.Ordnung
+  alias Worker.Jack.Resuemee.Stand
 
   @arten ~w(phase schluesselszene)
 
@@ -63,24 +64,24 @@ defmodule Worker.Jack.Chronik.Entwurf do
           required(:text) => String.t(),
           required(:fakt_ids) => [String.t()],
           required(:wichtigkeit) => String.t(),
-          required(:zeit_bezug) => map(),
+          required(:zeit_bezug) => [map()],
           required(:kuratiert?) => boolean(),
           required(:kuratierter_text) => String.t() | nil,
           required(:neu?) => boolean()
         }
 
   @doc """
-  Legt einen Eintrag an. `bekannte_fakten` ist die Menge der Fakt-IDs, die es
+  Legt einen Eintrag an. `bekannte_fakten` ist die Karte kurze ID -> echte ID der Fakten, die es
   gibt; `eintraege` der bisherige Stand des Laufs.
   """
-  @spec anlegen([eintrag()], map(), MapSet.t()) ::
+  @spec anlegen([eintrag()], map(), %{String.t() => String.t()}) ::
           {:ok, [eintrag()], String.t()} | {:error, String.t()}
   def anlegen(eintraege, p, bekannte_fakten) do
     with {:ok, titel} <- text_feld(p, "titel"),
          {:ok, text} <- text_feld(p, "text"),
          {:ok, wichtigkeit} <- wichtigkeit(p),
-         {:ok, fakt_ids} <- fakten(p, bekannte_fakten),
-         :ok <- fakten_frei(fakt_ids, eintraege, nil),
+         {:ok, fakt_ids} <- fakt_ids(p, bekannte_fakten),
+         :ok <- fakten_frei(fakt_ids, eintraege, nil, umgekehrt(bekannte_fakten)),
          {:ok, bezug} <- bezug(p, eintraege, nil) do
       neu = %{
         id: neue_id(titel, fakt_ids),
@@ -106,13 +107,13 @@ defmodule Worker.Jack.Chronik.Entwurf do
   des Spielleiters auf der Strecke, und bei einem eigenen verlöre Jack, was
   er im selben Lauf schon geschrieben hat.
   """
-  @spec ergaenzen([eintrag()], map(), MapSet.t()) ::
+  @spec ergaenzen([eintrag()], map(), %{String.t() => String.t()}) ::
           {:ok, [eintrag()], String.t()} | {:error, String.t()}
   def ergaenzen(eintraege, p, bekannte_fakten) do
     with {:ok, e, rest} <- finden(eintraege, p),
          {:ok, text} <- text_feld(p, "text"),
-         {:ok, neue_fakten} <- fakten(p, bekannte_fakten),
-         :ok <- fakten_frei(neue_fakten, rest, e.id) do
+         {:ok, neue_fakten} <- fakt_ids(p, bekannte_fakten),
+         :ok <- fakten_frei(neue_fakten, rest, e.id, umgekehrt(bekannte_fakten)) do
       dazu = Enum.reject(neue_fakten, &(&1 in e.fakt_ids))
 
       erweitert = %{
@@ -186,12 +187,19 @@ defmodule Worker.Jack.Chronik.Entwurf do
 
   # ─── Regeln ─────────────────────────────────────────────────────────
 
-  defp fakten(p, bekannte) do
+  # `bekannte` ist die Karte kurze ID -> echte ID (`bekannte/1`). Das Modell
+  # nennt die kurzen (`S1-F12`, eine Position im Bestand); gespeichert wird die
+  # echte, inhaltsadressierte — sonst zeigte jeder Eintrag nach dem nächsten
+  # Regenerate stumm auf andere Fakten (die K6-Klasse; genau so war es bis
+  # zum ersten Review am 18.09.2026, entgegen dem Moduledoc der Eingabe).
+  @doc "Die `fakt_ids` eines Aufrufs geprüft und in echte IDs übersetzt."
+  @spec fakt_ids(map(), %{String.t() => String.t()}) :: {:ok, [String.t()]} | {:error, String.t()}
+  def fakt_ids(p, bekannte) do
     case Map.get(p, "fakt_ids") do
       ids when is_list(ids) ->
-        case Enum.reject(ids, &MapSet.member?(bekannte, &1)) do
+        case Enum.reject(ids, &Map.has_key?(bekannte, &1)) do
           [] ->
-            {:ok, Enum.uniq(ids)}
+            {:ok, ids |> Enum.map(&Map.fetch!(bekannte, &1)) |> Enum.uniq()}
 
           fehlend ->
             {:error,
@@ -207,7 +215,7 @@ defmodule Worker.Jack.Chronik.Entwurf do
     end
   end
 
-  defp fakten_frei(ids, eintraege, eigene_id) do
+  defp fakten_frei(ids, eintraege, eigene_id, kurz) do
     doppelt =
       for e <- eintraege,
           e.id != eigene_id,
@@ -220,7 +228,11 @@ defmodule Worker.Jack.Chronik.Entwurf do
         :ok
 
       _ ->
-        liste = doppelt |> Enum.map(fn {f, id} -> "#{f} (liegt in #{id})" end) |> Enum.join(", ")
+        # Dem Modell die kurze ID nennen, die es kennt — die echte sagt ihm nichts.
+        liste =
+          doppelt
+          |> Enum.map(fn {f, id} -> "#{Map.get(kurz, f, f)} (liegt in #{id})" end)
+          |> Enum.join(", ")
 
         {:error,
          "Diese Fakten liegen schon in einem anderen Eintrag: #{liste}. " <>
@@ -228,6 +240,8 @@ defmodule Worker.Jack.Chronik.Entwurf do
            "Zeitstrahl. Nimm sie hier heraus, oder schreibe den anderen Eintrag fort."}
     end
   end
+
+  defp umgekehrt(karte), do: Map.new(karte, fn {kurz, echt} -> {echt, kurz} end)
 
   defp wichtigkeit(p) do
     case Map.get(p, "wichtigkeit") do
@@ -243,8 +257,41 @@ defmodule Worker.Jack.Chronik.Entwurf do
     end
   end
 
+  # Seit dem Review vom 18.09.2026 eine LISTE: „gleichzeitig mit A und nach B“
+  # war mit einem Bezug nicht sagbar. Eine einzelne Map nimmt das Werkzeug
+  # weiter an (ein Modell, das die alte Form gelernt hat, scheitert nicht
+  # daran), `isoliert` wird zur leeren Liste. Jedes Element wird einzeln
+  # geprüft; die erste Ablehnung gewinnt.
   defp bezug(p, eintraege, eigene_id) do
     case Map.get(p, "zeit_bezug") do
+      liste when is_list(liste) ->
+        liste
+        |> Enum.reduce_while({:ok, []}, fn b, {:ok, acc} ->
+          case einer(b, eintraege, eigene_id) do
+            {:ok, %{"art" => "isoliert"}} -> {:cont, {:ok, acc}}
+            {:ok, bezug} -> {:cont, {:ok, [bezug | acc]}}
+            {:error, _} = fehler -> {:halt, fehler}
+          end
+        end)
+        |> case do
+          {:ok, acc} -> {:ok, acc |> Enum.reverse() |> Enum.uniq()}
+          fehler -> fehler
+        end
+
+      %{} = einer ->
+        bezug(Map.put(p, "zeit_bezug", [einer]), eintraege, eigene_id)
+
+      _ ->
+        {:error,
+         "zeit_bezug fehlt oder ist keine Liste. Gib die Bezüge als Liste an — jeder mit " <>
+           "art \"nach\", \"vor\" oder \"gleichzeitig_mit\" (je mit ziel) oder " <>
+           "\"absolut\" (mit zeit); die leere Liste heisst ohne Bezug. Sag, was wovor " <>
+           "geschah — den Tag rechnen wir."}
+    end
+  end
+
+  defp einer(b, eintraege, eigene_id) do
+    case b do
       %{"art" => art} = b when art in ["nach", "vor", "gleichzeitig_mit"] ->
         ziel = Map.get(b, "ziel")
 
@@ -260,7 +307,7 @@ defmodule Worker.Jack.Chronik.Entwurf do
           not Enum.any?(eintraege, &(&1.id == ziel)) ->
             {:error,
              "Den Eintrag #{ziel} gibt es nicht. chronik() nennt die vorhandenen; " <>
-               "ohne Bezug nimm \"isoliert\"."}
+               "ohne Bezug gib die leere Liste."}
 
           true ->
             {:ok, %{"art" => art, "ziel" => ziel}}
@@ -282,9 +329,9 @@ defmodule Worker.Jack.Chronik.Entwurf do
 
       _ ->
         {:error,
-         "zeit_bezug fehlt oder hat eine unbekannte art. Erlaubt sind: \"nach\", " <>
-           "\"vor\", \"gleichzeitig_mit\" (je mit ziel), \"absolut\" (mit zeit) " <>
-           "und \"isoliert\". Sag, was wovor geschah — den Tag rechnen wir."}
+         "Ein Bezug hat eine unbekannte art. Erlaubt sind: \"nach\", \"vor\", " <>
+           "\"gleichzeitig_mit\" (je mit ziel) und \"absolut\" (mit zeit); ohne Bezug " <>
+           "gib die leere Liste. Sag, was wovor geschah — den Tag rechnen wir."}
     end
   end
 
@@ -323,11 +370,14 @@ defmodule Worker.Jack.Chronik.Entwurf do
   defp verweise(eintraege, id), do: eintraege |> verweisende(id) |> Enum.join(", ")
 
   defp verweisende(eintraege, id),
-    do: for(e <- eintraege, Map.get(e.zeit_bezug, "ziel") == id, do: e.id)
+    do:
+      for(e <- eintraege, Enum.any?(Ordnung.bezuege(e.zeit_bezug), &(&1["ziel"] == id)), do: e.id)
 
   defp zusatz([]), do: ""
   defp zusatz(dazu), do: ", #{length(dazu)} Fakten dazu"
 
+  defp beschreibe([]), do: "ohne Bezug"
+  defp beschreibe(liste) when is_list(liste), do: Enum.map_join(liste, "; ", &beschreibe/1)
   defp beschreibe(%{"art" => "isoliert"}), do: "ohne Bezug"
   defp beschreibe(%{"art" => "absolut", "zeit" => z}), do: "auf #{z}"
   defp beschreibe(%{"art" => a, "ziel" => z}), do: "#{a} #{z}"
@@ -447,11 +497,21 @@ defmodule Worker.Jack.Chronik.Entwurf do
   # ausdrücken, ohne dass die Ablehnung zu „ungültig" verkümmert.
   defp bezug_schema do
     %{
+      "type" => "array",
+      "description" =>
+        "die Bezüge dieses Eintrags, so viele wie nötig — etwa gleichzeitig_mit A UND " <>
+          "nach B; die leere Liste heisst ohne Bezug",
+      "items" => bezug_element_schema()
+    }
+  end
+
+  defp bezug_element_schema do
+    %{
       "type" => "object",
       "properties" => %{
         "art" => %{
           "type" => "string",
-          "enum" => ~w(nach vor gleichzeitig_mit absolut isoliert)
+          "enum" => ~w(nach vor gleichzeitig_mit absolut)
         },
         "ziel" => %{"type" => "string"},
         "zeit" => %{"type" => "string"}
@@ -475,5 +535,12 @@ defmodule Worker.Jack.Chronik.Entwurf do
     end
   end
 
-  defp bekannte(s), do: MapSet.new(s.fakten, & &1.id)
+  # Kurze ID (wie fakten() sie nennt) -> echte, inhaltsadressierte Fakt-ID.
+  # Das ist die EINE Stelle, an der übersetzt wird; alles hinter dem Werkzeug
+  # rechnet mit echten IDs, s. `fakten/2`.
+  @doc "Die Karte kurze ID -> echte ID für einen Stand."
+  @spec karte(Stand.t()) :: %{String.t() => String.t()}
+  def karte(s), do: Map.new(s.fakten, &{&1.id, &1.fakt_id})
+
+  defp bekannte(s), do: karte(s)
 end

@@ -114,7 +114,9 @@ defmodule Worker.Jack.Chronik.Eingabe do
         text: e.markdown_body || e.summary || "",
         fakt_ids: e[:fakt_ids] || [],
         wichtigkeit: e[:wichtigkeit] || "phase",
-        zeit_bezug: e[:zeit_bezug] || %{"art" => "isoliert"},
+        # Beide gespeicherten Formen (Map bis 18.09.2026, seitdem Liste) auf
+        # die Liste — an der einen Lesestelle, nicht hier nachgebaut.
+        zeit_bezug: Worker.Jack.Chronik.Ordnung.bezuege(e[:zeit_bezug]),
         kuratiert?: kuratiert?(e),
         kuratierter_text: if(kuratiert?(e), do: e.markdown_body, else: nil),
         neu?: false

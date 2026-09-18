@@ -53,7 +53,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec hindernisse(Stand.t()) :: [String.t()]
   def hindernisse(%Stand{lauf: :ueberblick} = s) do
-    offen = offene_geschehen(s)
+    offen = kurz(s, offene_geschehen(s))
 
     cond do
       Notizen.gruppen(s) == [] ->
@@ -79,7 +79,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   end
 
   def hindernisse(%Stand{} = s) do
-    offen = Entwurf.offene_fakten(s.eintraege, ereignisse(s))
+    offen = Entwurf.offene_fakten(s.eintraege, ereignisse(s) -- ausserhalb(s))
 
     cond do
       s.eintraege == [] ->
@@ -91,7 +91,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
 
       offen != [] ->
         [
-          "Diese #{length(offen)} Fakten liegen in keinem Eintrag: #{liste(offen)}. " <>
+          "Diese #{length(offen)} Fakten liegen in keinem Eintrag: #{liste(kurz(s, offen))}. " <>
             "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es einen " <>
             "eigenen Eintrag bekommt: Nimm es in die Phase auf, zu der es gehört " <>
             "(eintrag_ergaenzen), oder lege die fehlende Phase an. Dauerhafte " <>
@@ -112,8 +112,8 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec offene_geschehen(Stand.t()) :: [String.t()]
   def offene_geschehen(%Stand{} = s) do
-    gruppiert = MapSet.new(Notizen.gruppiert(s))
-    for id <- ereignisse(s), not MapSet.member?(gruppiert, id), do: id
+    behandelt = MapSet.new(Notizen.gruppiert(s) ++ Notizen.ausgeschlossen(s))
+    for id <- ereignisse(s), not MapSet.member?(behandelt, id), do: id
   end
 
   @doc """
@@ -123,7 +123,19 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec ereignisse(Stand.t()) :: [String.t()]
   def ereignisse(%Stand{fakten: fakten}),
-    do: for(f <- fakten, Map.get(f, :typ) != "zustand", do: f.id)
+    do: for(f <- fakten, Map.get(f, :typ) != "zustand", do: f.fakt_id)
+
+  @doc """
+  Die ereignisförmigen Fakten, die Jack begründet aus der Zeitleiste
+  herausgehalten hat (Notiz-Abschnitt NICHT_ZEITLEISTE) — echte IDs. Sie
+  gelten als behandelt, ohne ein Eintrag zu sein, und der Trichter zählt sie
+  getrennt: „bewusst draussen" ist etwas anderes als „verschluckt".
+  """
+  @spec ausserhalb(Stand.t()) :: [String.t()]
+  def ausserhalb(%Stand{} = s) do
+    ereignisse = MapSet.new(ereignisse(s))
+    for id <- Notizen.ausgeschlossen(s), MapSet.member?(ereignisse, id), do: id
+  end
 
   @doc "Die Zahlen, die `fertig` im Überblick verlangt."
   @spec zahlen_ueberblick() :: [String.t()]
@@ -157,7 +169,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   """
   @spec ist_schreiben(Stand.t()) :: map()
   def ist_schreiben(%Stand{} = s) do
-    ereignisse = ereignisse(s)
+    ereignisse = ereignisse(s) -- ausserhalb(s)
     offen = Entwurf.offene_fakten(s.eintraege, ereignisse)
 
     %{
@@ -175,7 +187,8 @@ defmodule Worker.Jack.Chronik.Abschluss do
   @spec trichter(Stand.t()) :: map()
   def trichter(%Stand{} = s) do
     ereignisse = ereignisse(s)
-    offen = Entwurf.offene_fakten(s.eintraege, ereignisse)
+    ausserhalb = ausserhalb(s)
+    offen = Entwurf.offene_fakten(s.eintraege, ereignisse -- ausserhalb)
     {phasen, szenen} = Enum.split_with(s.eintraege, &(&1.wichtigkeit == "phase"))
 
     ordnung =
@@ -190,6 +203,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
         "fakten_ereignis" => length(ereignisse),
         "fakten_zustand" => length(s.fakten) - length(ereignisse),
         "fakten_ohne_eintrag" => length(offen),
+        "fakten_ausserhalb" => length(ausserhalb),
         "eintraege" => length(s.eintraege),
         "phasen" => length(phasen),
         "schluesselszenen" => length(szenen),
@@ -305,6 +319,12 @@ defmodule Worker.Jack.Chronik.Abschluss do
         {stand, Map.put(eintrag, "trichter", trichter(stand))}
       end
     })
+  end
+
+  # Echte IDs zurück in die kurzen, die fakten() dem Modell zeigt.
+  defp kurz(%Stand{fakten: fakten}, echte) do
+    karte = Map.new(fakten, &{&1.fakt_id, &1.id})
+    Enum.map(echte, &Map.get(karte, &1, &1))
   end
 
   defp liste(ids) when length(ids) <= 12, do: Enum.join(ids, ", ")

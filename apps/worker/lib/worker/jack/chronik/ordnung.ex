@@ -22,9 +22,15 @@ defmodule Worker.Jack.Chronik.Ordnung do
   und soll. Deshalb `{:zyklus, ids}` statt eines stillen Rückfalls — die
   Durchsicht legt ihm genau diese Knoten vor.
 
-  ## Die drei Bezüge
+  ## Die Bezüge
 
-  Ein Eintrag trägt `zeit_bezug`, eine Map mit `"art"`:
+  Ein Eintrag trägt `zeit_bezug`, eine **Liste** von Maps mit `"art"` (seit
+  dem Review vom 18.09.2026 — vorher genau eine Map, und „gleichzeitig mit A
+  und nach B“ war nicht ausdrückbar; die Liste jetzt ist ein Feld, später
+  wäre sie eine Migration über alle Einträge). Die leere Liste heisst
+  „isoliert“. `bezuege/1` ist die eine Stelle, die beide Formen liest — eine
+  gespeicherte Map aus der Zeit davor wird zur Ein-Element-Liste, ein
+  `isoliert`-Element fällt weg. Jedes Element:
 
     * `"nach"` / `"vor"` mit `"ziel"` (eine Eintrags-ID) — eine Kante.
     * `"gleichzeitig_mit"` mit `"ziel"` — **keine** Kante, sondern eine
@@ -97,7 +103,7 @@ defmodule Worker.Jack.Chronik.Ordnung do
   defp klassen_bilden(eintraege, ids) do
     paare =
       for e <- eintraege,
-          %{"art" => "gleichzeitig_mit", "ziel" => ziel} <- [bezug(e)],
+          %{"art" => "gleichzeitig_mit", "ziel" => ziel} <- bezuege_von(e),
           MapSet.member?(ids, ziel),
           do: {id(e), ziel}
 
@@ -123,9 +129,12 @@ defmodule Worker.Jack.Chronik.Ordnung do
   # Klasse (Jack sagt „gleichzeitig" UND „danach") fallen weg — sonst wäre die
   # Klasse ihr eigener Vorgänger und jede Gleichzeitigkeit ein Zyklus.
   defp kanten_bilden(eintraege, ids, klassen) do
-    Enum.reduce(eintraege, {MapSet.new(), []}, fn e, {kanten, verwaist} ->
-      case bezug(e) do
-        %{"art" => art, "ziel" => ziel} when art in ["nach", "vor"] ->
+    {kanten, verwaist} =
+      for e <- eintraege,
+          %{"art" => art, "ziel" => ziel} <- bezuege_von(e),
+          art in ["nach", "vor"],
+          reduce: {MapSet.new(), []} do
+        {kanten, verwaist} ->
           if MapSet.member?(ids, ziel) do
             a = vertreter(klassen, id(e))
             b = vertreter(klassen, ziel)
@@ -136,11 +145,9 @@ defmodule Worker.Jack.Chronik.Ordnung do
           else
             {kanten, [id(e) | verwaist]}
           end
-
-        _ ->
-          {kanten, verwaist}
       end
-    end)
+
+    {kanten, Enum.uniq(verwaist)}
   end
 
   # ─── Topologischer Sort (Kahn), deterministisch ─────────────────────
@@ -163,8 +170,12 @@ defmodule Worker.Jack.Chronik.Ordnung do
 
     case frei do
       [] ->
-        # Kein Knoten ohne Vorgänger, aber es sind welche übrig: Kreis.
-        {:zyklus, Enum.sort(offen)}
+        # Kein Knoten ohne Vorgänger, aber es sind welche übrig: Kreis. Gemeldet
+        # wird nur der KERN — Knoten, die auf einem Kreis liegen —, nicht alles,
+        # was dahinter hängt: ein Nachfolger des Kreises ist kein Widerspruch,
+        # und Jack soll korrigieren, was falsch ist, nicht, was nur wartet. Mit
+        # Bezugslisten (18.09.2026) gibt es mehr Kanten und damit mehr Anhang.
+        {:zyklus, offen |> Enum.filter(&im_kreis?(&1, offen, kanten)) |> Enum.sort()}
 
       _ ->
         rest = offen -- frei
@@ -175,6 +186,27 @@ defmodule Worker.Jack.Chronik.Ordnung do
           end)
 
         schritt(rest, kanten, eingang2, [frei | ausgabe])
+    end
+  end
+
+  # Liegt `start` auf einem Kreis? Erreichbar von sich selbst, über Kanten
+  # zwischen den noch offenen Knoten. Schlichte Maps statt MapSet, weil
+  # Dialyzer ein MapSet, das durch eine eigene Rekursion gereicht wird, als
+  # Opaque-Verstoss meldet — und ein `no_opaque`-Attribut hier nichts
+  # erklärte, was eine Map nicht genauso kann.
+  defp im_kreis?(start, offen, kanten) do
+    offen = Map.new(offen, &{&1, true})
+    nachfolger = fn n -> for {^n, m} <- kanten, Map.has_key?(offen, m), do: m end
+    suche(nachfolger.(start), start, nachfolger, %{})
+  end
+
+  defp suche([], _ziel, _nachfolger, _gesehen), do: false
+
+  defp suche([n | rest], ziel, nachfolger, gesehen) do
+    cond do
+      n == ziel -> true
+      Map.has_key?(gesehen, n) -> suche(rest, ziel, nachfolger, gesehen)
+      true -> suche(nachfolger.(n) ++ rest, ziel, nachfolger, Map.put(gesehen, n, true))
     end
   end
 
@@ -194,6 +226,19 @@ defmodule Worker.Jack.Chronik.Ordnung do
 
   defp id(%{"id" => id}) when is_binary(id), do: id
 
-  defp bezug(%{"zeit_bezug" => %{} = b}), do: b
-  defp bezug(_), do: %{}
+  defp bezuege_von(%{"zeit_bezug" => b}), do: bezuege(b)
+  defp bezuege_von(_), do: []
+
+  @doc """
+  Die Bezüge eines Eintrags als Liste — die EINE Lesestelle für beide
+  Formen: eine Liste bleibt, eine Map (Bestand von vor dem 18.09.2026) wird
+  zur Ein-Element-Liste, `isoliert` fällt weg, alles andere (`nil`, Unfug)
+  ist leer. Leere Liste heisst: ohne Bezug.
+  """
+  @spec bezuege(term()) :: [map()]
+  def bezuege(liste) when is_list(liste),
+    do: Enum.filter(liste, &(is_map(&1) and Map.get(&1, "art") not in [nil, "isoliert"]))
+
+  def bezuege(%{} = einer), do: bezuege([einer])
+  def bezuege(_), do: []
 end

@@ -118,7 +118,7 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @abschnitte ~w(FORM GLIEDERUNG OFFEN)
   @abschnitte_epos ~w(FORM SZENEN ABWEICHUNG OFFEN)
-  @abschnitte_chronik ~w(PHASEN SCHLUESSELSZENEN OFFEN)
+  @abschnitte_chronik ~w(PHASEN SCHLUESSELSZENEN NICHT_ZEITLEISTE OFFEN)
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
   @standard_woerter Shared.ResuemeeLaenge.standard()
@@ -329,8 +329,9 @@ defmodule Worker.Jack.Resuemee.Stand do
   Die Abschnitte der Notizen im Überblick: beim Resümee-Jack FORM,
   GLIEDERUNG, OFFEN; beim Epos-Jack (`:epos`, #1210) FORM, SZENEN,
   ABWEICHUNG, OFFEN; beim Chronik-Jack (`:chronik`, #1211) PHASEN,
-  SCHLUESSELSZENEN, OFFEN — dort ist der Abschnitt zugleich die
-  Wichtigkeit des Eintrags, den das Schreiben daraus anlegt.
+  SCHLUESSELSZENEN, NICHT_ZEITLEISTE, OFFEN — dort ist der Abschnitt
+  zugleich die Wichtigkeit des Eintrags, den das Schreiben daraus anlegt,
+  und NICHT_ZEITLEISTE hält fest, was begründet draussen bleibt.
 
   **Jede Art hat ihre eigene Klausel, es gibt keinen Auffangzweig.** Der gab
   es bis #1211, und er hat den Chronik-Jack gekostet: `abschnitte(:chronik)`

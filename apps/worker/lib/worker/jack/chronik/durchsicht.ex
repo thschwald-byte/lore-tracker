@@ -20,7 +20,7 @@ defmodule Worker.Jack.Chronik.Durchsicht do
   ihn fortschreiben und einordnen.
   """
 
-  alias Worker.Jack.Chronik.Lesen
+  alias Worker.Jack.Chronik.{Entwurf, Lesen, Ordnung}
   alias Worker.Jack.Resuemee.Stand
 
   @doc "Die Werkzeuge der Durchsicht."
@@ -85,7 +85,9 @@ defmodule Worker.Jack.Chronik.Durchsicht do
   Test ihn ohne Halter prüfen kann.
   """
   @spec vorlage(Stand.t(), pos_integer()) :: {:ok, String.t()} | {:error, String.t()}
-  def vorlage(%Stand{eintraege: eintraege}, nummer) do
+  def vorlage(%Stand{eintraege: eintraege} = s, nummer) do
+    kurz = s |> Entwurf.karte() |> Map.new(fn {k, echt} -> {echt, k} end)
+
     case Enum.at(eintraege, nummer - 1) do
       nil ->
         {:error,
@@ -97,7 +99,7 @@ defmodule Worker.Jack.Chronik.Durchsicht do
          "Eintrag #{nummer} von #{length(eintraege)}\n" <>
            "  [#{e.id}] #{e.titel}\n" <>
            "  Wichtigkeit: #{e.wichtigkeit}\n" <>
-           "  Fakten: #{fakten(e)}\n" <>
+           "  Fakten: #{fakten(e, kurz)}\n" <>
            "  Bezug: #{bezug(e.zeit_bezug)}#{kuratiert(e)}\n\n#{e.text}"}
     end
   end
@@ -133,16 +135,22 @@ defmodule Worker.Jack.Chronik.Durchsicht do
             "eintrag_einordnen() an eine andere Stelle."}}
 
       e ->
-        neu = %{
-          e
-          | titel: Map.get(p, "titel", e.titel),
-            text: Map.get(p, "text", e.text),
-            fakt_ids: Map.get(p, "fakt_ids", e.fakt_ids),
-            wichtigkeit: Map.get(p, "wichtigkeit", e.wichtigkeit)
-        }
+        case Entwurf.fakt_ids(p, Entwurf.karte(s)) do
+          {:error, m} ->
+            {s, {:error, m}}
 
-        s = %{s | eintraege: List.replace_at(s.eintraege, nummer - 1, neu)}
-        {erledigt(s, nummer, :ersetzt), {:ok, "Eintrag #{e.id} ersetzt."}}
+          {:ok, fakt_ids} ->
+            neu = %{
+              e
+              | titel: Map.get(p, "titel", e.titel),
+                text: Map.get(p, "text", e.text),
+                fakt_ids: fakt_ids,
+                wichtigkeit: Map.get(p, "wichtigkeit", e.wichtigkeit)
+            }
+
+            s = %{s | eintraege: List.replace_at(s.eintraege, nummer - 1, neu)}
+            {erledigt(s, nummer, :ersetzt), {:ok, "Eintrag #{e.id} ersetzt."}}
+        end
     end
   end
 
@@ -161,16 +169,30 @@ defmodule Worker.Jack.Chronik.Durchsicht do
     %{s | durchsicht: %{d | erledigt: Map.put(d.erledigt, nummer, art)}}
   end
 
-  defp fakten(%{fakt_ids: []}), do: "keine"
-  defp fakten(%{fakt_ids: ids}) when length(ids) <= 8, do: Enum.join(ids, ", ")
+  # Gespeichert sind echte IDs; gezeigt werden die kurzen, die das Modell aus
+  # fakten() kennt. Eine echte ID ohne kurze Form (der Fakt existiert nicht
+  # mehr — Regenerate) erscheint als solche, damit es auffällt.
+  defp fakten(%{fakt_ids: []}, _kurz), do: "keine"
 
-  defp fakten(%{fakt_ids: ids}),
-    do: (ids |> Enum.take(8) |> Enum.join(", ")) <> " und #{length(ids) - 8} weitere"
+  defp fakten(%{fakt_ids: ids}, kurz) do
+    namen = Enum.map(ids, &Map.get(kurz, &1, "#{&1} (nicht mehr im Bestand)"))
 
-  defp bezug(%{"art" => "isoliert"}), do: "ohne"
-  defp bezug(%{"art" => "absolut", "zeit" => z}), do: "absolut, #{z}"
-  defp bezug(%{"art" => a, "ziel" => z}), do: "#{a} #{z}"
-  defp bezug(_), do: "ohne"
+    if length(namen) <= 8,
+      do: Enum.join(namen, ", "),
+      else: (namen |> Enum.take(8) |> Enum.join(", ")) <> " und #{length(namen) - 8} weitere"
+  end
+
+  # Die Bezüge als Text — beide gespeicherten Formen über die eine Lesestelle.
+  defp bezug(wert) do
+    case Ordnung.bezuege(wert) do
+      [] -> "ohne"
+      liste -> Enum.map_join(liste, "; ", &einer/1)
+    end
+  end
+
+  defp einer(%{"art" => "absolut", "zeit" => z}), do: "absolut, #{z}"
+  defp einer(%{"art" => a, "ziel" => z}), do: "#{a} #{z}"
+  defp einer(_), do: "ohne"
 
   defp kuratiert(%{kuratiert?: true}),
     do: "\n  VOM SPIELLEITER KURATIERT — nicht ersetzen, nicht streichen"
