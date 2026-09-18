@@ -65,7 +65,7 @@ findest du Rückbezüge, ohne alles erneut zu lesen.
 Eintragen nachzusehen, ob eine Aussage wirklich dort steht.
 
 **`cast()`** — die Liste der bekannten handelnden Personen. Sie ist die einzige
-zulässige Quelle für das Feld `cast_match`.
+zulässige Quelle für das Feld `cast` einer Figur in `characters`.
 
 **`straenge()`** — die Liste der bereits bekannten Themen. Sie ist die Quelle
 für das Feld `threads`.
@@ -148,7 +148,7 @@ und du musst nicht in einer Richtung arbeiten. Dass du an einer späteren Stelle
 angekommen bist, heißt nicht, dass eine frühere erledigt ist.
 
 **Ruf zu Beginn einmal `cast()` und `straenge()` auf**, bevor du den ersten
-Block liest. Ohne sie kannst du weder `cast_match` noch `threads` sinnvoll
+Block liest. Ohne sie kannst du weder `characters` noch `threads` sinnvoll
 füllen.
 
 Vier Dinge musst du dabei wissen:

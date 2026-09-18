@@ -758,11 +758,10 @@ defmodule Worker.Repo.Threads do
       opened_in_session: List.first(numbers) || 0,
       last_touched_session: last_touched,
       sessions_touched: numbers,
+      # Issue #1066: alle Figuren eines Fakts, nicht nur die erstgenannte.
       entities:
         group
-        |> Enum.map(fn f ->
-          f |> Map.get("character_alias", "") |> to_string() |> String.trim()
-        end)
+        |> Enum.flat_map(&Worker.Recording.Pipeline.Parsing.fact_characters/1)
         |> Enum.reject(&(&1 == ""))
         |> Enum.uniq(),
       facts: group

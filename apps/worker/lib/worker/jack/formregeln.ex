@@ -20,10 +20,12 @@ defmodule Worker.Jack.Formregeln do
 
   alias Worker.Jack.{Felder, Stand}
 
-  @pflicht ~w(claim character cast_match narration_time time_anchor in_game_date fact_type
+  @pflicht ~w(claim characters narration_time time_anchor in_game_date fact_type
               threads source_refs beleg)
-  @textfeld ~w(claim character cast_match narration_time time_anchor in_game_date fact_type beleg)
-  @listenfeld ~w(threads source_refs)
+  @textfeld ~w(claim narration_time time_anchor in_game_date fact_type beleg)
+  # Issue #1066: `characters` ist eine Liste von Objekten — die Form der
+  # einzelnen Einträge prüft `figuren_fehler/2`, nicht die Listen-Regel.
+  @listenfeld ~w(characters threads source_refs)
   @enum_reihe ~w(narration_time time_anchor fact_type precision)
 
   @doc "Die Meldungen zur Form einer Aussage für das Werkzeug `werkzeug`, oder `[]`."
@@ -73,19 +75,41 @@ defmodule Worker.Jack.Formregeln do
 
   defp entscheidung_fehler(_f, _werkzeug), do: []
 
-  defp cast_fehler(s, f) do
-    character = if is_binary(f["character"]), do: f["character"], else: ""
-    cast = if is_binary(f["cast_match"]), do: f["cast_match"], else: ""
+  # Issue #1066: dieselben drei Prüfungen wie vorher, nur je Figur statt einmal
+  # je Aussage — und mit der Position im Text, weil „steht nicht in cast()" bei
+  # drei Figuren sonst nicht sagt, welche gemeint ist.
+  defp cast_fehler(_s, %{"characters" => figuren}) when not is_list(figuren), do: []
+
+  defp cast_fehler(s, %{"characters" => figuren}) do
+    figuren
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {figur, i} -> figuren_fehler(s, figur, i) end)
+  end
+
+  defp cast_fehler(_s, _f), do: []
+
+  defp figuren_fehler(_s, figur, i) when not is_map(figur),
+    do: [
+      "`characters[#{i}]` erwartet ein Objekt mit `name` und `cast`, bekommen #{js_typ(figur)}"
+    ]
+
+  defp figuren_fehler(s, figur, i) do
+    name = if is_binary(figur["name"]), do: figur["name"], else: ""
+    cast = if is_binary(figur["cast"]), do: figur["cast"], else: ""
+    wo = "`characters[#{i}]"
 
     [
-      String.contains?(character, "kein Cast") &&
-        "`character` = #{Jason.encode!(character)} benennt keine Figur. " <>
-          "Handelt in dieser Aussage niemand (Weltaussage), lass `character` leer (\"\").",
+      leer?(name) &&
+        "#{wo}.name` ist leer. Trag den Figurennamen ein, wie er im Text steht — " <>
+          "oder lass die ganze Liste leer (`[]`), wenn in dieser Aussage niemand handelt.",
+      String.contains?(name, "kein Cast") &&
+        "#{wo}.name` = #{Jason.encode!(name)} benennt keine Figur. " <>
+          "Handelt in dieser Aussage niemand (Weltaussage), lass `characters` leer (`[]`).",
       String.trim(cast) == Stand.alter_escape() &&
-        "`cast_match` = #{Jason.encode!(Stand.alter_escape())} gibt es nicht. " <>
+        "#{wo}.cast` = #{Jason.encode!(Stand.alter_escape())} gibt es nicht. " <>
           "Passt kein Eintrag aus cast(), lass das Feld leer (\"\").",
       (String.trim(cast) != Stand.alter_escape() and cast != "" and cast not in s.cast) &&
-        "`cast_match` = #{Jason.encode!(cast)} steht nicht in cast(). " <>
+        "#{wo}.cast` = #{Jason.encode!(cast)} steht nicht in cast(). " <>
           "Nimm einen Eintrag daraus in identischer Schreibweise, oder lass das " <>
           "Feld leer (\"\"), wenn keiner passt."
     ]

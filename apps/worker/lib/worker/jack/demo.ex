@@ -184,8 +184,7 @@ defmodule Worker.Jack.Demo do
   defp aussage(claim, wer, typ, faeden, refs, beleg) do
     %{
       "claim" => claim,
-      "character" => wer,
-      "cast_match" => wer,
+      "characters" => if(wer == "", do: [], else: [%{"name" => wer, "cast" => wer}]),
       "narration_time" => "present",
       "time_anchor" => "session",
       "in_game_date" => "",

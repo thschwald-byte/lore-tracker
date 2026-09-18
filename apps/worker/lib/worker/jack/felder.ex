@@ -3,6 +3,17 @@ defmodule Worker.Jack.Felder do
   Felder und erlaubte Werte einer Aussage, und die Parameter-Schemas für
   `aussage` und `aussage_entscheiden`.
 
+  **Issue #1066: eine Aussage kann mehrere Figuren tragen.** Bis dahin gab es
+  zwei Skalare (`character` + `cast_match`), und „Double Tap stabilisiert Lucky
+  mit dem Medkit“ konnte nur eine der beiden festhalten — an der Fable-Referenz
+  gemessen wären 42 von 419 Aussagen für eine Figurensicht unsichtbar gewesen,
+  bei Lucky jede fünfte. Jetzt ist es EIN Feld `characters`, eine Liste von
+  Objekten `%{"name", "cast"}`. **Eine Liste von Objekten, nicht zwei parallele
+  Listen:** das Werkzeug kann jede Form erzwingen, auch gleiche Länge — aber
+  nicht die ZUORDNUNG. Zwei gleich lange Listen mit vertauschter Reihenfolge
+  wären formal einwandfrei und semantisch still falsch; im Objekt ist das
+  strukturell unmöglich.
+
   Die Enums sind dieselben wie in der Pipeline (`Parsing`: `@narration_times`,
   `@precisions`, `@fact_types`) — ein Quelltext-Wächter hält beide gleich,
   denn J4 gibt Jacks Aussagen später an genau diese Normalisierung.
@@ -10,13 +21,16 @@ defmodule Worker.Jack.Felder do
   Die Schemas gehen durch `Worker.Agent.Werkzeug.neu/1` und werden dort streng
   (jedes Feld Pflicht, Pflicht-Texte nicht leer). Bewusste Ausnahmen:
 
-    * `character`, `cast_match` und `in_game_date` dürfen leer sein
-      (`minLength: 0`): eine Weltaussage hat keine Figur, eine Aussage ohne
-      Zeitausdruck kein Datum. Für `cast_match` hat der Spike den Escape-Wert
+    * `characters` darf leer sein (`[]`): eine Weltaussage hat keine Figur.
+      Innerhalb eines Eintrags ist `name` Pflicht und nicht leer — ein Eintrag
+      ohne Namen wäre keine Figur —, `cast` dagegen darf leer sein
+      (`minLength: 0`). Für den Cast-Abgleich hat der Spike den Escape-Wert
       „(kein Cast-Treffer)“ gemessen und verworfen — ein Wort, das „nichts“
-      heißt, landete prompt in `character`, und die Pipeline las den
-      Vorgänger „(kein Treffer)“ als Figurennamen (123 von 230 Aussagen).
-      Leer ist für die Pipeline gleichbedeutend mit dem Escape-Wert.
+      heißt, landete prompt im Namensfeld, und die Pipeline las den Vorgänger
+      „(kein Treffer)“ als Figurennamen (123 von 230 Aussagen). Leer ist für
+      die Pipeline gleichbedeutend mit dem Escape-Wert.
+    * `in_game_date` darf leer sein: eine Aussage ohne Zeitausdruck hat kein
+      Datum.
     * `time_offset` und `precision` sind optional, wie im Spike.
 
   Die Enums liegen im Schema; ein unbekannter Wert wird damit schon von der
@@ -30,7 +44,7 @@ defmodule Worker.Jack.Felder do
   @precisions ~w(day month season year decade)
   @einheiten ~w(day week month year)
 
-  @inhalt ~w(claim character cast_match narration_time time_anchor in_game_date fact_type
+  @inhalt ~w(claim characters narration_time time_anchor in_game_date fact_type
              threads source_refs beleg time_offset precision)
   @steuerung ~w(verifikations_guid entscheidung begruendung weitere_guids)
 
@@ -74,8 +88,28 @@ defmodule Worker.Jack.Felder do
   defp inhalt do
     %{
       "claim" => %{"type" => "string"},
-      "character" => %{"type" => "string", "minLength" => 0},
-      "cast_match" => %{"type" => "string", "minLength" => 0},
+      "characters" => %{
+        "type" => "array",
+        "description" =>
+          "wer in dieser Aussage handelt, spricht oder an ihr beteiligt ist — " <>
+            "die handelnde Figur zuerst. [] bei einer Weltaussage, in der niemand handelt.",
+        "items" => %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{
+              "type" => "string",
+              "description" => "der Figurenname, wie er im Text steht"
+            },
+            "cast" => %{
+              "type" => "string",
+              "minLength" => 0,
+              "description" =>
+                "der Eintrag aus cast(), der genau auf diesen Namen passt, in " <>
+                  "identischer Schreibweise; leer, wenn keiner passt"
+            }
+          }
+        }
+      },
       "narration_time" => %{"type" => "string", "enum" => @narration_times},
       "time_anchor" => %{"type" => "string", "enum" => @time_anchors},
       "in_game_date" => %{"type" => "string", "minLength" => 0},

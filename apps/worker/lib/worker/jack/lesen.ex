@@ -107,7 +107,8 @@ defmodule Worker.Jack.Lesen do
         name: "cast",
         beschreibung:
           "Die Liste der bekannten handelnden Personen. Sie ist die einzige zulaessige " <>
-            "Quelle fuer das Feld cast_match. Passt keine, bleibt cast_match leer (\"\").",
+            "Quelle fuer das Feld cast einer Figur in characters. Passt keine, bleibt " <>
+            "cast leer (\"\").",
         parameter: objekt(%{}),
         wiederholung: :frei,
         ausfuehren: &cast/2

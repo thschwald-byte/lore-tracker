@@ -1,5 +1,6 @@
 defmodule Worker.Repo.Nachlese do
   @moduledoc """
+
   Issue #907 (Epic #900 S4): der Nachlese-Reader — die erste REINE Ableitung
   der Wahrheitsbasis für den #687-Gründungs-Use-Case: ein Spieler liest nach,
   ohne dass der SL arbeitet. Rein lesend, deterministisch, kein LLM.
@@ -17,6 +18,8 @@ defmodule Worker.Repo.Nachlese do
       Alias). `pc?` = Anzeige-Alias entspricht einem Member-Figurennamen
       (benannte Heuristik — es gibt KEIN NPC-Feld in den Daten).
   """
+
+  alias Worker.Recording.Pipeline.Parsing
 
   import Worker.Repo,
     only: [
@@ -146,13 +149,22 @@ defmodule Worker.Repo.Nachlese do
     |> Enum.filter(fn f ->
       Map.get(f, "verified?") == true and Map.get(f, "review_dismissed") != true
     end)
-    |> Enum.group_by(&who_key/1)
+    # Issue #1066: ein Fakt gehört zu jeder Figur, die er nennt — vorher nur zur
+    # erstgenannten. Genau hier wurde die Lücke für den Leser sichtbar: „alles
+    # über X" war nachweislich nicht alles, sobald X in einer Aussage nicht
+    # selbst handelte.
+    |> Enum.flat_map(fn f ->
+      for {eid, name} <- Parsing.fact_identities(f), do: {schluessel(eid, name), name, f}
+    end)
+    |> Enum.group_by(fn {key, _name, _f} -> key end)
     |> Enum.reject(fn {key, _} -> key == "" end)
-    |> Enum.map(fn {_key, group} ->
+    |> Enum.map(fn {_key, treffer} ->
       anzeige =
-        group
-        |> Enum.map(&Map.get(&1, "character_alias", ""))
+        treffer
+        |> Enum.map(fn {_k, name, _f} -> name end)
         |> Enum.find("", &(is_binary(&1) and &1 != ""))
+
+      group = Enum.map(treffer, fn {_k, _name, f} -> f end)
 
       %{
         alias: anzeige,
@@ -170,13 +182,10 @@ defmodule Worker.Repo.Nachlese do
     |> Enum.sort_by(&{if(&1.pc?, do: 0, else: 1), -&1.fact_count, &1.alias})
   end
 
-  # Kanonische Identität: entity_id (Registry-Merge) vor rohem Alias.
-  defp who_key(f) do
-    case Map.get(f, "entity_id", "") do
-      eid when is_binary(eid) and eid != "" -> eid
-      _ -> f |> Map.get("character_alias", "") |> Worker.ThreadOverride.normalize()
-    end
-  end
+  # Kanonische Identität: entity_id (Registry-Merge) vor rohem Alias. Seit
+  # #1066 je Figur statt je Fakt — die Regel selbst ist unverändert.
+  defp schluessel(eid, _name) when is_binary(eid) and eid != "", do: eid
+  defp schluessel(_eid, name), do: Worker.ThreadOverride.normalize(name || "")
 
   # Strang-Labels der Figur, über die Cluster-Map kanonisiert (dieselbe
   # Normalisierung wie der Thread-Reader — single-sourced).

@@ -28,6 +28,7 @@ defmodule Worker.Repo do
   """
 
   alias Worker.Repo.Rows
+  alias Worker.Recording.Pipeline.Parsing
   alias Worker.Schema.Mnesia, as: S
 
   # ─── worker_state ────────────────────────────────────────────────
@@ -259,24 +260,35 @@ defmodule Worker.Repo do
     (pcs ++ npc_roster_from_facts(campaign_id)) |> Enum.uniq()
   end
 
+  # Issue #1066: ein Fakt trägt mehrere Figuren und gehört damit in mehrere
+  # Gruppen. Vorher zählte nur die erstgenannte — eine Figur, die im Text
+  # vorkommt, aber selten selbst handelt, erreichte die Schwelle nie und fehlte
+  # dauerhaft im Cast, den Jack zu sehen bekommt.
   defp npc_roster_from_facts(campaign_id) do
     campaign_id
     |> list_campaign_facts()
     |> Enum.filter(&(&1["verified?"] == true))
-    |> Enum.reject(&(&1["entity_id"] in [nil, ""]))
-    |> Enum.group_by(& &1["entity_id"])
-    |> Enum.filter(fn {_eid, facts} ->
-      facts |> Enum.map(& &1["session_id"]) |> Enum.uniq() |> length() >=
+    |> Enum.flat_map(fn f ->
+      for {eid, name} <- Parsing.fact_identities(f),
+          eid not in [nil, ""],
+          do: {eid, name, f["session_id"]}
+    end)
+    |> Enum.group_by(fn {eid, _name, _sid} -> eid end)
+    |> Enum.filter(fn {_eid, treffer} ->
+      treffer |> Enum.map(&elem(&1, 2)) |> Enum.uniq() |> length() >=
         @cast_roster_npc_min_sessions
     end)
     |> Enum.map(&canonical_alias/1)
   end
 
-  defp canonical_alias({_eid, facts}) do
-    facts
-    |> Enum.map(& &1["character_alias"])
+  # Die häufigste Oberflächenform INNERHALB dieser Entität — nicht mehr das
+  # `character_alias` des Fakts, das bei mehreren Figuren eine andere meint.
+  defp canonical_alias({_eid, treffer}) do
+    treffer
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.frequencies()
-    |> Enum.max_by(fn {_alias, count} -> count end)
+    |> Enum.max_by(fn {_alias, count} -> count end, fn -> {"", 0} end)
     |> elem(0)
   end
 

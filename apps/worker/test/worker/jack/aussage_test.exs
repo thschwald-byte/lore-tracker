@@ -48,8 +48,7 @@ defmodule Worker.Jack.AussageTest do
     Map.merge(
       %{
         "claim" => "Der Monitor piept laut.",
-        "character" => "",
-        "cast_match" => "",
+        "characters" => [],
         "narration_time" => "present",
         "time_anchor" => "session",
         "in_game_date" => "",
@@ -123,21 +122,53 @@ defmodule Worker.Jack.AussageTest do
       assert f == "`source_refs` nennt Blöcke, die es nicht gibt: [9]. Gültig sind 0 bis 4."
     end
 
-    test "cast_match nur aus cast(), der alte Escape-Wert ist abgewiesen" do
+    test "cast nur aus cast(), der alte Escape-Wert ist abgewiesen — je Figur" do
+      figur = fn f -> %{"characters" => [f]} end
+
       assert {_, {:error, %{"fehler" => [f1]}}} =
-               Aussage.einreichen(stand(), aussage(%{"cast_match" => "Deadman"}))
+               Aussage.einreichen(
+                 stand(),
+                 aussage(figur.(%{"name" => "Deadman", "cast" => "Deadman"}))
+               )
 
       assert f1 =~ "steht nicht in cast()"
 
       assert {_, {:error, %{"fehler" => [f2]}}} =
-               Aussage.einreichen(stand(), aussage(%{"cast_match" => "(kein Cast-Treffer)"}))
+               Aussage.einreichen(
+                 stand(),
+                 aussage(figur.(%{"name" => "Mira", "cast" => "(kein Cast-Treffer)"}))
+               )
 
       assert f2 =~ "gibt es nicht"
 
       assert {_, {:error, %{"fehler" => [f3]}}} =
-               Aussage.einreichen(stand(), aussage(%{"character" => "(kein Cast-Treffer)"}))
+               Aussage.einreichen(
+                 stand(),
+                 aussage(figur.(%{"name" => "(kein Cast-Treffer)", "cast" => ""}))
+               )
 
       assert f3 =~ "benennt keine Figur"
+    end
+
+    # Issue #1066: die Meldung muss sagen, WELCHE Figur gemeint ist — bei drei
+    # Figuren ist „steht nicht in cast()" sonst keine Auskunft.
+    test "bei mehreren Figuren nennt die Ablehnung die Position" do
+      aussage_mit = %{
+        "characters" => [
+          %{"name" => "Mira", "cast" => ""},
+          %{"name" => "Deadman", "cast" => "Deadman"}
+        ]
+      }
+
+      assert {_, {:error, %{"fehler" => [f]}}} = Aussage.einreichen(stand(), aussage(aussage_mit))
+      assert f =~ "characters[2].cast"
+      assert f =~ "steht nicht in cast()"
+    end
+
+    test "eine Figur ohne Namen wird abgewiesen" do
+      leer = %{"characters" => [%{"name" => "", "cast" => ""}]}
+      assert {_, {:error, %{"fehler" => [f]}}} = Aussage.einreichen(stand(), aussage(leer))
+      assert f =~ "characters[1].name` ist leer"
     end
   end
 
