@@ -52,15 +52,18 @@ if config_env() != :prod do
   if sicht_port = env!("LORE_JACK_SICHT_PORT", :integer, nil) do
     config :worker, jack_sicht_port: sicht_port
 
-    # #1247: der Zeit-Jack bekommt eine EIGENE Laufsicht, eine Stelle über der
-    # von Jack (Maintainer, 19.09.2026: „<port> +11"). Zwei Läufe, zwei
+    # #1247: der Zeit-Jack bekommt eine EIGENE Laufsicht. Zwei Läufe, zwei
     # Ströme: Beide teilen sich sonst eine Seite, und wer den einen beobachtet,
     # verliert den anderen — im Betrieb schreibt niemand ein Protokoll auf
-    # Platte, das Denken existiert nur im Strom. Abgeleitet statt eigene
-    # Variable, damit die Stage nichts zusätzlich mitgeben muss; ein Override
-    # geht über LORE_ZEIT_SICHT_PORT.
+    # Platte, das Denken existiert nur im Strom.
+    #
+    # Die Stage gibt den Port mit (`lore.pr_test`: Stage-Port + 20, je Worker
+    # zwei Dekaden). Fehlt er, liegt er zehn über dem von Jack — der Versatz
+    # muss ZWEISTELLIG bleiben: eine Nachbarstelle (+1) träfe die Jack-Sicht
+    # der Nachbarstage (4001/W0 → 4012 = 4002/W0), weil die letzte Ziffer dort
+    # die Stage ist.
     config :worker,
-      zeit_sicht_port: env!("LORE_ZEIT_SICHT_PORT", :integer, nil) || sicht_port + 1
+      zeit_sicht_port: env!("LORE_ZEIT_SICHT_PORT", :integer, nil) || sicht_port + 10
   end
 
   # Override Hub-Endpoint-Port in dev — used when running multiple hub
