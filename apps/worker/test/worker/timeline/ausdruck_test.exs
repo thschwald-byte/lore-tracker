@@ -78,6 +78,50 @@ defmodule Worker.Timeline.AusdruckTest do
     end
   end
 
+  describe "Modifikator vor einer ZIFFER — die echten Anker aus S4" do
+    test "der Modifikator bleibt erhalten: 18:50, nicht 19:00" do
+      # Die nackte Ziffernform allein las daraus „19 Uhr" und verlor den
+      # Modifikator. Zwei Blöcke später steht die glatte Zeit — die beiden
+      # dürfen nicht auf denselben Punkt fallen, sonst verschwindet die
+      # Anfahrt (dave, 19.09.2026).
+      assert Ausdruck.tagesminute("kommt ihr kurz vor 19 Uhr in Tacoma an") == 18 * 60 + 50
+      assert Ausdruck.tagesminute("Also um 19 Uhr Beginn") == 19 * 60
+    end
+
+    test "die übrigen ziffernförmigen Anker aus S4" do
+      assert Ausdruck.tagesminute("fahren um 12:30 Uhr los") == 12 * 60 + 30
+      assert Ausdruck.tagesminute("um 14:30 oder 15 Uhr an") == 14 * 60 + 30
+    end
+
+    test "die Ziffernform gilt im 24-Stunden-Raum, nicht im Halbtag" do
+      assert Ausdruck.tagesminute("halb 19 Uhr") == 18 * 60 + 30
+      assert Ausdruck.halbtag_minute("kurz vor 19 Uhr") == nil
+    end
+
+    test "gegen und um brauchen das Wort Uhr — sie sind sonst zu häufig" do
+      # Die Falsch-Positiven aus S2, das Rauschen dieser Sitzung.
+      for w <- ["um eins reduzieren", "um zwei Haupthandlungen", "um Drei von vier Spielern",
+                "gegen 5 Grad"] do
+        assert Ausdruck.tagesminute(w) == nil, w
+        assert Ausdruck.halbtag_minute(w) == nil, w
+      end
+    end
+
+    test "die Runde rechnet selbst um — und die Ziffernform gewinnt" do
+      # Block 1203: „Drei Viertel neun ist kurz vor neun, also 20:45 Uhr wäre
+      # die richtige Uhrzeit." Ein Beleg aus dem Material, dass abends die
+      # Nachmittagslesart gilt — und eine Probe auf die Musterreihenfolge an
+      # einem echten Satz statt an einem konstruierten.
+      satz = "Drei Viertel neun ist kurz vor neun, also 20:45 Uhr wäre die richtige Uhrzeit."
+      assert Ausdruck.tagesminute(satz) == 20 * 60 + 45
+
+      # Dieselbe Uhrzeit, nur als Wortform gesagt: derselbe Punkt im
+      # Nachmittagsraum.
+      hm = Ausdruck.halbtag_minute("Drei Viertel neun")
+      assert Ausdruck.mit_halbtag(hm, "nachmittag") == 20 * 60 + 45
+    end
+  end
+
   describe "mit_halbtag/2 — wenn Jack ihn doch weiß" do
     test "vormittag und nachmittag machen die Wortform eindeutig" do
       hm = Ausdruck.halbtag_minute("drei viertel elf")

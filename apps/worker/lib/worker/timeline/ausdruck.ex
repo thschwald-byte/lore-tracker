@@ -36,12 +36,20 @@ defmodule Worker.Timeline.Ausdruck do
       Datum              8
       weder noch        92      Dauern und relative Angaben
 
-  **Alle drei echten Uhrzeit-Anker der Referenzsitzung sind Wortform**
-  („Drei viertel elf", „kurz nach zwölf", „Es ist kurz vor zwei"), und
-  **beide ziffernförmigen sind Fallen**: „um 20:10 Uhr" ist in Wahrheit die
-  Jahreszahl 2010, die die Spracherkennung als Uhrzeit geschrieben hat, und
-  „schon 10 Uhr" ist Tischzeit. Das Modul löste also genau die Fälle auf, die
-  es nicht durfte, und genau die nicht, auf die es ankommt.
+  **Alle drei echten Uhrzeit-Anker dieser Sitzungen sind Wortform** („Drei
+  viertel elf", „kurz nach zwölf", „Es ist kurz vor zwei"), und **beide
+  ziffernförmigen sind Fallen**: „um 20:10 Uhr" ist in Wahrheit die Jahreszahl
+  2010, die die Spracherkennung als Uhrzeit geschrieben hat, und „schon 10
+  Uhr" ist Tischzeit. Das Modul löste also genau die Fälle auf, die es nicht
+  durfte, und genau die nicht, auf die es ankommt.
+
+  **S4 relativiert das, und zwar in die richtige Richtung** (dave,
+  Nachtrag): Dort gibt es sehr wohl echte ziffernförmige Anker („kurz vor 19
+  Uhr in Tacoma", „um 19 Uhr Beginn") — und daneben einen ziffernförmigen
+  Tisch-Anker („fahren um 12:30 Uhr los", eine Anfahrt zu einer Convention).
+  **Beide Formen kommen vor, und die Form sagt nichts über die Welt.** Der
+  erste Wurf war nicht falsch, nur unvollständig; die Lehre ist, beide Wege
+  zu haben und die Welt-Frage getrennt zu stellen.
 
   Gelesen werden deshalb beide Formen. Die Wortformen sind eine geschlossene
   Liste über zwölf Zahlwörtern (`halb`, `viertel`, `drei viertel`, `viertel
@@ -101,6 +109,29 @@ defmodule Worker.Timeline.Ausdruck do
     "neun" => 9, "zehn" => 10, "elf" => 11, "zwölf" => 12, "zwoelf" => 12
   }
 
+
+  # **Dieselben Modifikatoren, aber vor einer ZIFFER** — „kurz vor 19 Uhr".
+  # Die nackte Ziffernform allein las daraus „19 Uhr" und verlor das „kurz
+  # vor": 19:00 statt 18:50. Klein, aber systematisch, und in S4 trifft es
+  # einen harten Spielwelt-Anker; zwei Blöcke später steht dort die glatte
+  # Zeit („Also um 19 Uhr Beginn"), und die beiden dürfen nicht auf denselben
+  # Punkt fallen, sonst verschwindet die Anfahrt (dave, 19.09.2026).
+  #
+  # Das Ergebnis ist eine TAGESMINUTE, keine Halbtagsminute: Wer eine Ziffer
+  # sagt, sagt sie konventionell im 24-Stunden-Raum („um 19 Uhr" ist nie 7
+  # Uhr früh). Bei `gegen`/`um` ist das Wort „Uhr" Pflicht — ohne es sind die
+  # beiden zu häufig („um eins erhöht", „gegen 5 Grad"); bei den übrigen
+  # Modifikatoren ist es optional, weil „kurz vor 19" praktisch immer eine
+  # Zeit ist.
+  @ziffernformen [
+    {~r/\bdrei\s*viertel\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 45, :vor_naechster},
+    {~r/\bviertel\s+vor\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 45, :vor_naechster},
+    {~r/\bviertel\s+nach\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 15, :diese},
+    {~r/\bhalb\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 30, :vor_naechster},
+    {~r/\bkurz\s+vor\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, -10, :diese},
+    {~r/\bkurz\s+nach\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 5, :diese},
+    {~r/\bgegen\s+(?<z>\d{1,2})\s*uhr\b/iu, 0, :diese}
+  ]
 
   # Die geschlossene Liste der Wortformen. Die Reihenfolge ist tragend:
   # „drei viertel elf" muss VOR „viertel elf" stehen, sonst liest das kürzere
@@ -167,10 +198,12 @@ defmodule Worker.Timeline.Ausdruck do
   """
   @spec tagesminute(String.t()) :: non_neg_integer() | nil
   def tagesminute(wert) when is_binary(wert) do
-    case Regex.named_captures(@uhrzeit, wert) do
-      %{"h" => h, "m1" => m1, "m2" => m2} -> minute_aus(h, erste_minute(m1, m2))
-      _ -> nil
-    end
+    # Der Modifikator zuerst: Sonst gewinnt die nackte Ziffer und schluckt ihn.
+    mit_modifikator(wert) ||
+      case Regex.named_captures(@uhrzeit, wert) do
+        %{"h" => h, "m1" => m1, "m2" => m2} -> minute_aus(h, erste_minute(m1, m2))
+        _ -> nil
+      end
   end
 
   def tagesminute(_), do: nil
@@ -244,18 +277,33 @@ defmodule Worker.Timeline.Ausdruck do
     end
   end
 
-  # Das erste passende Muster gewinnt; die Liste ist nach Länge geordnet, das
-  # ist tragend (s. @wortformen).
+  # Das erste passende Muster gewinnt; die Listen sind nach Länge geordnet,
+  # das ist tragend (s. @wortformen).
   defp wortform(wert) do
-    Enum.find_value(@wortformen, fn {muster, offset, bezug} ->
-      with %{"z" => wort} <- Regex.named_captures(muster, wert),
-           stunde when is_integer(stunde) <- @zahlwort[String.downcase(wort)] do
+    treffer(@wortformen, wert, &@zahlwort[String.downcase(&1)], 12, 720)
+  end
+
+  defp mit_modifikator(wert) do
+    treffer(@ziffernformen, wert, &ganzzahl/1, 24, 1440)
+  end
+
+  defp treffer(muster_liste, wert, lies_stunde, stunden, raum) do
+    Enum.find_value(muster_liste, fn {muster, offset, bezug} ->
+      with %{"z" => roh} <- Regex.named_captures(muster, wert),
+           stunde when is_integer(stunde) <- lies_stunde.(roh) do
         basis = if bezug == :vor_naechster, do: stunde - 1, else: stunde
-        Integer.mod(Integer.mod(basis, 12) * 60 + offset, 720)
+        Integer.mod(Integer.mod(basis, stunden) * 60 + offset, raum)
       else
         _ -> nil
       end
     end)
+  end
+
+  defp ganzzahl(roh) do
+    case Integer.parse(roh) do
+      {n, ""} when n in 0..24 -> n
+      _ -> nil
+    end
   end
 
   defp erste_minute("", ""), do: "0"

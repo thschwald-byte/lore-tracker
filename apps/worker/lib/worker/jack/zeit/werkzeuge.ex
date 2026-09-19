@@ -86,10 +86,12 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "Weltgeschichte: „ab um etwa 20:10 Uhr gebären Menschen …“ ist die " <>
             "JAHRESZAHL 2010, die die Spracherkennung als Uhrzeit geschrieben " <>
             "hat. Ich kann das nicht sehen, du am Satz drumherum schon. " <>
-            "halbtag: nur wenn im Gespräch steht, ob Vormittag oder Nachmittag " <>
-            "gemeint ist — sonst weglassen. Ich löse das aus der Reihe der " <>
-            "Anker auf; eine Angabe auf Verdacht wäre zwölf Stunden Risiko ohne " <>
-            "Gewinn. beleg: das wörtliche Zitat aus der Zeile.",
+            "halbtag: nur wenn es BELEGT ist — steht im selben Satz eine Tageszeit " <>
+            "(„nachts um halb zwei“, „morgens das um zehn“, „abends“, „mittags“), " <>
+            "gehört sie hierher; das ist keine Vermutung, sondern eine Angabe. " <>
+            "Steht keine da, lass das Feld weg: Ich löse den Halbtag aus der Reihe " <>
+            "der Anker auf, und eine Angabe auf Verdacht wäre zwölf Stunden Risiko " <>
+            "ohne Gewinn. beleg: das wörtliche Zitat aus der Zeile.",
         parameter: %{
           "type" => "object",
           "properties" => %{

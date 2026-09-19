@@ -464,39 +464,50 @@ defmodule Worker.Timeline.Linie do
     |> Enum.reduce(datierte, fn {i, {form, zahl, a}}, acc ->
       vorher = vorlauf(acc, i)
       minute = absolute_minute(form, zahl, vorher)
-      eintragen(acc, i, punkt(a, minute, true, tagwechsel?(form, zahl, vorher)))
+      eintragen(acc, i, punkt(a, minute, true, sprung?(zahl, vorher, minute)))
     end)
   end
 
-  # **Ein erfundener Tageswechsel ist eine Annahme und gehört als Befund
-  # sichtbar** (bob, 19.09.2026). Der Fall dahinter ist der ÜBERSEHENE
-  # Rückblick: Hat Jack ihn nicht verschoben, steht seine Uhrzeit an der
-  # Erzählstelle, springt zurück, und die Regel macht Mitternacht daraus. Der
-  # Schaden bleibt nicht lokal — `vorlauf/2` liest aus dem fortgeschriebenen
-  # Stand, also erbt jede folgende Uhrzeit den erhöhten Tag, und ein einziger
-  # übersehener Rückblick verschiebt den REST der Sitzung um einen Tag. In
-  # Prod tragen 230 Fakten `narration_time: "flashback"`; das ist Alltag, kein
-  # Randfall.
+  # **Ein grosser Vorwärtssprung ist eine Annahme über den Verlauf und gehört
+  # als Befund sichtbar.**
   #
-  # Eine bessere Regel gibt es nicht — ohne Zusatzwissen IST ein Rücksprung
-  # mehrdeutig. Sichtbar zu sein ist der Unterschied zwischen einer Annahme
-  # und einem stillen Fehler.
+  # Der Fall dahinter ist der ÜBERSEHENE Rückblick: Hat Jack ihn nicht
+  # verschoben, steht seine Uhrzeit an der Erzählstelle, springt zurück, und
+  # die Rechnung schiebt sie vorwärts — bei einer festen Uhrzeit über
+  # Mitternacht, bei einer Wortform in den anderen Halbtag. Der Schaden bleibt
+  # nicht lokal: `vorlauf/2` liest aus dem fortgeschriebenen Stand, also erbt
+  # jede folgende Uhrzeit die Verschiebung, und ein einziger übersehener
+  # Rückblick verrückt den REST der Sitzung. In Prod tragen 230 Fakten
+  # `narration_time: "flashback"`; das ist Alltag, kein Randfall (bob,
+  # 19.09.2026).
   #
-  # **Nur bei der festen Uhrzeit.** Bei einer Wortform geht die Auflösung
-  # immer vorwärts (die Kette entscheidet den Halbtag), ein „Wechsel" dort ist
-  # die Regel und keine Annahme über den Inhalt.
-  defp tagwechsel?(:fest, tagesminute, vorher) when is_integer(vorher),
-    do: Integer.floor_div(vorher, @minuten_pro_tag) * @minuten_pro_tag + tagesminute < vorher
+  # **Gemessen wird der SPRUNG, nicht der Tageswechsel** — das war der erste
+  # Entwurf und er war asymmetrisch, ausgerechnet im Normalfall (bob, zweiter
+  # Durchgang): Ein Tageswechsel entsteht nur bei der festen Form; die
+  # Wortform springt formal bloss in den anderen Halbtag, kommt aber auf
+  # denselben Zeitpunkt und aus derselben Ursache. Von 22:45 auf „halb zehn"
+  # sind es +10¾ Stunden, ob nun mit oder ohne Datumsgrenze. Nach daves
+  # Zählung ist die Wortform die häufigere Form — der Befund hätte also
+  # vorwiegend im selteneren Fall gegriffen.
+  #
+  # **Die Schwelle ist gegriffen, nicht gemessen.** Sechs Stunden trennen den
+  # gewöhnlichen Verlauf einer Sitzung (Minuten bis zwei Stunden zwischen
+  # Ankern) von einer Annahme, die der Rechnung gehört. Ein echter langer
+  # Sprung in der Spielwelt (die Gruppe schläft) wird damit ebenfalls
+  # gemeldet — zu Recht: Er ist dann allein aus einer Uhrzeit gefolgert, und
+  # genau das soll jemand sehen.
+  @sprung_schwelle 6 * 60
 
-  defp tagwechsel?(_, _, _), do: false
+  defp sprung?(_zahl, nil, _minute), do: false
+  defp sprung?(_zahl, vorher, minute), do: minute - vorher > @sprung_schwelle
 
-  defp punkt(a, minute, genau?, tagwechsel? \\ false) do
+  defp punkt(a, minute, genau?, sprung? \\ false) do
     %{
       minute: minute,
       anker_id: Map.get(a, :anker_id),
       abgesegnet?: abgesegnet?(a),
       genau?: genau?,
-      tagwechsel?: tagwechsel?
+      sprung?: sprung?
     }
   end
 
@@ -517,6 +528,13 @@ defmodule Worker.Timeline.Linie do
     end
   end
 
+  # **Ohne Vorlauf gibt es nichts, woran sich der Halbtag entscheiden könnte.**
+  # Die erste Wortform einer Linie liegt deshalb im Vormittagsraum — „halb
+  # zehn" wird 09:30 und nicht 21:30. Das ist keine Aussage über die
+  # Tageszeit: Ohne einen Datums-Anker ist die ganze Linie relativ, es zählen
+  # die Abstände, und jeder folgende Anker richtet sich an diesem ersten aus.
+  # Kommt später ein Datum dazu, verschiebt es die Kette als Ganzes (bob,
+  # 19.09.2026).
   defp absolute_minute(_form, zahl, nil), do: zahl
 
   defp absolute_minute(:fest, tagesminute, vorher) do
@@ -674,21 +692,21 @@ defmodule Worker.Timeline.Linie do
     ohne_ziel(anker, reihe) ++
       spannen_ueberlauf(eintraege, reihe, anker) ++
       uneinige_zeitpunkte(reihe, anker) ++
-      erfundene_tagwechsel(reihe, anker) ++
+      grosse_spruenge(reihe, anker) ++
       zweifel(anker)
   end
 
-  # s. `tagwechsel?/3` — jeder gerechnete Tageswechsel ist eine Annahme und
-  # steht deshalb in der Liste, die ein Mensch durchsieht.
-  defp erfundene_tagwechsel(reihe, anker) do
-    for {_i, %{tagwechsel?: true} = p} <- feste_punkte(reihe, anker) do
+  # s. `sprung?/3` — jeder grosse Vorwärtssprung ist eine Annahme und steht
+  # deshalb in der Liste, die ein Mensch durchsieht.
+  defp grosse_spruenge(reihe, anker) do
+    for {_i, %{sprung?: true} = p} <- feste_punkte(reihe, anker) do
       %{
-        art: :tagwechsel_angenommen,
+        art: :zeitsprung_angenommen,
         anker_id: p.anker_id,
         text:
           "Diese Uhrzeit liegt vor der vorhergehenden; gerechnet wird mit einem " <>
-            "Tageswechsel. Stimmt das nicht, ist es vermutlich ein Rückblick, der " <>
-            "noch verschoben werden muss."
+            "Sprung nach vorn von mehr als sechs Stunden. Stimmt das nicht, ist es " <>
+            "vermutlich ein Rückblick, der noch verschoben werden muss."
       }
     end
   end

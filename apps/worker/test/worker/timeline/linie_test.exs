@@ -409,44 +409,65 @@ defmodule Worker.Timeline.LinieTest do
       assert Linie.tag(linie.nach_utterance["u13"]) == tag
     end
 
-    test "eine Wortform erzeugt KEINEN Tageswechsel-Befund" do
-      # Bei der Wortform geht die Auflösung immer vorwärts — der „Wechsel" ist
-      # dort die Regel und keine Annahme über den Inhalt. Nur eine FESTE
-      # Uhrzeit, die zurückspringt, ist eine Annahme.
+    test "die gewöhnliche Kette meldet keinen Sprung" do
       linie = Linie.bauen(stellen(), s3_kette())
 
-      refute Enum.any?(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+      refute Enum.any?(linie.befunde, &(&1.art == :zeitsprung_angenommen))
     end
   end
 
-  describe "der angenommene Tageswechsel ist ein Befund" do
+  describe "der grosse Vorwärtssprung ist ein Befund" do
     test "eine feste Uhrzeit, die zurückspringt, wird gemeldet" do
       # Der Fall dahinter ist der ÜBERSEHENE Rückblick (bob, 19.09.2026): Hat
       # Jack ihn nicht verschoben, steht seine Uhrzeit an der Erzählstelle,
-      # springt zurück, und die Rechnung macht Mitternacht daraus — und weil
-      # der Vorlauf fortgeschrieben wird, erbt der ganze REST der Sitzung den
-      # erhöhten Tag.
+      # springt zurück, und die Rechnung schiebt sie über Mitternacht — und
+      # weil der Vorlauf fortgeschrieben wird, erbt der ganze REST der Sitzung
+      # die Verschiebung.
       linie =
         Linie.bauen(stellen(), [
           anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60, anker_id: "z_spaet"}),
           anker(:zeitpunkt, ["u13"], %{tagesminute: 9 * 60, anker_id: "z_frueh"})
         ])
 
-      befund = Enum.find(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+      befund = Enum.find(linie.befunde, &(&1.art == :zeitsprung_angenommen))
 
-      assert befund, "ein erfundener Tageswechsel muss sichtbar sein"
+      assert befund, "ein erfundener Sprung muss sichtbar sein"
       assert befund.anker_id == "z_frueh"
       assert befund.text =~ "Rückblick"
+    end
+
+    test "eine WORTFORM mit demselben Sprung wird genauso gemeldet" do
+      # Die Asymmetrie des ersten Entwurfs: Er mass den Tageswechsel, den nur
+      # die feste Form erzeugt. Die Wortform springt formal bloss in den
+      # anderen Halbtag — kommt aber auf denselben Zeitpunkt, aus derselben
+      # Ursache, und ist nach daves Zählung die HÄUFIGERE Form. Der Befund
+      # hätte vorwiegend im selteneren Fall gegriffen.
+      fest =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60 + 45, anker_id: "z_a"}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 9 * 60 + 30, anker_id: "z_b"})
+        ])
+
+      wort =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{halbtag_minute: 10 * 60 + 45, anker_id: "z_a"}),
+          anker(:zeitpunkt, ["u13"], %{halbtag_minute: 9 * 60 + 30, anker_id: "z_b"})
+        ])
+
+      # Beide springen um 10¾ Stunden vorwärts — beide werden gemeldet.
+      for linie <- [fest, wort] do
+        assert Enum.any?(linie.befunde, &(&1.art == :zeitsprung_angenommen))
+      end
     end
 
     test "eine aufsteigende Folge meldet nichts" do
       linie =
         Linie.bauen(stellen(), [
           anker(:zeitpunkt, ["u11"], %{tagesminute: 9 * 60}),
-          anker(:zeitpunkt, ["u13"], %{tagesminute: 22 * 60})
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 13 * 60})
         ])
 
-      refute Enum.any?(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+      refute Enum.any?(linie.befunde, &(&1.art == :zeitsprung_angenommen))
     end
   end
 
