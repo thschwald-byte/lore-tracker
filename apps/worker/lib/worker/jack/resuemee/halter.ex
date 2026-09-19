@@ -35,11 +35,48 @@ defmodule Worker.Jack.Resuemee.Halter do
   """
   @spec start_link(struct(), keyword()) :: Agent.on_start()
   def start_link(s, opts \\ []) when is_struct(s) do
+    abbild = opts[:abbild] || standard_abbild!(s)
+
     Agent.start_link(fn ->
-      z = %{stand: s, beobachter: opts[:beobachter], abbild: opts[:abbild] || (&Stand.abbild/1)}
+      z = %{stand: s, beobachter: opts[:beobachter], abbild: abbild}
       melden(z)
       z
     end)
+  end
+
+  # **Der Default muss zum Stand passen, nicht zum Modul.** Solange der Guard
+  # `%Stand{} = s` hiess, war `&Stand.abbild/1` sicher: Es kam nur ein
+  # Resümee-Stand herein. Der Guard war damit nicht bloss eine Typprüfung,
+  # sondern die Schranke, die den Default gültig machte — mit `is_struct/1`
+  # fiele sie, und ein fremder Stand ohne `:abbild` liefe in den
+  # `FunctionClauseError` von `Stand.abbild/1`.
+  #
+  # Und zwar an der schlechtestmöglichen Stelle: `melden/1` ist ohne
+  # Beobachter ein `:ok`, das Abbild würde also in Tests und Messläufen NIE
+  # gerufen. Mit Beobachter — im Betrieb, wenn die Laufsicht zusieht — wirft
+  # es beim ersten Melden, und das steht in `Agent.start_link`: der Halter
+  # stürbe beim Start und der ganze Lauf mit ihm. Grün im Test, tot in Prod,
+  # und nur dann tot, wenn jemand zusieht. (Review-Fund, 19.09.2026; dieselbe
+  # Klasse wie der Auffangzweig in `Stand.abschnitte/1`, der am 18.09. die
+  # Chronik-Abschnitte still durch die des Resümees ersetzte.)
+  #
+  # Deshalb wird hier aufgelöst, **bevor** der Agent startet: Jeder Stand
+  # bringt sein eigenes `abbild/1` mit, und wer keins hat, scheitert laut und
+  # sofort statt beim ersten Beobachter.
+  defp standard_abbild!(%Stand{}), do: &Stand.abbild/1
+
+  defp standard_abbild!(s) do
+    modul = s.__struct__
+    Code.ensure_loaded(modul)
+
+    if function_exported?(modul, :abbild, 1) do
+      &modul.abbild/1
+    else
+      raise ArgumentError,
+            "#{inspect(modul)} hat kein abbild/1 — der Halter braucht dann die Option " <>
+              ":abbild. Ohne sie fiele die Laufsicht auf das Abbild des Resümee-Jack " <>
+              "zurück und zeigte Werte, die es in diesem Lauf nicht gibt (#1211)."
+    end
   end
 
   @doc "Der aktuelle Stand."

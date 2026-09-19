@@ -150,5 +150,34 @@ defmodule Worker.Jack.Zeit.StandTest do
       assert_receive {:jack_resuemee_stand, %{"jack" => "zeit"}}
       assert %Stand{} = Worker.Jack.Resuemee.Halter.stand(halter)
     end
+
+    test "OHNE :abbild findet er das eigene des Stands" do
+      # Der Fund aus dem Review (19.09.2026): Der Guard `%Stand{} = s` war
+      # nicht bloss eine Typprüfung, sondern die Schranke, die den Default
+      # `&Resuemee.Stand.abbild/1` gültig machte. Mit `is_struct/1` fiele sie.
+      s = Stand.neu(:pruefen, mitschnitt(2))
+
+      {:ok, _} = Worker.Jack.Resuemee.Halter.start_link(s, beobachter: self())
+
+      # Nicht das Abbild des Resümee-Jack, sondern das eigene.
+      assert_receive {:jack_resuemee_stand, %{"jack" => "zeit", "lauf" => "pruefen"}}
+    end
+
+    test "ein Stand OHNE abbild/1 scheitert beim Start, nicht beim ersten Melden" do
+      # Die Stelle ist der Punkt: `melden/1` ist ohne Beobachter ein `:ok` —
+      # in Tests und Messläufen würde das Abbild NIE gerufen und alles bliebe
+      # grün. Erst im Betrieb, wenn die Laufsicht zusieht, stürbe der Halter
+      # beim ersten Melden und der ganze Lauf mit ihm.
+      ohne = %URI{}
+
+      assert_raise ArgumentError, ~r/abbild\/1/, fn ->
+        Worker.Jack.Resuemee.Halter.start_link(ohne)
+      end
+
+      # Auch ohne Beobachter — sonst hinge der Fehler daran, ob jemand zusieht.
+      assert_raise ArgumentError, fn ->
+        Worker.Jack.Resuemee.Halter.start_link(ohne, beobachter: nil)
+      end
+    end
   end
 end
