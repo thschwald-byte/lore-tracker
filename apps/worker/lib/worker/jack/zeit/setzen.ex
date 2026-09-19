@@ -30,11 +30,27 @@ defmodule Worker.Jack.Zeit.Setzen do
   Rückfrage trüge es denselben Anker in leicht anderer Formulierung ein
   zweites Mal ein und merkte es nie.
 
-  ## Die GUID gilt genau einmal
+  ## Was „dieselbe Stelle" heißt
+
+  **Überlappung der Utterances UND dieselbe Art.** Beide reinen Formen sind
+  unbrauchbar: Mengengleichheit fängt den Doppeleintrag nicht (derselbe Anker
+  in leicht anderer Formulierung hat meist auch eine leicht andere Menge),
+  reine Überlappung fragt in dicht annotierter Gegend bei fast jedem Anker
+  zurück. Die Art trennt sauber: Spanne und Zeitpunkt an derselben Utterance
+  ergänzen sich, zwei Zeitpunkte widersprechen sich potenziell. Die Regel
+  steht in `Stand.an/3`.
+
+  ## Die GUID gilt genau einmal — und wird geprüft
 
   Sie ist an die Stelle gebunden, die sie ausgelöst hat, und verfällt, wenn
-  der nächste Aufruf sie nicht nennt (`Worker.Jack.Tor`-Muster). Damit kann
-  eine Entscheidung nicht versehentlich auf einen anderen Anker wirken.
+  der nächste Aufruf sie nicht nennt (`Worker.Jack.Tor`-Muster).
+  `pruefe_kennung/3` setzt das durch und unterscheidet dabei drei Fälle, die
+  Jack verschieden behandeln muss: nie ausgegeben (Modellfehler), abgelaufen
+  (normaler Ablauf), falsche Stelle (Denkfehler).
+
+  Der erste Wurf verwarf die Kennung und setzte einfach — die Zusage stand
+  nur hier im Text. **Eine ungeprüfte Kennung ist schlechter als gar keine**,
+  weil der Moduldoc Sicherheit zusagt, die es nicht gibt (Review, 19.09.2026).
 
   ## Was hier NICHT entschieden wird
 
@@ -43,6 +59,7 @@ defmodule Worker.Jack.Zeit.Setzen do
   es nur darum, was überhaupt eingetragen wird.
   """
 
+  alias Worker.Jack.Zeit.Stand
   alias Worker.Timeline.Linie
 
   @typedoc "Ein Anker, wie Jack ihn setzen will."
@@ -65,16 +82,19 @@ defmodule Worker.Jack.Zeit.Setzen do
           | {:verworfen, %{text: String.t()}}
 
   @doc """
-  Entscheidet über einen Wunsch. `bestand` sind die Anker, die an denselben
-  Utterances schon hängen; `guid_gibt` erzeugt eine frische Kennung.
+  Entscheidet über einen Wunsch — **mit dem Stand**, weil nur er weiß, was an
+  der Stelle hängt und welche Kennung dafür offen ist.
 
   `entscheidung` ist `nil` beim ersten Aufruf, sonst `{:dazu, guid}` oder
-  `{:ersetzen, guid}` — dann wird die Rückfrage übersprungen.
+  `{:ersetzen, guid}`. Die Kennung wird **geprüft**, nicht geglaubt (s.u.).
   """
-  @spec entscheiden(wunsch(), [map()], (-> String.t()), {atom(), String.t()} | nil) :: ergebnis()
-  def entscheiden(wunsch, bestand, guid_gibt, entscheidung \\ nil)
+  @spec entscheiden(Stand.t(), wunsch(), {atom(), String.t()} | nil, (-> String.t())) ::
+          ergebnis()
+  def entscheiden(stand, wunsch, entscheidung \\ nil, guid_gibt \\ &guid/0)
 
-  def entscheiden(wunsch, bestand, guid_gibt, nil) do
+  def entscheiden(%Stand{} = stand, wunsch, nil, guid_gibt) do
+    bestand = Stand.an(stand, wunsch.utterance_ids, art: wunsch.art)
+
     cond do
       abgesegnete = Enum.find(bestand, &abgesegnet?/1) ->
         {:verworfen, %{text: verworfen_text(abgesegnete)}}
@@ -88,14 +108,74 @@ defmodule Worker.Jack.Zeit.Setzen do
     end
   end
 
-  def entscheiden(wunsch, bestand, _guid_gibt, {art, _guid}) when art in [:dazu, :ersetzen] do
-    # Auch mit Entscheidung gilt die Absegnung — sie ist für niemanden
-    # verhandelbar, auch nicht über eine GUID.
-    case Enum.find(bestand, &abgesegnet?/1) do
-      nil -> {:gesetzt, bauen(wunsch)}
-      a -> {:verworfen, %{text: verworfen_text(a)}}
+  def entscheiden(%Stand{} = stand, wunsch, {art, guid}, _guid_gibt)
+      when art in [:dazu, :ersetzen] do
+    bestand = Stand.an(stand, wunsch.utterance_ids, art: wunsch.art)
+
+    cond do
+      # Die Absegnung gilt auch mit Entscheidung — sonst wäre die Kennung ein
+      # Weg an der Kuration vorbei.
+      a = Enum.find(bestand, &abgesegnet?/1) ->
+        {:verworfen, %{text: verworfen_text(a)}}
+
+      # **Die Kennung wird geprüft, nicht geglaubt.** Der erste Wurf verwarf
+      # sie (`_guid`) und setzte einfach — die Zusage „an die Stelle gebunden"
+      # stand nur im Moduldoc, und eine ungeprüfte Kennung ist schlechter als
+      # gar keine: Beim nächsten Lesen hält man die Stelle für abgesichert.
+      # Durchspielbar war: Rückfrage zu Stelle A mit g1, Antwort {:ersetzen,
+      # g1}, Wunsch auf Stelle B — gesetzt wurde bei B. (Review, 19.09.2026.)
+      nicht = pruefe_kennung(stand, wunsch, guid) ->
+        {:verworfen, %{text: nicht}}
+
+      true ->
+        {:gesetzt, bauen(wunsch)}
     end
   end
+
+  @doc """
+  Warum eine Kennung nicht gilt — oder `nil`, wenn sie gilt.
+
+  Drei Fälle, und sie müssen **unterscheidbar** bleiben: „nie ausgegeben" ist
+  ein Modellfehler, „abgelaufen" normaler Ablauf, „falsche Stelle" ein
+  Denkfehler. Eine Antwort, die alle drei gleich behandelt, schickt Jack in
+  die Wiederholung, statt ihm zu sagen, was er anders machen soll.
+  """
+  @spec pruefe_kennung(Stand.t(), wunsch(), String.t()) :: String.t() | nil
+  def pruefe_kennung(%Stand{} = stand, wunsch, guid) do
+    offen = Map.get(stand.offene, guid)
+
+    case {offen, Stand.schicksal(stand, guid)} do
+      {nil, nil} ->
+        "Die Kennung „#{guid}“ gibt es nicht — sie wurde nie ausgegeben. " <>
+          "Setz den Anker ohne Entscheidung; wenn dort etwas hängt, bekommst du " <>
+          "eine frische."
+
+      {nil, :eingeloest} ->
+        "Die Kennung „#{guid}“ ist schon eingelöst. Jede gilt genau einmal."
+
+      {nil, :offen} ->
+        "Die Kennung „#{guid}“ ist verfallen — sie gilt nur für den nächsten " <>
+          "Aufruf. Setz den Anker noch einmal ohne Entscheidung."
+
+      {%{utterance_ids: ids}, _} ->
+        wenn_andere_stelle(ids, wunsch.utterance_ids, guid)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp wenn_andere_stelle(ids, gewuenscht, guid) do
+    if MapSet.new(ids) == MapSet.new(gewuenscht) do
+      nil
+    else
+      "Die Kennung „#{guid}“ gehört zu einer anderen Stelle. Eine Entscheidung " <>
+        "gilt nur dort, wo die Rückfrage entstanden ist — sonst könnte sie " <>
+        "versehentlich einen fremden Anker treffen."
+    end
+  end
+
+  defp guid, do: "z" <> (:crypto.strong_rand_bytes(6) |> Base.url_encode64(padding: false))
 
   @doc """
   Der Anker, der aus einem Wunsch entsteht — mit seiner content-adressierten
@@ -120,9 +200,16 @@ defmodule Worker.Jack.Zeit.Setzen do
   end
 
   @doc """
-  Der Anker, den eine Rücknahme schreibt: dieselbe Adresse, Art `geloest`.
+  Der Anker, den eine Rücknahme schreibt: **dieselbe Adresse**, Art `geloest`.
   **Nie ein Delete** — ein vertauschtes Setzen/Zurücknehmen divergierte sonst
   zwischen zwei Workern (#698-Klasse).
+
+  **Damit bricht die Content-Adressierung, und zwar mit Absicht.** Die Art
+  geht in `Linie.anker_id/3` ein; für diese Row liefert die Funktion also ein
+  anderes Ergebnis als die gespeicherte Kennung. Das ist der Preis dafür, dass
+  die Rücknahme dieselbe Zeile trifft statt eine zweite anzulegen — wer die
+  Kennung beim Lösen „korrekt" neu berechnet, erzeugt genau diese zweite Row,
+  und die alte bliebe für immer gesetzt. (Benannt im Review, 19.09.2026.)
   """
   @spec loesen(map(), String.t()) :: map()
   def loesen(anker, grund) do

@@ -103,15 +103,40 @@ defmodule Worker.Jack.Zeit.Stand do
     %{s | anker: Map.put(s.anker, anker.anker_id, anker), zaehler: s.zaehler + 1}
   end
 
-  @doc "Die Anker, die an mindestens einer dieser Utterances hängen."
-  @spec an(t(), [String.t()]) :: [map()]
-  def an(%__MODULE__{anker: anker}, utterance_ids) do
+  @doc """
+  Die Anker, die an mindestens einer dieser Utterances hängen — mit `art:`
+  eingeschränkt auf dieselbe Art.
+
+  **Überlappung, nicht Mengengleichheit — und die Art entscheidet mit.** Beide
+  reinen Formen sind unbrauchbar (Review, 19.09.2026): Mengengleichheit fängt
+  den Doppeleintrag nicht, gegen den die Rückfrage gebaut ist (derselbe Anker
+  in leicht anderer Formulierung hat meist auch eine leicht andere Menge);
+  reine Überlappung fragt in dicht annotierter Gegend bei fast jedem neuen
+  Anker zurück, und Jack verbringt Runden mit Bestätigen — die #1211-Klasse.
+
+  Die Art trennt die beiden Fälle sauber:
+
+      Spanne + Zeitpunkt an derselben Utterance   → KEIN Konflikt.
+        „also ist jetzt so grob eine Stunde vergangen, dann wird es jetzt so
+        kurz nach zwölf sein" (S3, Block 1106) — die beiden ergänzen sich,
+        und dass an einer Utterance mehrere Anker hängen dürfen, ist die
+        Regel, nicht die Ausnahme.
+
+      zwei Zeitpunkte an überlappenden Stellen    → Rückfrage.
+        Sie widersprechen sich potenziell, und genau das soll Jack sehen.
+  """
+  @spec an(t(), [String.t()], keyword()) :: [map()]
+  def an(%__MODULE__{anker: anker}, utterance_ids, opts \\ []) do
     menge = MapSet.new(utterance_ids)
+    nur_art = opts[:art] && to_string(opts[:art])
 
     anker
     |> Map.values()
     |> Enum.filter(fn a ->
-      a |> feld(:art) |> to_string() != "geloest" and
+      art = a |> feld(:art) |> to_string()
+
+      art != "geloest" and
+        (is_nil(nur_art) or art == nur_art) and
         a |> feld(:utterance_ids) |> List.wrap() |> Enum.any?(&MapSet.member?(menge, &1))
     end)
   end
