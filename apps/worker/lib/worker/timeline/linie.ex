@@ -73,6 +73,42 @@ defmodule Worker.Timeline.Linie do
         }
 
   @doc """
+  Die Adresse eines Ankers: content-adressiert über die **sortierten**
+  Utterance-IDs, die **Art** und den **Wert**. Dieselbe Aussage an derselben
+  Stelle ergibt dieselbe ID, egal welcher Worker sie schreibt — zwei Worker
+  konvergieren damit ohne Abgleich.
+
+  **Art und Wert gehören in die Adresse, nicht nur die Utterances.** Der erste
+  Entwurf hashte allein über die Utterance-Menge, und daran wäre ein häufiger
+  Fall gestorben: Eine Äußerung nennt eine Dauer und den daraus folgenden
+  Zeitpunkt in einem Satz — „also ist jetzt so grob eine Stunde vergangen,
+  dann wird es jetzt so kurz nach zwölf sein". Das sind **zwei** Anker an
+  **einer** Utterance (eine Spanne und ein Zeitpunkt); mit der alten Regel
+  hätten sie dieselbe Adresse, und der zweite hätte den ersten über LWW
+  **stumm** überschrieben. Genau das ist die natürliche Sprechweise für
+  vergehende Spielzeit, also kein Randfall (Befund aus der handgelesenen
+  Referenzliste, seattleV5 S3 Block 1106).
+  """
+  @spec anker_id([String.t()], atom() | String.t(), String.t()) :: String.t()
+  def anker_id(utterance_ids, art, wert) when is_list(utterance_ids) do
+    roh =
+      Enum.join(Enum.sort(utterance_ids), ",") <>
+        "|" <> to_string(art) <> "|" <> normalisiert(wert)
+
+    "z_" <> (:crypto.hash(:sha256, roh) |> Base.encode16(case: :lower) |> binary_part(0, 16))
+  end
+
+  # Wie `Parsing.normalize_claim/1`: Gross-/Kleinschreibung und Leerraum
+  # sollen keine zweite Adresse für dieselbe Aussage erzeugen.
+  defp normalisiert(wert) do
+    wert
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
+  end
+
+  @doc """
   Baut die Linie aus Grundordnung und Ankern.
 
   Liefert `%{reihe: [eintrag], nach_utterance: %{id => eintrag},

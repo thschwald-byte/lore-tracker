@@ -357,9 +357,13 @@ defmodule Shared.Events do
   # Payload: `%{anker_id, campaign_id, session_id, daten: %{utterance_ids, art,
   # wert, welt, zweifel, beleg, quelle, abgesegnet_von, abgesegnet_am}}`.
   #
-  # `anker_id` ist content-adressiert über die sortierten `utterance_ids`
-  # (`z_<hash>`, Muster `Parsing.fact_content_id/2`) — dieselbe Menge ergibt
-  # denselben Anker, egal welcher Worker ihn schreibt. 1 Row/Anker,
+  # `anker_id` ist content-adressiert über die sortierten `utterance_ids`,
+  # die `art` UND den `wert` (`z_<hash>`, Muster `Parsing.fact_content_id/2`,
+  # gebildet von `Worker.Timeline.Linie.anker_id/3`) — dieselbe Aussage an
+  # derselben Stelle ergibt denselben Anker, egal welcher Worker sie schreibt.
+  # Art und Wert müssen mit hinein: „eine Stunde vergangen, dann ist es kurz
+  # nach zwölf" sind zwei Anker an EINER Utterance, und über die Menge allein
+  # hätte der zweite den ersten stumm überschrieben. 1 Row/Anker,
   # LWW-by-event_id. NIE ein Delete: ein zurückgenommener Anker schreibt eine
   # reguläre Row mit `art: "geloest"` (#698-Klasse — ein vertauschtes
   # Setzen/Zurücknehmen darf zwischen zwei Workern nicht divergieren).

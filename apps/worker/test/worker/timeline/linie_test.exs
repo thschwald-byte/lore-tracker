@@ -21,6 +21,40 @@ defmodule Worker.Timeline.LinieTest do
     Map.merge(%{art: art, utterance_ids: ids, anker_id: "z_#{Enum.join(ids, "_")}"}, extra)
   end
 
+  describe "anker_id/3 — die Adresse" do
+    test "dieselbe Aussage an derselben Stelle ergibt dieselbe Adresse" do
+      a = Linie.anker_id(["u2", "u1"], :zeitpunkt, "kurz nach zwölf")
+      b = Linie.anker_id(["u1", "u2"], :zeitpunkt, "Kurz nach   zwölf")
+
+      # Reihenfolge, Gross-/Kleinschreibung und Leerraum dürfen keine zweite
+      # Adresse für dieselbe Aussage erzeugen — sonst konvergieren zwei
+      # Worker nicht.
+      assert a == b
+      assert String.starts_with?(a, "z_")
+    end
+
+    test "zwei Anker an DERSELBEN Utterance kollidieren nicht" do
+      # Der reale Fall (seattleV5 S3, Block 1106, eine einzige Utterance):
+      # „also ist jetzt so grob eine Stunde vergangen, dann wird es jetzt so
+      # kurz nach zwölf sein" — eine Spanne und ein Zeitpunkt in einem Satz.
+      # Über die Utterance-Menge allein hätten beide dieselbe Adresse, und der
+      # zweite hätte den ersten über LWW stumm überschrieben.
+      spanne = Linie.anker_id(["u1106"], :spanne, "eine Stunde")
+      punkt = Linie.anker_id(["u1106"], :zeitpunkt, "kurz nach zwölf")
+
+      assert spanne != punkt
+    end
+
+    test "gleiche Art, anderer Wert — ebenfalls verschieden" do
+      refute Linie.anker_id(["u1"], :spanne, "eine Stunde") ==
+               Linie.anker_id(["u1"], :spanne, "zwei Stunden")
+    end
+
+    test "art als Atom und als String ergeben dieselbe Adresse" do
+      assert Linie.anker_id(["u1"], :spanne, "x") == Linie.anker_id(["u1"], "spanne", "x")
+    end
+  end
+
   describe "Grundordnung" do
     test "ohne Anker steht alles in Erzählreihenfolge, und niemand bekommt eine Zeit" do
       linie = Linie.bauen(stellen(), [])

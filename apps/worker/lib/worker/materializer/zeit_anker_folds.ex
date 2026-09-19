@@ -10,8 +10,9 @@ defmodule Worker.Materializer.ZeitAnkerFolds do
   jeder Extraktion neu entsteht.
 
   **Der Schlüssel ist content-adressiert** (`anker_id` = `z_<hash>` über die
-  sortierten Utterance-IDs, Muster `Parsing.fact_content_id/2`): dieselbe
-  Menge ergibt denselben Anker, egal welcher Worker ihn schreibt. Zwei Worker
+  sortierten Utterance-IDs, die Art und den Wert — gebildet von
+  `Worker.Timeline.Linie.anker_id/3`): dieselbe Aussage an derselben Stelle
+  ergibt denselben Anker, egal welcher Worker ihn schreibt. Zwei Worker
   konvergieren damit ohne Abgleich.
 
   **LWW über `event_id`**, wie bei den Jack-Ständen — und **nie ein
