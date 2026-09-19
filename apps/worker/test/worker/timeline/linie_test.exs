@@ -419,7 +419,7 @@ defmodule Worker.Timeline.LinieTest do
   describe "die Abend-Kette aus S4 — der Zweig OHNE Mitternacht" do
     # Vier Glieder aus einer Sitzung (dave, vollständige Referenzliste):
     #
-    #   [ 896] „kommt ihr kurz vor 19 Uhr in Tacoma an"   → 18:50
+    #   [ 896] „kommt ihr kurz vor 19 Uhr dort an"        → 18:50
     #   [ 898] „Also um 19 Uhr Beginn"                     → 19:00
     #   [1007] „Dreiviertelstunde, Stunde … endet das Ganze"  → Spanne
     #   [1203] „Drei Viertel neun … also 20:45 Uhr"        → 20:45

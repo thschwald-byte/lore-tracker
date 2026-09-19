@@ -84,9 +84,9 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "(„Seite 42“), Modifikatoren („um eins erhöht“), Entfernungen („5 bis " <>
             "50 Meter“), Schadenswerte („um sechs K“), Würfelergebnisse — die " <>
             "gehören mit loesen heraus, nicht hierher. " <>
-            "UND UNSERE WELT IST NICHT DIE SPIELWELT: „New York ist leidend seit " <>
-            "2014“, „die Rams sind vor vier Jahren hingegangen“, „in den letzten " <>
-            "30 Jahren zweimal“ — Smalltalk über Fußball, Filme, Politik. Das " <>
+            "UND UNSERE WELT IST NICHT DIE SPIELWELT: „diese Mannschaft ist leidend " <>
+            "seit 2014“, „die sind vor vier Jahren hingegangen“, „in den letzten " <>
+            "30 Jahren zweimal“ — Smalltalk über Sport, Filme, Politik. Das " <>
             "sind echte Zeitangaben mit echten Jahreszahlen, und sie sehen " <>
             "überzeugender aus als jede Küchenuhr; für die Linie sind sie " <>
             "genauso falsch. Allein in einer Sitzung neun Stellen, meist in den " <>

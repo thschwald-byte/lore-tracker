@@ -84,7 +84,7 @@ defmodule Worker.Timeline.AusdruckTest do
       # Modifikator. Zwei Blöcke später steht die glatte Zeit — die beiden
       # dürfen nicht auf denselben Punkt fallen, sonst verschwindet die
       # Anfahrt (dave, 19.09.2026).
-      assert Ausdruck.tagesminute("kommt ihr kurz vor 19 Uhr in Tacoma an") == 18 * 60 + 50
+      assert Ausdruck.tagesminute("kommt ihr kurz vor 19 Uhr dort an") == 18 * 60 + 50
       assert Ausdruck.tagesminute("Also um 19 Uhr Beginn") == 19 * 60
     end
 

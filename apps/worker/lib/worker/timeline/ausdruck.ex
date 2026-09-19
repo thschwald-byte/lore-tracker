@@ -45,7 +45,7 @@ defmodule Worker.Timeline.Ausdruck do
 
   **S4 relativiert das, und zwar in die richtige Richtung** (dave,
   Nachtrag): Dort gibt es sehr wohl echte ziffernförmige Anker („kurz vor 19
-  Uhr in Tacoma", „um 19 Uhr Beginn") — und daneben einen ziffernförmigen
+  Uhr am Ziel", „um 19 Uhr Beginn") — und daneben einen ziffernförmigen
   Tisch-Anker („fahren um 12:30 Uhr los", eine Anfahrt zu einer Convention).
   **Beide Formen kommen vor, und die Form sagt nichts über die Welt.** Der
   erste Wurf war nicht falsch, nur unvollständig; die Lehre ist, beide Wege

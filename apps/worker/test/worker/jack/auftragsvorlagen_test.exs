@@ -453,12 +453,83 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
   end
 
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
-    for datei <-
-          ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md
-             resuemee_durchsicht.md epos_ueberblick.md epos_schreiben.md epos_durchsicht.md),
+    for datei <- File.ls!(@dir),
+        String.ends_with?(datei, ".md"),
+        datei != "LIES_MICH.md",
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"
     end
+  end
+
+  # **Der Wächter zählt die Dateien NICHT mehr auf** (#1247). Die Liste war
+  # eine Aufzählung, und sie ist genau so gealtert, wie Aufzählungen altern:
+  # Die vier Chronik-Vorlagen (#1211) standen nie darin, und zwei von ihnen
+  # trugen Namen der gemessenen Runde — unbemerkt, weil der Wächter sie nicht
+  # ansah. Geprüft wird jetzt das Verzeichnis; wer eine Vorlage ergänzt,
+  # bekommt sie ohne Zutun mitgeprüft. (`LIES_MICH.md` ist die Herkunftsnotiz
+  # für Menschen, kein Auftrag.)
+  test "der Wächter sieht jede Vorlage im Verzeichnis an" do
+    geprueft =
+      for datei <- File.ls!(@dir), String.ends_with?(datei, ".md"), datei != "LIES_MICH.md", do: datei
+
+    assert length(geprueft) >= 16
+    assert "chronik_ueberblick.md" in geprueft
+    assert "zeit_einsortieren.md" in geprueft
+  end
+
+  # #1247 (Z2): die drei Aufträge des Zeit-Jack.
+  test "jeder Lauf des Zeit-Jack hat seine Vorlage, und sie ist gefüllt" do
+    zeilen =
+      for i <- 1..40 do
+        %{nr: i, utterance_id: "u#{i}", sprecher: "SL", text: "t", block_id: "b", block_text: nil, ooc?: false}
+      end
+
+    for lauf <- [:gedaechtnis, :einsortieren, :pruefen] do
+      stand = Worker.Jack.Zeit.Stand.neu(lauf, zeilen)
+
+      assert {:ok, text} = Worker.Jack.Zeit.Auftrag.fuer(stand, "Testrunde", @dir)
+
+      refute text =~ "{{", "#{lauf}: ungefüllter Platzhalter"
+      assert text =~ "Testrunde"
+      assert text =~ "hilfe()"
+    end
+  end
+
+  # Eine unbekannte Laufart darf NICHT auf eine fremde Vorlage zurückfallen —
+  # das Modell läse einen Auftrag für eine andere Arbeit, und niemand sähe es
+  # (die Klasse, die am 18.09.2026 die Chronik-Abschnitte still durch die des
+  # Resümees ersetzte).
+  test "eine unbekannte Laufart wirft, statt eine fremde Vorlage zu nehmen" do
+    stand = %{Worker.Jack.Zeit.Stand.neu(:einsortieren, []) | lauf: :ausgedacht}
+
+    assert_raise ArgumentError, ~r/:ausgedacht/, fn ->
+      Worker.Jack.Zeit.Auftrag.fuer(stand, "Testrunde", @dir)
+    end
+  end
+
+  # Der Einsortier-Auftrag trägt die Befunde aus der handgelesenen Referenz —
+  # sie sind der Grund, warum er so aussieht, wie er aussieht.
+  test "der Einsortier-Auftrag nennt die Befunde, die ihn begründen" do
+    text = File.read!(Path.join(@dir, "zeit_einsortieren.md"))
+
+    # Die Welt-Frage ist fast ein Münzwurf, keine Ausnahmebehandlung.
+    assert text =~ "121"
+    assert text =~ "90"
+
+    # Zurücklesen BIS zur Frage, nicht einen Block zurück — und nicht bei der
+    # ersten plausiblen Antwort aufhören.
+    assert text =~ "lies zurück"
+    assert text =~ "ersten plausiblen Antwort"
+
+    # Beginn-Formen sind Zeitpunkte, keine Spannen; die Richtung zählt.
+    assert text =~ "„seit“"
+    assert text =~ "Richtung"
+
+    # Ein Anker braucht keinen Kalender.
+    assert text =~ "braucht keinen Kalender"
+
+    # Der Halbtag gehört der Kette — ausser er steht da.
+    assert text =~ "halbtag"
   end
 end

@@ -8,7 +8,8 @@ Frage, was in einer einzelnen Sitzung geschah. Dafür gibt es die Resümees.
 
 Sie wird gelesen, wenn jemand nach Monaten wieder einsteigt, wenn eine
 Spielerin wissen will, ob der Auftrag auf der Insel vor oder nach dem Tod von
-Kodex lag, oder wenn der Spielleiter nachschlägt, wann die Seuche ausbrach.
+dem Tod des Fixers lag, oder wenn der Spielleiter nachschlägt, wann die
+Seuche ausbrach.
 
 ## Die Flughöhe — das Wichtigste an diesem Auftrag
 
@@ -46,7 +47,7 @@ ist das ein Ereignis mit einem Zeitpunkt — es gehört in die Chronik, auch wen
 keine Spielerfigur dabei war. Die großen Fixpunkte der Spielwelt sind Teil der
 Zeitleiste.
 
-**Ein dauerhafter Zustand bekommt keinen eigenen Eintrag.** „Kodex ist
+**Ein dauerhafter Zustand bekommt keinen eigenen Eintrag.** „der Fixer ist
 Steuerberater“, „das Gebäude hat neun Stockwerke“, „die Konzerne beherrschen
 den Distrikt“ — das ist Weltwissen ohne Zeitpunkt, und eine Zeitleiste aus
 solchen Einträgen wäre keine.

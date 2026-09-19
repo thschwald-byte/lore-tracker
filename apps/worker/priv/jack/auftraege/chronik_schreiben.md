@@ -34,7 +34,7 @@ Sag stattdessen, wie die Abschnitte zueinander stehen:
 - `{"art": "nach", "ziel": "<id>"}` — das geschah nach jenem,
 - `{"art": "vor", "ziel": "<id>"}` — davor,
 - `{"art": "gleichzeitig_mit", "ziel": "<id>"}` — zur selben Zeit,
-- `{"art": "absolut", "zeit": "3. Wintermond 2081"}` — **nur**, wenn im Spiel
+- `{"art": "absolut", "zeit": "3. Wintermond 1147"}` — **nur**, wenn im Spiel
   ein Zeitpunkt genannt wurde. Schreib ihn ab, wie er dasteht; rechne nichts um
   und ergänze nichts.
 - `{"art": "isoliert"}` — wenn du es nicht einordnen kannst.
