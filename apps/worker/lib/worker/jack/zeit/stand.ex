@@ -119,6 +119,21 @@ defmodule Worker.Jack.Zeit.Stand do
     %{s | gelesene_fakten: Enum.reduce(fakten, s.gelesene_fakten, &MapSet.put(&2, fakt_id(&1)))}
   end
 
+  @doc """
+  Sitzungs-ID → Nummer, abgeleitet aus der Reihenfolge des ersten Auftretens
+  in den Fakten. Damit trägt jede Fakt-Zeile ihre Sitzung, ohne dass die
+  Eingabe eine zweite Liste mitschleppt.
+  """
+  @spec sitzungsnummern(t()) :: %{String.t() => pos_integer()}
+  def sitzungsnummern(%__MODULE__{fakten: fakten}) do
+    fakten
+    |> Enum.map(&(Map.get(&1, :session_id) || Map.get(&1, "session_id")))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.with_index(1)
+    |> Map.new()
+  end
+
   @doc "Die ID eines Fakts, in beiden Schlüsselformen."
   @spec fakt_id(map()) :: String.t()
   def fakt_id(f), do: to_string(Map.get(f, :fakt_id) || Map.get(f, "fakt_id") || Map.get(f, "id") || "")
@@ -128,6 +143,31 @@ defmodule Worker.Jack.Zeit.Stand do
   def offene_fakten(%__MODULE__{} = s, deckel \\ 20) do
     fehlend = Enum.reject(s.fakten, &MapSet.member?(s.gelesene_fakten, fakt_id(&1)))
     %{anzahl: length(fehlend), fakten: Enum.take(fehlend, deckel)}
+  end
+
+  @doc """
+  Schreibt eine Notiz unter einen Abschnitt. Derselbe Schlüssel ersetzt.
+
+  **Ohne dieses Werkzeug wäre der ganze Gedächtnis-Lauf wirkungslos**
+  (#1247, zweiter echter Lauf): Der Auftrag verlangt Notizen zu ABLAUF,
+  ZEITEN und OFFEN, der Stand trug das Feld — aber nichts schrieb hinein.
+  Das Modell las alle 418 Fakten, formulierte den Ablauf, und stellte dann
+  fest: „Now I need to write notes (memory)" — es gab kein Werkzeug dafür.
+  Der nächste Lauf hätte ein leeres Gedächtnis bekommen.
+  """
+  @spec notieren(t(), String.t(), String.t(), String.t()) :: t()
+  def notieren(%__MODULE__{} = s, abschnitt, schluessel, text) do
+    eintrag = %{abschnitt: abschnitt, schluessel: schluessel, text: text}
+    %{s | notizen: Map.put(s.notizen, schluessel, eintrag)}
+  end
+
+  @doc "Die Notizen eines Abschnitts, in Eintragsreihenfolge."
+  @spec notizen(t(), String.t() | nil) :: [map()]
+  def notizen(%__MODULE__{notizen: n}, abschnitt \\ nil) do
+    n
+    |> Map.values()
+    |> Enum.filter(&(is_nil(abschnitt) or &1.abschnitt == abschnitt))
+    |> Enum.sort_by(& &1.schluessel)
   end
 
   @doc "Trägt einen Anker ein (oder ersetzt ihn unter derselben Adresse)."

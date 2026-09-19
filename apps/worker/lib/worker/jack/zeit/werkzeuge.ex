@@ -35,6 +35,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
   # der Wortlaut weg).
   @lesend ~w(fakten fakt mitschnitt linie offen zahlen)
+  # Nur der Gedächtnis-Lauf notiert: Er SETZT nichts, und sein Ergebnis ist
+  # genau diese Notiz — ohne sie wäre er wirkungslos (Befund des zweiten
+  # echten Laufs, 19.09.2026). Die beiden anderen Läufe legen ihr Ergebnis in
+  # Ankern ab.
+  @notierend ~w(notiz notizen_lesen)
   @setzend ~w(zeitpunkt spanne verschieben loesen dazu ersetzen konflikt zweifel)
 
   @doc """
@@ -45,7 +50,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   (noch nicht gebaut).
   """
   @spec namen(Stand.t()) :: [String.t()]
-  def namen(%Stand{lauf: :gedaechtnis}), do: @lesend ++ ["fertig"]
+  def namen(%Stand{lauf: :gedaechtnis}), do: @lesend ++ @notierend ++ ["fertig"]
   def namen(%Stand{}), do: @lesend ++ @setzend ++ ["fertig"]
 
   @doc "Die Werkzeuge für den Stand im Halter; jedes ruft den Halter."
@@ -57,7 +62,95 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   @doc false
   def definitionen(%Stand{} = s) do
-    Lesen.werkzeuge(s) ++ setzen_werkzeuge() ++ abschluss_werkzeuge()
+    Lesen.werkzeuge(s) ++ notiz_werkzeuge() ++ setzen_werkzeuge() ++ abschluss_werkzeuge(s.lauf)
+  end
+
+  # ─── Notizen (nur Gedächtnis-Lauf) ──────────────────────────────────
+
+  @abschnitte ~w(ABLAUF ZEITEN OFFEN)
+
+  defp notiz_werkzeuge do
+    [
+      %{
+        name: "notiz",
+        beschreibung:
+          "Hält etwas fest, das der nächste Lauf wissen muss. Das ist das " <>
+            "ERGEBNIS dieses Laufs — was du nicht notierst, ist nach dem Lauf weg. " <>
+            "abschnitt: „ABLAUF“ für die Stationen der Handlung in der Welt " <>
+            "(nicht das, was am Tisch besprochen wurde), „ZEITEN“ für alles, was " <>
+            "an Zeitangaben schon in den Fakten steht, „OFFEN“ für das, was du " <>
+            "nicht einordnen konntest, mit Grund. schluessel: ein kurzes Wort, " <>
+            "unter dem du es wiederfindest — derselbe Schlüssel ersetzt die " <>
+            "Notiz, du kannst also korrigieren.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "abschnitt" => %{"type" => "string", "enum" => @abschnitte},
+            "schluessel" => %{"type" => "string"},
+            "text" => %{"type" => "string"}
+          },
+          "required" => ~w(abschnitt schluessel text)
+        },
+        wiederholung: :zaehlt,
+        ausfuehren: &w_notiz/2
+      },
+      %{
+        name: "notizen_lesen",
+        beschreibung:
+          "Zeigt, was du bisher notiert hast — ohne Angabe alles, mit " <>
+            "abschnitt nur diesen. Nimm das, statt dich zu erinnern.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{"abschnitt" => %{"type" => "string", "enum" => @abschnitte}},
+          "required" => []
+        },
+        optional: ["abschnitt"],
+        wiederholung: :bis_aenderung,
+        ausfuehren: &w_notizen_lesen/2
+      }
+    ]
+  end
+
+  defp w_notiz(s, f) do
+    abschnitt = to_string(f["abschnitt"])
+    schluessel = String.trim(to_string(f["schluessel"] || ""))
+    text = String.trim(to_string(f["text"] || ""))
+
+    cond do
+      abschnitt not in @abschnitte ->
+        {s, {:error, "abschnitt muss einer von #{Enum.join(@abschnitte, ", ")} sein."}}
+
+      schluessel == "" ->
+        {s, {:error, "Ohne schluessel findest du die Notiz nicht wieder."}}
+
+      text == "" ->
+        {s, {:error, "Eine leere Notiz hält nichts fest."}}
+
+      true ->
+        s = Stand.notieren(s, abschnitt, schluessel, text)
+        z = Stand.zahlen(s)
+
+        {s,
+         {:ok,
+          "Notiert unter #{abschnitt}/#{schluessel}. " <>
+            "Notizen: #{map_size(s.notizen)}. Fakten gelesen #{z.fakten_gelesen}/#{z.fakten}."}}
+    end
+  end
+
+  defp w_notizen_lesen(s, f) do
+    abschnitt = f["abschnitt"] && to_string(f["abschnitt"])
+
+    case Stand.notizen(s, abschnitt) do
+      [] ->
+        {s, {:ok, "Noch nichts notiert#{if abschnitt, do: " unter #{abschnitt}", else: ""}."}}
+
+      eintraege ->
+        {s,
+         {:ok,
+          Enum.map_join(eintraege, "\n", fn n ->
+            "- **#{n.schluessel}** (#{n.abschnitt}): #{n.text}"
+          end)}}
+    end
   end
 
   # ─── Setzen ─────────────────────────────────────────────────────────
@@ -284,7 +377,32 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   # ─── Abschluss ──────────────────────────────────────────────────────
 
-  defp abschluss_werkzeuge do
+
+
+  # **Der Gedächtnis-Lauf hat einen anderen Abschluss, und das muss in der
+  # Beschreibung stehen** (Befund des zweiten echten Laufs): Die gemeinsame
+  # Fassung sprach von Zeilen, die zugeordnet sein müssen. Das Modell hielt
+  # inne — „fertig() requires that every row of the transcript has been
+  # assigned… but this run is about facts, not about the transcript" — kam
+  # zur richtigen Antwort und verlor eine Runde. Dieselbe Klasse wie die
+  # geteilten Werkzeugbeschreibungen beim Chronik-Jack (#1211).
+  defp abschluss_werkzeuge(:gedaechtnis) do
+    [
+      %{
+        name: "fertig",
+        beschreibung:
+          "Schliesst den Lauf ab. Geht, wenn du JEDEN Fakt gelesen hast — nicht, " <>
+            "wenn du jeden notiert hast: Notiert wird, was der nächste Lauf " <>
+            "braucht, und das ist weniger. Was noch fehlt, sagt dir diese " <>
+            "Antwort mit Zahlen, und offen() sagt es dir vorher.",
+        parameter: %{"type" => "object", "properties" => %{}, "required" => []},
+        wiederholung: :frei,
+        ausfuehren: &w_fertig/2
+      }
+    ]
+  end
+
+  defp abschluss_werkzeuge(_lauf) do
     [
       %{
         name: "fertig",

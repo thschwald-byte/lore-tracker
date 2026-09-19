@@ -29,8 +29,8 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
   defp fakten do
     [
-      %{fakt_id: "f1", claim: "Die Gruppe trifft sich im Lokal.", fact_type: "ereignis"},
-      %{fakt_id: "f2", claim: "Es ist Nacht.", fact_type: "zustand"}
+      %{fakt_id: "f1", claim: "Die Gruppe trifft sich im Lokal.", fact_type: "ereignis", session_id: "s-1"},
+      %{fakt_id: "f2", claim: "Es ist Nacht.", fact_type: "zustand", session_id: "s-2"}
     ]
   end
 
@@ -73,7 +73,9 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   # Gültige Beispielargumente je Werkzeug — für den Formtest, der jedes
   # einmal ruft.
   defp beispiel("fakten"), do: %{"ab" => 1, "anzahl" => 2}
-  defp beispiel("fakt"), do: %{"id" => "f1"}
+  defp beispiel("fakt"), do: %{"nummer" => 1}
+  defp beispiel("notiz"), do: %{"abschnitt" => "ABLAUF", "schluessel" => "k", "text" => "t"}
+  defp beispiel("notizen_lesen"), do: %{}
   defp beispiel("mitschnitt"), do: %{"ab" => 1, "anzahl" => 2}
   defp beispiel("linie"), do: %{}
   defp beispiel(n) when n in ~w(offen zahlen fertig hilfe), do: %{}
@@ -232,7 +234,48 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
 
     test "ein unbekannter Fakt wird abgelehnt, nicht erfunden" do
-      assert art(gedaechtnis(), "fakt", %{"id" => "gibts-nicht"}) == :error
+      assert art(gedaechtnis(), "fakt", %{"nummer" => 99}) == :error
+    end
+
+    test "die Faktenliste nennt die Sitzung" do
+      # Ohne sie sieht das Modell eine flache Liste aus vier Sitzungen und
+      # rätselt, warum Inhalte „sich wiederholen" (Befund des zweiten Laufs).
+      antwort = ruf(gedaechtnis(), "fakten", %{"ab" => 1, "anzahl" => 2})
+
+      assert antwort =~ "[S1]"
+      assert antwort =~ "[S2]"
+    end
+
+    test "notiz hält fest, was der nächste Lauf braucht" do
+      # Ohne dieses Werkzeug wäre der ganze Lauf wirkungslos: Er setzt nichts,
+      # und sein Ergebnis SIND die Notizen.
+      h = gedaechtnis()
+
+      assert ruf(h, "notiz", %{
+               "abschnitt" => "ABLAUF",
+               "schluessel" => "auftrag",
+               "text" => "Die Gruppe nimmt den Auftrag an."
+             }) =~ "Notiert unter ABLAUF/auftrag"
+
+      assert ruf(h, "notizen_lesen", %{}) =~ "Die Gruppe nimmt den Auftrag an"
+      assert map_size(stand(h).notizen) == 1
+    end
+
+    test "ein unbekannter Abschnitt und leere Notizen werden abgelehnt" do
+      h = gedaechtnis()
+
+      assert art(h, "notiz", %{"abschnitt" => "ABLAUF", "schluessel" => "k", "text" => " "}) ==
+               :error
+
+      assert art(h, "notiz", %{"abschnitt" => "ABLAUF", "schluessel" => " ", "text" => "t"}) ==
+               :error
+    end
+
+    test "die beiden anderen Läufe notieren nicht — sie setzen Anker" do
+      namen = Werkzeuge.namen(Stand.neu(:einsortieren, mitschnitt()))
+
+      refute "notiz" in namen
+      assert "zeitpunkt" in namen
     end
   end
 

@@ -45,13 +45,14 @@ defmodule Worker.Jack.Zeit.Lesen do
       %{
         name: "fakt",
         beschreibung:
-          "Ein einzelner Fakt mit allem, was er trägt: Aussage, Figuren, Bögen, " <>
-            "Art und die Blöcke, auf die er sich stützt. Nimm das, wenn dir in der " <>
-            "Liste etwas unklar ist.",
+          "Ein einzelner Fakt mit allem, was er trägt: Aussage, Art, Figur, " <>
+            "Sitzung und die Blöcke, auf die er sich stützt. nummer ist die " <>
+            "laufende Nummer aus fakten(). Nimm das, wenn dir in der Liste etwas " <>
+            "unklar ist.",
         parameter: %{
           "type" => "object",
-          "properties" => %{"id" => %{"type" => "string"}},
-          "required" => ["id"]
+          "properties" => %{"nummer" => %{"type" => "integer"}},
+          "required" => ["nummer"]
         },
         wiederholung: :zaehlt,
         ausfuehren: &w_fakt/2
@@ -132,34 +133,46 @@ defmodule Worker.Jack.Zeit.Lesen do
       _ ->
         s = Stand.fakten_gelesen(s, gewaehlt)
         z = Stand.zahlen(s)
+        sitzungen = Stand.sitzungsnummern(s)
 
         {s,
          {:ok,
-          Enum.map_join(Enum.with_index(gewaehlt, ab), "\n", &fakt_zeile/1) <>
+          Enum.map_join(Enum.with_index(gewaehlt, ab), "\n", &fakt_zeile(&1, sitzungen)) <>
             "\n\n(Fakt #{ab}–#{ab + length(gewaehlt) - 1} von #{z.fakten}; gelesen " <>
               "#{z.fakten_gelesen}, offen #{z.fakten_offen}.)"}}
     end
   end
 
   defp w_fakt(%Stand{} = s, f) do
-    id = to_string(f["id"] || "")
+    nr = f["nummer"]
 
-    case Enum.find(s.fakten, &(Stand.fakt_id(&1) == id)) do
+    case nr && nr >= 1 && Enum.at(s.fakten, nr - 1) do
       nil ->
-        {s, {:error, "Einen Fakt #{id} gibt es nicht. Die Liste zeigt dir fakten()."}}
+        {s, {:error, "Einen Fakt #{inspect(nr)} gibt es nicht — es sind #{length(s.fakten)}."}}
+
+      false ->
+        {s, {:error, "Einen Fakt #{inspect(nr)} gibt es nicht — es sind #{length(s.fakten)}."}}
 
       fakt ->
         {Stand.fakten_gelesen(s, [fakt]), {:ok, fakt_voll(fakt)}}
     end
   end
 
-  defp fakt_zeile({fakt, nr}) do
-    "#{nr}  [#{feld(fakt, :fakt_id)}] #{feld(fakt, :claim)}"
+  # **Die Sitzung gehört in die Zeile** (Befund des zweiten echten Laufs):
+  # Die Fakten sind kampagnenweit, und ohne die Nummer sieht das Modell 418
+  # Einträge aus vier Sitzungen als eine flache Liste. Es rätselte mehrfach —
+  # „facts 205 through 239 seem to repeat earlier content, suggesting they
+  # might be from a different session or out of sequence" — und baute sich
+  # daraus ein falsches Bild vom Ablauf. Raten statt nachsehen ist immer ein
+  # fehlendes Feld.
+  defp fakt_zeile({fakt, nr}, sitzungen) do
+    s = Map.get(sitzungen, feld(fakt, :session_id))
+    "#{nr}  [S#{s || "?"}] #{feld(fakt, :claim)}"
   end
 
   defp fakt_voll(fakt) do
     Enum.map_join(
-      [:fakt_id, :claim, :fact_type, :character_alias, :session_number, :source_refs],
+      [:fakt_id, :claim, :fact_type, :character_alias, :session_id, :source_refs],
       "\n",
       fn k -> "#{k}: #{inspect(feld(fakt, k), limit: 8)}" end
     )
