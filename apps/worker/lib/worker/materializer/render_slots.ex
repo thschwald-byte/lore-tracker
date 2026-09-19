@@ -31,6 +31,28 @@ defmodule Worker.Materializer.RenderSlots do
     generated_md generated_version_id curated_md curated_event_id
     released_version_id release_event_id)a
 
+  @doc """
+  Die Spaltenliste, nach der dieses Modul `worker_summary_entries` liest und
+  schreibt — **positional**, s. `epos_fields/0`.
+  """
+  def summary_fields, do: @summary_fields
+
+  @doc """
+  Die Spaltenliste, nach der dieses Modul `worker_epos_entries` liest und
+  schreibt.
+
+  **Sie ist positional an die Tabelle gebunden**: `read_epos/1` zippt das
+  Mnesia-Tupel gegen diese Liste, `write_epos/1` baut das Tupel aus ihr. Eine
+  neue Spalte an der Tabelle ohne denselben Eintrag hier schreibt ein zu
+  kurzes Tupel — bei #1211 hat genau diese Klasse an der Chronik-Tabelle den
+  Prod-Worker über zwanzig Neustarts nicht hochkommen lassen, während auf der
+  leeren Teststage alles grün blieb.
+
+  Öffentlich, damit `render_slots_felder_test.exs` die Liste gegen
+  `:mnesia.table_info(…, :attributes)` halten kann.
+  """
+  def epos_fields, do: @epos_fields
+
   @doc "Fold-Namen der Summary-Slots (für die Cascade-Aufräumung)."
   def summary_folds, do: [:summary_generated, :summary_curated, :summary_release]
 
