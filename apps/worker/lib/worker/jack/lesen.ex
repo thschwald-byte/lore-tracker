@@ -77,6 +77,10 @@ defmodule Worker.Jack.Lesen do
         beschreibung:
           "Sucht einen Ausdruck im ganzen Mitschnitt und liefert die Fundstellen als " <>
             "Blocknummer, Sprecher und Textzeile. Gross-/Kleinschreibung ist egal. " <>
+            "Gefunden wird, wo ein Wort mit deinem Begriff ANFAENGT: „Kamera“ findet auch " <>
+            "„Kameras“, „Wache“ auch „Wachen“. Steckt dein Begriff mitten im Wort, zaehlt " <>
+            "er nicht: „Gang“ findet nicht „Eingang“ und nicht „gegangen“. Findet sich " <>
+            "nichts, sagt die Antwort, in welchen Woertern der Begriff innen vorkommt. " <>
             "Damit findest du frueher Gesagtes, ohne alles erneut zu lesen: Namen, " <>
             "Gegenstaende, Orte, Rueckbezuege. Hoechstens 40 Fundstellen je Aufruf — " <>
             "kommen mehr, wird die Zahl genannt und du kannst genauer suchen.",
@@ -183,19 +187,57 @@ defmodule Worker.Jack.Lesen do
     if String.length(nadel) < 3 do
       {s, {:error, "Der Begriff ist zu kurz — nimm mindestens drei Zeichen."}}
     else
-      funde = funde(s, nadel, Map.get(p, "ab") || 0, Map.get(p, "bis") || s.max_block)
-      {s, {:ok, Enum.join([kopf(begriff, length(funde)) | Enum.take(funde, @treffer_max)], "\n")}}
+      von = Map.get(p, "ab") || 0
+      bis = Map.get(p, "bis") || s.max_block
+      funde = funde(s, Beleg.wortmuster(begriff), von, bis)
+
+      zeilen =
+        case funde do
+          [] -> [kopf(begriff, 0) | wortteil_hinweis(s, nadel, von, bis)]
+          f -> [kopf(begriff, length(f)) | Enum.take(f, @treffer_max)]
+        end
+
+      {s, {:ok, Enum.join(zeilen, "\n")}}
     end
   end
 
-  defp funde(s, nadel, von, zu) do
+  # Issue #1238: Wortgrenzen statt Teilstring. Das Muster kommt fertig herein,
+  # es wird einmal je Suche gebaut — hier laufen bis zu tausende Blöcke durch.
+  defp funde(s, muster, von, zu) do
     von..zu//1
     |> Enum.map(&{&1, Stand.block(s, &1)})
-    |> Enum.filter(fn {_, blk} -> blk && String.contains?(Beleg.norm(blk.text || ""), nadel) end)
+    |> Enum.filter(fn {_, blk} -> blk && Beleg.wort?(blk.text || "", muster) end)
     |> Enum.map(fn {i, blk} -> zeile(i, blk) end)
   end
 
-  defp kopf(begriff, 0), do: "Keine Fundstelle fuer #{Jason.encode!(begriff)}."
+  # Issue #1238: was die Suche als Wortteil GEFUNDEN HÄTTE — damit die
+  # strengere Suche nichts stillschweigend verschluckt. Ob „Eingang" gemeint
+  # war, entscheidet der Leser, nicht das Werkzeug.
+  defp wortteil_hinweis(s, nadel, von, zu) do
+    woerter =
+      for i <- von..zu//1,
+          blk = Stand.block(s, i),
+          blk,
+          wort <- Beleg.wortteile(blk.text || "", nadel),
+          uniq: true,
+          do: wort
+
+    case woerter do
+      [] ->
+        []
+
+      w ->
+        [
+          "Mitten im Wort kommt es in #{length(w)} verschiedenen Woertern vor" <>
+            if(length(w) <= 8, do: ": ", else: ", darunter: ") <>
+            (w |> Enum.sort() |> Enum.take(8) |> Enum.join(", ")) <>
+            ". Such danach, wenn du eines davon meinst."
+        ]
+    end
+  end
+
+  defp kopf(begriff, 0),
+    do: "Kein Wort faengt mit #{Jason.encode!(begriff)} an."
 
   defp kopf(_begriff, n) when n > @treffer_max,
     do: "#{n} Fundstelle(n), die ersten #{@treffer_max}:"

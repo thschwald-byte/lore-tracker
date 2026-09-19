@@ -62,6 +62,83 @@ defmodule Worker.Jack.Beleg do
   @spec norm(term()) :: String.t()
   def norm(s), do: s |> falten() |> String.downcase()
 
+  @doc """
+  Issue #1238: das Suchmuster zu einem Begriff — mit **Wortgrenzen**.
+
+  Die Suchwerkzeuge verglichen bis dahin per Teilstring (`String.contains?`).
+  Auf Deutsch ist das unbrauchbar: an der eingefrorenen S3-Referenz (1802
+  Blöcke echter Mitschnitt) gemessen liefert „Gang" 16 Fundstellen, von denen
+  **keine** das Wort enthält (Eingang, Ausgang, gegangen, Eingangsportal);
+  „Bar" 14 (Bargäste, furchtbar, bombardiert), „Ort" 28 mit einer echten.
+  Komposita, Vorsilben und Flexion treffen fast immer.
+
+  Das ist die teurere Sorte Fehler: ein Werkzeug, das nichts findet, sagt
+  „nichts gefunden" und das Modell sucht anders weiter — eines, das lauter
+  Falsches findet, führt es aktiv in die Irre, mit echten, zitierbaren
+  Adressen.
+
+  **Die Grenze steht nur am Wortanfang** (`\bbegriff`, nicht `\bbegriff\b`) —
+  Entscheidung des Maintainers am 18.09.2026, an denselben Blöcken gemessen.
+  Deutsch ist asymmetrisch: was **vorn** angehängt wird, ist fast immer ein
+  anderes Wort (*Ein*gang, *furcht*bar, *d*ort), was **hinten** dranhängt,
+  meist dasselbe (Kamera**s**, Drohnen**betrieb**, Wache**n**). Eine beidseitige
+  Grenze wirft deshalb echte Treffer weg:
+
+      Begriff   Teilstring   nur vorn   beidseitig
+      gang              16          0            0
+      kamera            24         24           13   ← verliert Kameras, Kamerafeeds
+      drohne            74         69           65   ← verliert Drohnenbetrieb
+      wache             13         11            0   ← verliert den Plural
+
+  Der Preis bleibt und ist benannt: „heiß" findet weiterhin „heißt" (26 von 30),
+  „bar" weiterhin „Bargäste" (7 von 14). Homograf beginnende Wörter fängt diese
+  Regel nicht — die Komposita-Falle, die den Defekt ausmachte, schon.
+
+  **Kein Stemming, keine Lemmatisierung, keine Synonymlisten.** Das ist die
+  Klasse, die hier schon zweimal teuer war (der `event:`-Matcher aus #1109, den
+  #1213 samt Zeit-Vorlauf wieder entfernt hat). Eine Wortanfangs-Grenze ist
+  deterministisch und in einem Satz erklärbar — und genau dieser Satz steht in
+  der Beschreibung jedes Suchwerkzeugs, damit das Modell die Regel kennt,
+  statt sie zu erraten.
+
+  Mehrwortige Begriffe funktionieren mit derselben Konstruktion. Das Muster
+  wird **einmal je Suche** gebaut, nicht je Kandidat: die Werkzeuge gehen über
+  bis zu vier Quellen mit je tausenden Einträgen.
+  """
+  @spec wortmuster(String.t()) :: Regex.t()
+  def wortmuster(begriff) do
+    Regex.compile!("\\b" <> Regex.escape(norm(begriff)), "u")
+  end
+
+  @doc """
+  Issue #1238: Beginnt im Text ein Wort mit dem Begriff? `text` wird hier
+  normalisiert, das Muster kommt fertig aus `wortmuster/1`.
+  """
+  @spec wort?(term(), Regex.t()) :: boolean()
+  def wort?(text, muster), do: Regex.match?(muster, norm(text))
+
+  @doc """
+  Issue #1238: Kommt der Begriff überhaupt als Wort**teil** vor? Nur für den
+  Rückfall-Hinweis, wenn die Wortsuche leer ausgeht — dann sagt das Werkzeug,
+  was es gefunden HÄTTE, statt still strenger zu werden. Die Entscheidung
+  bleibt beim Modell.
+  """
+  @spec wortteil?(term(), String.t()) :: boolean()
+  def wortteil?(text, nadel), do: String.contains?(norm(text), nadel)
+
+  @doc """
+  Issue #1238: Die Wörter, in denen der Begriff im INNEREN steckt — für den
+  Rückfall-Hinweis („als Wortteil in: Eingang, Ausgang, gegangen"). Wörter, die
+  mit dem Begriff beginnen, stehen nicht darin: die findet die Suche selbst.
+  """
+  @spec wortteile(term(), String.t()) :: [String.t()]
+  def wortteile(text, nadel) do
+    ~r/[\p{L}\p{N}]*#{Regex.escape(nadel)}[\p{L}\p{N}]*/u
+    |> Regex.scan(norm(text))
+    |> Enum.map(&hd/1)
+    |> Enum.reject(&String.starts_with?(&1, nadel))
+  end
+
   @doc "Die Stücke eines Belegs, je `%{n: normalisiert, roh: Wortlaut}`."
   @spec stuecke(term()) :: [%{n: String.t(), roh: String.t()}]
   def stuecke(beleg) do
