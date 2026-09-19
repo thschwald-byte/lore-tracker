@@ -81,7 +81,20 @@ defmodule Worker.Jack.Zeit do
   # Einsortier-Lauf gesetzt hat, gilt auch dann, wenn die Prüfung stirbt.
   defp pruefen(eingabe, e, opts) do
     if Keyword.get(opts, :pruefen, true) do
-      eingabe = Map.merge(eingabe, %{anker: Map.values(e.stand.anker), notizen: e.stand.notizen})
+      # **Der Prüf-Lauf erbt, was der Einsortier-Lauf getan hat** (#1247):
+      # die Anker, die Notizen — und die Leseabdeckung samt Einordnung.
+      # Ohne das Letzte musste er 2168 Zeilen ein zweites Mal lesen und ein
+      # zweites Mal einordnen, nur um abschliessen zu dürfen. Sein Auftrag
+      # sagt das Gegenteil („geh von den Befunden aus, nicht von Zeile 1"),
+      # und die Schranke gewann: Im Lauf vom 19.09.2026 verbrachte er über
+      # neunzig Runden damit, die Linie abzusuchen, statt sie zu prüfen.
+      eingabe =
+        Map.merge(eingabe, %{
+          anker: Map.values(e.stand.anker),
+          notizen: e.stand.notizen,
+          gelesen: e.stand.gelesen,
+          einordnung: e.stand.einordnung
+        })
 
       case lauf(eingabe, :pruefen, opts) do
         {:ok, p} ->
@@ -139,6 +152,8 @@ defmodule Worker.Jack.Zeit do
       session_id: Map.get(eingabe, :session_id),
       campaign_id: Map.get(eingabe, :campaign_id),
       kalender: Map.get(eingabe, :kalender),
+      gelesen: Map.get(eingabe, :gelesen),
+      einordnung: Map.get(eingabe, :einordnung),
       anker: Map.get(eingabe, :anker, []),
       notizen: Map.get(eingabe, :notizen, %{})
     )

@@ -68,6 +68,7 @@ defmodule Worker.Jack.Zeit.Stand do
             mitschnitt: [],
             gelesen: MapSet.new(),
             einordnung: %{},
+            gesehen: MapSet.new(),
             anker: %{},
             offene: %{},
             ausgegeben: %{},
@@ -86,6 +87,10 @@ defmodule Worker.Jack.Zeit.Stand do
       session_id: opts[:session_id],
       campaign_id: opts[:campaign_id],
       kalender: opts[:kalender] || Calendar.default(),
+      # Der Prüf-Lauf setzt auf der Arbeit des Einsortier-Laufs auf — er
+      # liest nicht noch einmal alles, sondern prüft das Ergebnis.
+      gelesen: opts[:gelesen] || MapSet.new(),
+      einordnung: opts[:einordnung] || %{},
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{}
     }
@@ -99,6 +104,20 @@ defmodule Worker.Jack.Zeit.Stand do
   @spec gelesen(t(), [Mitschnitt.zeile()]) :: t()
   def gelesen(%__MODULE__{} = s, zeilen) do
     %{s | gelesen: Enum.reduce(zeilen, s.gelesen, &MapSet.put(&2, &1.utterance_id))}
+  end
+
+  @doc """
+  Merkt, welche Befunde Jack angesehen hat — die Schranke des Prüf-Laufs.
+
+  **Sein Gegenstand ist die Linie, nicht der Mitschnitt** (#1247). Die
+  Leseabdeckung erbt er vom Einsortier-Lauf; was er selbst leisten muss,
+  ist: jeden Befund der Rechnung ansehen und entscheiden. Ein Befund gilt
+  als angesehen, sobald er die betroffene Stelle anfasst — mit `linie`,
+  `mitschnitt` oder einem setzenden Werkzeug.
+  """
+  @spec gesehen(t(), [String.t()]) :: t()
+  def gesehen(%__MODULE__{} = s, anker_ids) do
+    %{s | gesehen: Enum.reduce(anker_ids, s.gesehen, &MapSet.put(&2, &1))}
   end
 
   @doc """

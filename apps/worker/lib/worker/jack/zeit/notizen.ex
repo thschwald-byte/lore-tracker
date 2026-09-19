@@ -33,9 +33,12 @@ defmodule Worker.Jack.Zeit.Notizen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "abschnitt" => %{"type" => "string", "enum" => @abschnitte},
-            "schluessel" => %{"type" => "string"},
-            "text" => %{"type" => "string"}
+            "abschnitt" => %{"type" => "string", "enum" => @abschnitte,
+              "description" => "ABLAUF (die Stationen der Handlung), ZEITEN (jede Zeitangabe mit Zeilennummer) oder OFFEN (was du nicht einordnen konntest)."},
+            "schluessel" => %{"type" => "string",
+              "description" => "Kurzer Name des Eintrags. Derselbe Schlüssel ersetzt die bisherige Notiz — so korrigierst du, ohne zu wiederholen."},
+            "text" => %{"type" => "string",
+              "description" => "Der Eintrag selbst. Bei ZEITEN gehört die Zeilennummer hinein, sonst muss der nächste Lauf sie suchen."}
           },
           "required" => ~w(abschnitt schluessel text)
         },
@@ -49,7 +52,10 @@ defmodule Worker.Jack.Zeit.Notizen do
             "abschnitt nur diesen. Nimm das, statt dich zu erinnern.",
         parameter: %{
           "type" => "object",
-          "properties" => %{"abschnitt" => %{"type" => "string", "enum" => @abschnitte}},
+          "properties" => %{
+            "abschnitt" => %{"type" => "string", "enum" => @abschnitte,
+              "description" => "Nur diesen Abschnitt zeigen; ohne Angabe alle."}
+          },
           "required" => []
         },
         optional: ["abschnitt"],

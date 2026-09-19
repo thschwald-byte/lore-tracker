@@ -51,8 +51,51 @@ defmodule Worker.Jack.Zeit.Abschluss do
   @spec hindernisse(Stand.t()) :: [String.t()]
   def hindernisse(%Stand{lauf: :gedaechtnis} = s), do: ungelesen(s)
 
+  # **Der Prüf-Lauf hat eine andere Schranke** (#1247): Leseabdeckung und
+  # Einordnung erbt er vom Einsortier-Lauf, sie noch einmal zu verlangen
+  # hiesse, 2168 Zeilen doppelt zu lesen. Was er leisten muss, ist der Blick
+  # auf jeden Befund — und dass das Ergebnis trägt (kein Tischgespräch auf
+  # der Linie, keine Verschiebung ins Leere).
+  def hindernisse(%Stand{lauf: :pruefen} = s),
+    do: ungesehene_befunde(s) ++ tisch_auf_der_linie(s) ++ ohne_ziel(s)
+
   def hindernisse(%Stand{} = s),
     do: ungelesen(s) ++ nicht_eingeordnet(s) ++ tisch_auf_der_linie(s) ++ ohne_ziel(s)
+
+  @doc """
+  Die Befunde, die Jack noch nicht angesehen hat — leer heisst: alle
+  gesehen. Öffentlich, weil `offen()` sie ebenfalls nennt.
+  """
+  @spec ungesehene_befunde(Stand.t()) :: [String.t()]
+  def ungesehene_befunde(%Stand{} = s) do
+    offen =
+      s
+      |> befunde()
+      |> Enum.reject(&MapSet.member?(s.gesehen, &1.anker_id))
+
+    case offen do
+      [] ->
+        []
+
+      liste ->
+        [
+          "#{length(liste)} Befund(e) hast du noch nicht angesehen. Das ist die " <>
+            "Arbeit dieses Laufs: Jeder ist eine Stelle, an der die Rechnung " <>
+            "stolpert — sieh sie dir an und entscheide, ob sie stimmt. " <>
+            "Offen:\n" <>
+            Enum.map_join(Enum.take(liste, @deckel), "\n", &("  - " <> String.slice(&1.text, 0, 120)))
+        ]
+    end
+  end
+
+  @doc "Die Befunde der gerechneten Linie."
+  @spec befunde(Stand.t()) :: [map()]
+  def befunde(%Stand{} = s) do
+    stellen =
+      Enum.map(s.mitschnitt, &%{utterance_id: &1.utterance_id, session_nr: 1, pos: &1.nr})
+
+    Worker.Timeline.Linie.bauen(stellen, Map.values(s.anker)).befunde
+  end
 
   # **Jede Zeile braucht eine Einordnung** (Maintainer, 19.09.2026): Was auf
   # der Linie liegt, soll Spielwelt sein. Eine nicht eingeordnete Zeile wird

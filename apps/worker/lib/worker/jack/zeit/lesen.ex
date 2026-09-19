@@ -36,8 +36,10 @@ defmodule Worker.Jack.Zeit.Lesen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "ab" => %{"type" => "integer"},
-            "anzahl" => %{"type" => "integer"}
+            "ab" => %{"type" => "integer",
+              "description" => "Erste Zeilennummer des Ausschnitts."},
+            "anzahl" => %{"type" => "integer",
+              "description" => "Wie viele Zeilen (Standard und Höchstwert #{@fenster}). Ein Abschnitt darf kleiner sein, wenn ein Szenenwechsel es nahelegt."}
           },
           "required" => ["ab"]
         },
@@ -62,7 +64,12 @@ defmodule Worker.Jack.Zeit.Lesen do
             "trotzdem falsch.",
         parameter: %{
           "type" => "object",
-          "properties" => %{"ab" => %{"type" => "integer"}, "anzahl" => %{"type" => "integer"}},
+          "properties" => %{
+            "ab" => %{"type" => "integer",
+              "description" => "Erste Zeilennummer des Ausschnitts der Linie; ohne Angabe von vorn."},
+            "anzahl" => %{"type" => "integer",
+              "description" => "Wie viele Zeilen der Linie gezeigt werden."}
+          },
           "required" => []
         },
         optional: ["ab", "anzahl"],
@@ -114,9 +121,29 @@ defmodule Worker.Jack.Zeit.Lesen do
          {:ok,
           Mitschnitt.als_text(zeilen) <>
             "\n\n(Zeile #{ab}–#{letzte} von #{z.utterances}; gelesen #{z.gelesen}, " <>
-              "offen #{z.offen}.)"}}
+              "offen #{z.offen}.#{einordnungs_hinweis(s, z)})"}}
     end
   end
+
+  # **Die Erinnerung gehört in die Antwort, die er ohnehin liest.**
+  # Im Lauf vom 19.09.2026 las der Einsortier-Lauf Hunderte Zeilen und
+  # ordnete keine einzige ein — er dachte die Einordnung sogar aus („lines
+  # 1–41: loesen, table talk") und rief sie nicht auf. Der Reststand mit
+  # „noch ohne Einordnung" hing nur an den SETZENDEN Werkzeugen, also genau
+  # an denen, die er nicht benutzte.
+  @sammel_grenze 300
+
+  defp einordnungs_hinweis(%Stand{lauf: :gedaechtnis}, _z), do: ""
+  defp einordnungs_hinweis(_s, %{ohne_einordnung: 0}), do: ""
+
+  defp einordnungs_hinweis(_s, %{ohne_einordnung: n}) when n > @sammel_grenze do
+    " Noch ohne Einordnung: #{n} — das ist viel. Ordne das Gelesene ein, " <>
+      "bevor du weiterliest: ingame(von,bis) für die Welt, loesen(von,bis,grund) " <>
+      "für Tischgespräch. Ein Abschnitt ist EIN Aufruf."
+  end
+
+  defp einordnungs_hinweis(_s, %{ohne_einordnung: n}),
+    do: " Noch ohne Einordnung: #{n}."
 
   defp w_linie(%Stand{} = s, f) do
     linie = Linie.bauen(stellen(s), Map.values(s.anker))
@@ -124,6 +151,12 @@ defmodule Worker.Jack.Zeit.Lesen do
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || 40, 40)
     ausschnitt = linie.reihe |> Enum.drop(ab - 1) |> Enum.take(anzahl)
+
+    # **Wer die Linie samt Befunden liest, hat sie gesehen** — das ist die
+    # Schranke des Prüf-Laufs (#1247). Die Befunde stehen unter dem
+    # Ausschnitt, also gelten sie mit diesem Aufruf als angesehen; was er
+    # daraus macht, ist seine Entscheidung und nicht Gegenstand der Schranke.
+    s = Stand.gesehen(s, Enum.map(linie.befunde, & &1.anker_id))
 
     {s, {:ok, linien_text(s, linie, ausschnitt, ab)}}
   end

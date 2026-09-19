@@ -3,6 +3,47 @@
 Du hast im vorigen Lauf gelesen, was in dieser Kampagne geschieht. Jetzt gehst
 du durch den **Mitschnitt** und bringst die Äußerungen in eine zeitliche Reihe.
 
+## Die Reihenfolge, in der es zählt
+
+Wenn zwei Regeln sich zu widersprechen scheinen, gilt die weiter oben.
+
+1. **Nichts erfinden.** Kein Anker ohne Beleg im Text.
+2. **Was ein Mensch festgelegt hat, bleibt.** Dagegen hilft nur `konflikt`.
+3. **Jede Zeile lesen** — auch die, die du nicht anfasst.
+4. **Jede Zeile einordnen**: `ingame`, `loesen` oder `zweifel`.
+5. **Genannte Zeiten als Anker setzen** (`zeitpunkt`), vergangene Dauer als
+   `spanne`, angekündigte als `frist`.
+6. **Rückblicke und Ankündigungen an ihren Platz** (`verschieben`) — aber nur,
+   wenn der Text es belegt.
+7. **Im Zweifel `zweifel`**, nie raten.
+8. **`linie()` prüfen**, bevor du weitergehst; `fertig()` erst, wenn `offen()`
+   nichts mehr nennt.
+
+## So arbeitest du — abschnittsweise, nicht erst lesen und dann alles
+
+**Lies ein Stück, ordne dieses Stück ein, setz die Anker, die dir darin
+begegnet sind. Dann das nächste.**
+
+Nicht: erst zweitausend Zeilen lesen und dann einordnen. Das geht schief,
+und zwar nicht aus Bequemlichkeit — dein Gedächtnis wird zwischendurch
+zusammengefasst, und was du nur gedacht und nicht aufgerufen hast, ist dann
+weg. Was du eingeordnet hast, bleibt.
+
+Ein Durchgang sieht so aus:
+
+    mitschnitt(ab: 1, anzahl: 80)
+    loesen(von: 1, bis: 41, grund: "Technik-Geplänkel vor dem Spiel")
+    ingame(von: 42, bis: 80)
+    zeitpunkt(zeilen: [61], wert: "kurz vor 2080", welt: "spielwelt", beleg: "…")
+    mitschnitt(ab: 81, anzahl: 80)
+    …
+
+Achtzig Zeilen sind der Richtwert, keine Vorschrift: Nimm weniger, wenn ein
+Szenenwechsel eine feinere Grenze nahelegt. Worauf es ankommt, sind drei bis
+fünf Aufrufe je Abschnitt statt dreißig — `ingame`, `loesen` und `zweifel`
+nehmen alle `von`/`bis`, und ein Mitschnitt wechselt in Abschnitten zwischen
+Tisch und Welt, nicht im Satztakt.
+
 ## Wie die Linie funktioniert — lies das zuerst
 
 Jede Äußerung steht schon an einer Stelle: **in der Reihenfolge, in der
@@ -14,16 +55,19 @@ Deine Arbeit sind die **Abweichungen und die Anker**:
 - **`zeitpunkt`** — hier wurde eine Zeit *gesagt*. „Drei viertel elf“, „am
   fünfzehnten“, „kurz vor sieben“. Das ist ein fester Punkt auf der Linie.
 - **`spanne`** — hier ist Zeit *vergangen*. „Wir sind zwei Stunden
-  marschiert“, „eine halbe Stunde später“. Ohne Spannen steht die Linie
-  still: Zwischen zwei genannten Uhrzeiten liegen oft Stunden Spielzeit, die
-  niemand als Uhrzeit ausspricht.
+  marschiert“, „eine halbe Stunde später“. Verrechnet wird sie an der
+  **höchsten** der Zeilennummern, die du nennst: Der Satz fällt, wenn die
+  Zeit schon vorbei ist. Ohne Spannen steht die Linie still — zwischen zwei
+  genannten Uhrzeiten liegen oft Stunden Spielzeit, die niemand ausspricht.
 - **`frist`** — hier ist Zeit *angekündigt*. „Die Verhandlungen dauern noch
-  eine Woche“, „in zwei Stunden kommt der Kurier“. Sie verschiebt nichts: Die
-  Zeit steht noch bevor. Festgehalten wird sie trotzdem — sagt später jemand
-  „die Verhandlungen sind vorbei“, ergibt sich aus beidem eine Spanne.
+  eine Woche“, „in zwei Stunden kommt der Kurier“. **Eine Frist bewegt die
+  Linie nie** — die Zeit steht noch bevor. Festgehalten wird sie trotzdem:
+  sagt später jemand „die Verhandlungen sind vorbei“, ergibt sich aus beidem
+  eine Spanne.
 - **`verschieben`** — hier steht etwas an der falschen Stelle. Ein Rückblick
   liegt in der **Vergangenheit**, auch wenn er mitten in der Sitzung erzählt
-  wird; eine Ankündigung in der Zukunft.
+  wird; eine Ankündigung in der Zukunft. **Verschieben braucht einen Beleg
+  im Text** — ohne einen bleibt die Zeile, wo sie ist.
 - **`loesen`** — das gehört gar nicht auf die Linie. Tischgespräch,
   Regelfrage, Würfelwurf, Smalltalk.
 
@@ -61,16 +105,15 @@ sein wie Setzen.
 
 ## Drei Sorten Rauschen, die wie Zeit aussehen
 
-**Eine Zahl ist keine Zeit.** Geldbeträge, Seitenzahlen, Modifikatoren
-(„um eins erhöht“), Entfernungen, Schadenswerte, Würfelergebnisse,
-Spielerzahlen („um drei von vier“). Die gehören mit `loesen` heraus.
+**Eine Zahl ist keine Zeit.** Geldbeträge, Seitenzahlen, Modifikatoren,
+Entfernungen, Schadenswerte, Würfelergebnisse. Die gehören mit `loesen`
+heraus.
 
 **Unsere Welt ist nicht die Spielwelt.** Smalltalk über Sport, Filme,
 Politik ist voller echter Zeitangaben mit echten Jahreszahlen — „die sind vor
-vier Jahren hingegangen“, „das läuft seit 2014“, „in den letzten dreißig
-Jahren zweimal“. Für die Linie ist das genauso falsch wie eine Küchenuhr, und
-es sieht viel überzeugender aus. Es steht meistens in den ersten Blöcken,
-bevor das Spiel anfängt.
+vier Jahren hingegangen“, „das läuft seit 2014“. Für die Linie ist das genauso
+falsch wie eine Küchenuhr, und es sieht viel überzeugender aus. Es steht
+meistens in den ersten Blöcken, bevor das Spiel anfängt.
 
 **Eine Wirkdauer ist keine Spanne.** „Eine Stunde hat man Zeit, das zu
 benutzen“ sagt, wie lange etwas *dauert*, nicht, wann es *geschieht*. Die
@@ -144,8 +187,10 @@ wird. Drei Antworten, und sie sind zugleich die Werkzeuge:
 - **`ingame`** — gehört zur erzählten Welt, bleibt auf der Linie.
 - **`loesen`** — Tischgespräch, Regelfrage, Würfelwurf, Smalltalk, Pause.
   Raus aus der Kette.
-- **`zweifel`** — du kannst es nicht entscheiden. Bleibt auf der Linie, ist
-  aber vermerkt.
+- **`zweifel`** — du kannst es nicht entscheiden. Die Zeile bleibt auf der
+  Linie, ist aber vermerkt, und es wird keine Zeit aus ihr abgeleitet. Das
+  gilt für **beide** Unklarheiten: „Welt oder Tisch?“ und „gespielt schon,
+  aber die Zeitangabe verstehe ich nicht“.
 
 **Warum das nicht optional ist:** Was auf der Linie liegt, bekommt eine
 Spielzeit — auch wenn es keine hat. Eine Zeile Tischgespräch, die niemand
@@ -157,9 +202,6 @@ Zeile eingeordnet, und alles Tischgespräch aus der Kette heraus.
 `ingame(von: 200, bis: 640)` ist ein Aufruf für 441 Zeilen. Ein Mitschnitt
 wechselt nicht im Satztakt zwischen Tisch und Welt — er tut es in
 Abschnitten, und genau so ordnest du ihn ein.
-
-Die Reihenfolge, die sich bewährt: ein Stück lesen, dieses Stück einordnen,
-dabei die Anker setzen, die dir begegnet sind. Dann das nächste.
 
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 
@@ -185,11 +227,9 @@ nach zwei“ — ich lese diese Formen. Schreib sie nicht in Ziffern um.
 
 **Den Halbtag brauchst du nicht zu entscheiden.** „Drei viertel elf“ ist
 10:45 oder 22:45; welches von beiden gilt, ergibt sich aus der Reihe der
-Anker, und das rechne ich. Lass `halbtag` weg.
-
-**Es sei denn, es steht da.** Sagt jemand „nachts um halb zwei“ oder „morgens
-um zehn“, ist der Halbtag **belegt** — dann gehört er ins Feld. Das ist keine
-Vermutung, sondern eine Angabe.
+Anker, und das rechne ich. Lass das Feld `halbtag` weg — es sei denn, es
+steht da („nachts um halb zwei“, „morgens um zehn“): Dann ist der Halbtag
+belegt und keine Vermutung.
 
 ## Beginn und Ende sind Zeitpunkte, keine Spannen
 
@@ -210,8 +250,7 @@ Richtungen zeigen.
 
 „Tag zwei unserer Bekanntschaft“, „am Tag nach dem Überfall“, „drei Wochen
 später“ — das sind **Anker**, auch wenn niemand weiß, welches Datum das ist.
-Setz sie. Die Linie trägt Reihenfolge und Abstände ohne Kalendertag; ein
-Datum ist schön, aber nicht nötig.
+Setz sie. Die Linie trägt Reihenfolge und Abstände ohne Kalendertag.
 
 Es kann durchaus sein, dass in dieser Kampagne **nie** ein Datum fällt, weil
 der Spielleiter es bewusst offenlässt. Das ist kein Mangel und kein Grund,
@@ -225,21 +264,17 @@ nicht an den einen Satz.
 
 An **einer** Zeile dürfen mehrere Anker hängen. „Es ist jetzt grob eine Stunde
 vergangen, dann wird es kurz nach zwölf sein“ ist eine Äußerung mit einer
-`spanne` **und** einem `zeitpunkt` — beide gehören dorthin.
-
-Setzt du einen zweiten Anker derselben Art an dieselbe Stelle, frage ich
-zurück und trage **nichts** ein. Dann entscheidest du mit `dazu` (beide
-gelten) oder `ersetzen` (der alte war falsch), über die Kennung aus meiner
-Rückfrage. Sie gilt genau einmal.
+`spanne` **und** einem `zeitpunkt` — beide gehören dorthin. Setzt du einen
+zweiten Anker derselben Art an dieselbe Stelle, frage ich zurück und trage
+**nichts** ein; dann entscheidest du mit `dazu` oder `ersetzen` über die
+Kennung aus meiner Rückfrage.
 
 ## Was ein Mensch festgelegt hat, überschreibst du nicht
 
 Manche Stellen sind abgesegnet — ein Spielleiter hat dort ein Datum gesetzt
 oder einen Streit entschieden. Dein abweichender Anker wird dort **verworfen**,
 und die Antwort sagt dir das. Zwei Wege bleiben: anders einordnen, oder
-`konflikt` eintragen, wenn du triftige Gründe hast. Nenne dann, **was** du
-gefunden hast und **woraus** — ohne das kann niemand entscheiden, ohne deine
-Arbeit zu wiederholen.
+`konflikt` eintragen, wenn du triftige Gründe hast.
 
 ## Der Abschluss
 
@@ -258,5 +293,6 @@ Was noch fehlt, sagt dir `offen()` mit Zahlen und Zeilennummern. `zahlen()`
 nennt dir den Stand; die Zählung ist meine, nicht deine — nimm sie, statt
 selbst nachzuzählen.
 
-Die Werkzeuge erklärt dir `hilfe()`. Frag lieber einmal, als einen Aufruf zu
-raten: Ein geratener Aufruf zählt als Wiederholung, eine Frage nicht.
+Die Werkzeuge erklärt dir `hilfe()`; jedes Feld trägt dort seine eigene
+Beschreibung. Frag lieber einmal, als einen Aufruf zu raten: Ein geratener
+Aufruf zählt als Wiederholung, eine Frage nicht.
