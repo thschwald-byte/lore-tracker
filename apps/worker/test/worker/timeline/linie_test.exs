@@ -8,7 +8,9 @@ defmodule Worker.Timeline.LinieTest do
   """
   use ExUnit.Case, async: true
 
-  alias Worker.Timeline.Linie
+  alias Worker.Timeline.{Ausdruck, Calendar, Linie}
+
+  defp cal, do: Calendar.default()
 
   # Drei Sitzungen à drei Äußerungen, in Erzählreihenfolge.
   defp stellen do
@@ -111,12 +113,12 @@ defmodule Worker.Timeline.LinieTest do
       assert nach["u11"].minute == nil
       assert nach["u11"].herkunft == :ohne
 
-      # NACH dem letzten Anker ebenso wenig: Die Zeit dort fortzuschreiben
-      # machte aus einer Ordnung eine Datierung, die niemand nachprüfen kann
-      # (#1092-Klasse; an einer echten Sitzung bekamen so 2000 Zeilen dasselbe
-      # Jahr). Bekannt ist „später als u22" — und das trägt die Reihe selbst.
-      assert nach["u33"].minute == nil
-      assert nach["u33"].herkunft == :ohne
+      # NACH dem letzten Anker wird fortgeschrieben — die Rechnung ist
+      # transient, und ein grober Wert trägt mehr als ein Strich. Aber sie
+      # heisst anders: `:fortgeschrieben` hat keinen Beleg nach oben und wird
+      # mit dem Abstand beliebig. Wer sie liest, sieht das.
+      assert nach["u33"].minute == 1400
+      assert nach["u33"].herkunft == :fortgeschrieben
     end
 
     test "ein Zeitpunkt gilt an der frühesten Stelle seiner Menge" do
@@ -126,15 +128,15 @@ defmodule Worker.Timeline.LinieTest do
       assert nach["u21"].minute == 500
       assert nach["u21"].herkunft == :belegt
 
-      # Die übrigen der Menge liegen danach — aber ohne zweiten Anker ist
-      # nicht bekannt, WIE lange danach: keine erfundene Minute.
-      assert nach["u22"].minute == nil
-      assert nach["u22"].herkunft == :ohne
+      # Die übrigen der Menge liegen danach — ohne zweiten Anker
+      # fortgeschrieben, also als Anhalt und nicht als Messung.
+      assert nach["u22"].minute == 500
+      assert nach["u22"].herkunft == :fortgeschrieben
     end
   end
 
   describe "hinter dem letzten Anker endet die Zeit" do
-    test "ohne Spanne bekommt die Strecke danach KEINE Zeit" do
+    test "ohne Spanne ist die Strecke danach FORTGESCHRIEBEN, nicht gerechnet" do
       # Der erste Wurf schrieb die Zeit des letzten Ankers fort. An einer
       # echten Sitzung standen die einzigen Anker in den ersten hundert
       # Zeilen — danach bekamen 2000 Zeilen dasselbe Jahr, ohne jede Stütze
@@ -146,9 +148,10 @@ defmodule Worker.Timeline.LinieTest do
       assert linie.nach_utterance["u11"].minute == 22 * 60
       assert linie.nach_utterance["u11"].herkunft == :belegt
 
+      # Die Zahl bleibt — der Grad sagt, was sie wert ist.
       for id <- ~w(u12 u13 u21 u33) do
-        assert linie.nach_utterance[id].minute == nil, id
-        assert linie.nach_utterance[id].herkunft == :ohne, id
+        assert linie.nach_utterance[id].minute == 22 * 60, id
+        assert linie.nach_utterance[id].herkunft == :fortgeschrieben, id
       end
     end
 
@@ -160,16 +163,17 @@ defmodule Worker.Timeline.LinieTest do
         ])
 
       assert linie.nach_utterance["u13"].minute == 22 * 60 + 30
+      assert linie.nach_utterance["u13"].herkunft == :interpoliert
 
-      # Zwischen Anker und Spanne ist die Strecke GEMESSEN — die Zeile
-      # dazwischen liegt nachweislich in diesem Fenster.
-      assert linie.nach_utterance["u12"].minute == 22 * 60
+      # Zwischen Anker und Spanne ist die Strecke GEMESSEN.
+      assert linie.nach_utterance["u12"].herkunft == :interpoliert
 
-      # Dahinter endet, was jemand gesagt hat.
-      assert linie.nach_utterance["u21"].minute == nil
+      # Dahinter endet das Gesagte — die Zahl läuft weiter, der Grad sinkt.
+      assert linie.nach_utterance["u21"].minute == 22 * 60 + 30
+      assert linie.nach_utterance["u21"].herkunft == :fortgeschrieben
     end
 
-    test "die Reihenfolge bleibt vollständig, auch ohne jede Zeit" do
+    test "ohne jeden Anker gibt es keine Zeit — da ist nichts fortzuschreiben" do
       linie = Linie.bauen(stellen(), [])
 
       assert length(linie.reihe) == length(stellen())
@@ -192,9 +196,10 @@ defmodule Worker.Timeline.LinieTest do
       assert nach["u12"].minute == 600
       assert nach["u13"].minute == 720
 
-      # Hinter der Spanne trägt nichts mehr: Die zwei Stunden sind gesagt
-      # worden, alles danach nicht.
-      assert nach["u21"].minute == nil
+      # Hinter der Spanne läuft die Zahl weiter, aber als Anhalt: Die zwei
+      # Stunden sind gesagt worden, alles danach nicht.
+      assert nach["u21"].minute == 720
+      assert nach["u21"].herkunft == :fortgeschrieben
     end
 
     test "zwei Stunden sind auf einem Tageszähler nicht darstellbar — hier schon" do
@@ -311,7 +316,9 @@ defmodule Worker.Timeline.LinieTest do
       assert [%{herkunft: :interpoliert, minute: m}] = Linie.anker_fuer(linie, ["u13"])
       assert m > 100 and m < 400
 
-      assert [%{herkunft: :ohne, minute: nil}] = Linie.anker_fuer(linie, ["u33"])
+      # Hinter dem letzten Anker trägt der Eintrag seinen Grad mit — genau
+      # dafür ist die Herkunft da: Wer daraus etwas rechnet, sieht, worauf.
+      assert [%{herkunft: :fortgeschrieben, minute: 400}] = Linie.anker_fuer(linie, ["u33"])
     end
 
     test "unbekannte Utterances erzeugen keinen Eintrag statt eines leeren" do
@@ -626,6 +633,54 @@ defmodule Worker.Timeline.LinieTest do
         ])
 
       assert linie.nach_utterance["u11"].anker_id == "z_gm"
+    end
+  end
+
+  describe "Gewissheit und Auflösung sind zweierlei" do
+    # Maintainer, 19.09.2026: „die gezeigten beispiele sind gewiss → 100%,
+    # aber die unschärfe gilt für die fakten dazwischen". Der erste Wurf
+    # verwechselte GROB mit UNSICHER: „Ende 2011" bekam 15 %, obwohl die
+    # Aussage gewiss ist — sie ist nur vier Monate breit.
+    test "ein belegter Anker ist 100 %, wie grob er auch ist" do
+      grob = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "Ende 2011"}, cal())
+      fein = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "22:45"}, cal())
+
+      nach = Linie.bauen(stellen(), [grob, fein]).nach_utterance
+
+      assert nach["u11"].gewissheit == 100
+      assert nach["u13"].gewissheit == 100
+
+      # Der Unterschied steht in der AUFLÖSUNG, nicht in der Gewissheit.
+      assert nach["u11"].aufloesung > 100 * 1440, "Ende 2011 ist Monate breit"
+      assert nach["u13"].aufloesung == 1, "eine Uhrzeit ist auf die Minute"
+    end
+
+    test "die Gewissheit gilt den Zeilen DAZWISCHEN und hängt am Abstand" do
+      eng =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{minute: 1000}),
+          anker(:zeitpunkt, ["u13"], %{minute: 1030})
+        ])
+
+      weit =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{minute: 1000}),
+          anker(:zeitpunkt, ["u13"], %{minute: 1000 + 400 * 1440})
+        ])
+
+      assert eng.nach_utterance["u12"].gewissheit == 90, "eine halbe Stunde auseinander"
+      assert weit.nach_utterance["u12"].gewissheit == 5, "über ein Jahr auseinander"
+    end
+
+    test "interpolierte Stellen haben keine Auflösung — sie sind nicht belegt" do
+      nach =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{minute: 1000}),
+          anker(:zeitpunkt, ["u13"], %{minute: 1030})
+        ]).nach_utterance
+
+      assert nach["u12"].aufloesung == nil
+      assert nach["u21"].gewissheit == 0, "fortgeschrieben ist kein Beleg"
     end
   end
 

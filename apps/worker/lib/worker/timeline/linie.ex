@@ -83,7 +83,11 @@ defmodule Worker.Timeline.Linie do
   @type eintrag :: %{
           utterance_id: String.t(),
           minute: integer() | nil,
-          herkunft: :belegt | :interpoliert | :ohne,
+          herkunft: :belegt | :interpoliert | :fortgeschrieben | :ohne,
+          aufloesung: pos_integer() | nil,
+          gewissheit: 0..100,
+          von: integer() | nil,
+          bis: integer() | nil,
           anker_id: String.t() | nil,
           zweifel: String.t() | nil,
           abgesegnet?: boolean()
@@ -319,11 +323,12 @@ defmodule Worker.Timeline.Linie do
     |> Enum.with_index()
     |> Enum.map(fn {s, i} ->
       {minute, herkunft} = minute_an(i, reihe, feste, spannen)
-
       %{
         utterance_id: s.utterance_id,
         minute: minute,
         herkunft: herkunft,
+        aufloesung: aufloesung_an(i, feste, herkunft),
+        gewissheit: gewissheit_an(i, reihe, feste, herkunft),
         anker_id: Map.get(feste, i, %{})[:anker_id],
         zweifel: Map.get(zweifel, s.utterance_id),
         abgesegnet?: MapSet.member?(abgesegnet, s.utterance_id)
@@ -331,49 +336,123 @@ defmodule Worker.Timeline.Linie do
     end)
   end
 
+
+
+
+  # **Zwischen zwei Ankern wird interpoliert, hinter dem letzten
+  # FORTGESCHRIEBEN — und der Unterschied steht an der Stelle.**
+  #
+  # Der Streitpunkt ist der Fall ohne oberen Anker. Zwei Überlegungen, beide
+  # richtig, führen zu diesem Kompromiss (Maintainer, 19.09.2026):
+  #
+  # *Fürs Fortschreiben:* Die Rechnung ist **transient** — sie wird nie
+  # gespeichert. Kommt später ein Anker dazu, zieht sich die Strecke von
+  # allein gerade, und bis dahin ist ein grober Wert besser als ein Strich:
+  # „nach 22:45" ist eine Aussage, die trägt.
+  #
+  # *Gegen die alte Form:* Sie sah aus wie eine Messung. An seattleV5 S1
+  # bekamen so 2000 Zeilen dasselbe Jahr wie ein Weltgeschichts-Anker aus den
+  # ersten hundert — und das Modell schloss daraus, die Anker seien falsch
+  # gemessen, und begann sie zurückzunehmen. Das ist die #1092-Klasse, nur
+  # dass der Leser hier Jack selbst ist (`Worker.Jack.Zeit.Lesen.linie/2`).
+  #
+  # Also: Die Zahl bleibt, aber sie heisst anders. `:interpoliert` liegt
+  # zwischen zwei Belegen und ist nach oben begrenzt; `:fortgeschrieben`
+  # hat keine obere Grenze und wächst mit dem Abstand ins Beliebige. Wer die
+  # Linie liest — Jack wie später die Chronik —, sieht den Unterschied, statt
+  # ihn erraten zu müssen.
   defp minute_an(i, _reihe, feste, _spannen) when is_map_key(feste, i),
     do: {feste[i][:minute], :belegt}
 
-  # **Interpolieren braucht ZWEI Anker.** Hinter dem letzten gibt es nur so
-  # viel Zeit, wie Spannen tragen; ohne Spanne keine.
-  #
-  # Der erste Wurf schrieb dort die Zeit des letzten Ankers fort, und das ist
-  # die #1092-Klasse in neuer Form: An einer echten Sitzung (seattleV5 S1)
-  # standen die einzigen Anker in der Weltgeschichts-Einführung der ersten
-  # hundert Zeilen — danach bekamen **2000 Zeilen** dasselbe Jahr, ohne jede
-  # Stütze. Ob die Weltgeschichte dabei an ihrer Erzählstelle steht oder an
-  # ihren historischen Ort verschoben wurde, ändert nur die Zahl: einmal
-  # 2064, einmal 2070.
-  #
-  # Was wirklich bekannt ist, ist die REIHENFOLGE — „später als der letzte
-  # Anker" —, und die trägt die Reihe selbst. Eine Minute dazuzuerfinden macht
-  # aus einer Ordnung eine Datierung, die niemand nachprüfen kann. Lieber
-  # keine Angabe (Maintainer-Frage, 19.09.2026: „selbst wenn kein anker
-  # während des rollenspielteils liegt — so sollte er doch die kette richtig
-  # hinbekommen"; die Kette stimmte, die Zeit war erfunden).
   defp minute_an(i, reihe, feste, spannen) do
     case {letzter_fest(i, feste), naechster_fest(i, reihe, feste)} do
-      {nil, nil} -> {nil, :ohne}
-      {nil, {_ni, _nm}} -> {nil, :ohne}
+      # Vor dem ersten Anker gibt es nichts: rückwärts zu rechnen hiesse, eine
+      # Zeit zu erfinden, für die nichts spricht.
+      {nil, _} -> {nil, :ohne}
       {{vi, vm}, nil} -> nach_dem_letzten(vm, gelaufen(vi, i, spannen), i, spannen)
       {{vi, vm}, {ni, nm}} -> {zwischen(vi, vm, ni, nm, i, spannen), :interpoliert}
     end
   end
 
-  # **Nur Spannen tragen über den letzten Anker hinaus** — sie sind gesagt
-  # worden, alles andere nicht.
-  #
-  # Die Reichweite endet mit der LETZTEN Spanne, nicht mit der ersten Stelle
-  # ohne: Zwischen einem Anker und einer folgenden Spanne ist die Strecke
-  # gemessen („um 10 Uhr … zwei Stunden marschiert"), und die Zeilen
-  # dazwischen liegen nachweislich in diesem Fenster. Was DAHINTER kommt,
-  # liegt in keinem — dort endet, was jemand gesagt hat.
   defp nach_dem_letzten(vm, minuten, i, spannen) do
-    if i <= letzte_spanne(spannen), do: {vm + minuten, :interpoliert}, else: {nil, :ohne}
+    # Spannen sind gesagt worden: Solange sie tragen, ist die Strecke
+    # gemessen und nicht bloss fortgeschrieben.
+    if i <= letzte_spanne(spannen),
+      do: {vm + minuten, :interpoliert},
+      else: {vm + minuten, :fortgeschrieben}
   end
 
   defp letzte_spanne(spannen) when map_size(spannen) == 0, do: -1
   defp letzte_spanne(spannen), do: spannen |> Map.keys() |> Enum.max()
+
+  @doc """
+  Die **Auflösung** einer belegten Zeit — wie fein der Ausdruck war, in
+  Minuten. `nil` bei allem, was nicht belegt ist.
+
+  **Grob ist nicht unsicher** (Maintainer, 19.09.2026): „Ende 2011" ist eine
+  GEWISSE Aussage — sie wurde so gesagt, sie steht da. Sie hat nur eine grobe
+  Auflösung: vier Monate. Wer daraus eine Unsicherheit machte, verwechselte
+  zwei Dinge — die Verlässlichkeit der Aussage und ihre Feinheit.
+
+  Der Unterschied trägt praktisch: Ein Chronik-Eintrag auf „Ende 2011" ist
+  richtig und nur ungenau; eine interpolierte Zeile dazwischen ist geraten.
+  Das eine darf man zitieren, das andere nicht.
+  """
+  @spec aufloesung_an(integer(), map(), atom()) :: pos_integer() | nil
+  def aufloesung_an(i, feste, :belegt), do: eigen(feste[i])
+  def aufloesung_an(_i, _feste, _andere), do: nil
+
+  defp eigen(%{unschaerfe: u}) when is_integer(u) and u > 0, do: u
+  defp eigen(_), do: 1
+
+  @doc """
+  Die **Gewissheit** einer Zeit in Prozent — wie sicher sie überhaupt gilt.
+
+  Drei Fälle:
+
+    * **belegt** — jemand hat es gesagt: **100 %**, wie grob der Ausdruck
+      auch sein mag. Wie fein er war, sagt `aufloesung_an/3`.
+    * **interpoliert** — geraten zwischen zwei Belegen. Die Gewissheit
+      hängt am ABSTAND der beiden: zehn Minuten auseinander heisst fast
+      sicher, sechzig Jahre auseinander heisst wertlos. Sie gilt für die
+      Zeilen DAZWISCHEN, nicht für die Anker.
+    * **fortgeschrieben / ohne** — kein Beleg nach oben, keine Grenze: 0 %.
+
+  Die Abbildung Abstand → Prozent ist **gegriffen**; der Abstand selbst ist
+  gerechnet. Wie sich Gesprächszeit über Äusserungen verteilt, weiss
+  niemand, und eine Formel täuschte Wissen vor. Die Schwellen orientieren
+  sich daran, wofür eine Zeit noch taugt:
+
+      ≤ 5 min   100 %    auf die Minute
+      ≤ 1 h      90 %    innerhalb der Szene
+      ≤ 1 Tag    70 %    der richtige Tag
+      ≤ 1 Woche  50 %    die richtige Woche
+      ≤ 1 Monat  30 %
+      ≤ 1 Jahr   15 %
+      darüber     5 %
+  """
+  @spec gewissheit_an(integer(), [stelle()], map(), atom()) :: 0..100
+  def gewissheit_an(_i, _reihe, _feste, :belegt), do: 100
+  def gewissheit_an(_i, _reihe, _feste, :ohne), do: 0
+  def gewissheit_an(_i, _reihe, _feste, :fortgeschrieben), do: 0
+
+  def gewissheit_an(i, reihe, feste, _interpoliert) do
+    case {letzter_fest(i, feste), naechster_fest(i, reihe, feste)} do
+      {{_vi, vm}, {_ni, nm}} -> gewissheit(nm - vm)
+      _ -> 0
+    end
+  end
+
+  @doc "Prozent aus einem Abstand in Minuten. Die Schwellen sind gegriffen."
+  @spec gewissheit(integer() | nil) :: 0..100
+  def gewissheit(nil), do: 0
+  def gewissheit(u) when u <= 5, do: 100
+  def gewissheit(u) when u <= 60, do: 90
+  def gewissheit(u) when u <= @minuten_pro_tag, do: 70
+  def gewissheit(u) when u <= 7 * @minuten_pro_tag, do: 50
+  def gewissheit(u) when u <= 30 * @minuten_pro_tag, do: 30
+  def gewissheit(u) when u <= 365 * @minuten_pro_tag, do: 15
+  def gewissheit(_u), do: 5
 
   # Zwischen zwei festen Punkten: erst die genannten Dauern: sie sind belegt,
   # die Position ist es nicht. Passen sie nicht in den Abstand, wird linear
@@ -557,7 +636,8 @@ defmodule Worker.Timeline.Linie do
       anker_id: Map.get(a, :anker_id),
       abgesegnet?: abgesegnet?(a),
       genau?: genau?,
-      sprung?: sprung?
+      sprung?: sprung?,
+      unschaerfe: Map.get(a, :unschaerfe)
     }
   end
 

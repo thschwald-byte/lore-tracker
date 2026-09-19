@@ -49,8 +49,14 @@ defmodule Worker.Jack.Zeit.Lesen do
         name: "linie",
         beschreibung:
           "Zeigt die LINIE, wie sie gerade gerechnet wird — nicht deine Eingaben: " <>
-            "wo eine Zeile liegt, was belegt und was zwischen zwei Ankern " <>
-            "interpoliert ist, wo Spannen greifen, was gelöst wurde, und welche " <>
+            "wo eine Zeile liegt, wo Spannen greifen, was gelöst wurde, und welche " <>
+            "Widersprüche die Rechnung findet. Jede Zeit sagt, woher sie kommt: " <>
+            "„belegt“ wurde gesagt und gilt — wie grob der Ausdruck auch war " <>
+            "(„auf 3 Jahre genau“ heisst nicht unsicher, sondern ungenau). " <>
+            "„gerechnet (70%)“ ist zwischen zwei Belegen geraten; die Zahl sagt, " <>
+            "wie eng die beiden beieinander liegen. „fortgeschrieben“ hat keinen " <>
+            "Beleg nach oben und ist nur ein Anhalt — kein Grund, an den Ankern " <>
+            "zu zweifeln. Und welche " <>
             "Widersprüche die Rechnung findet. Nutz das, um dein Ergebnis zu " <>
             "prüfen: Ein einzelner Anker kann für sich richtig sein und die Reihe " <>
             "trotzdem falsch.",
@@ -173,9 +179,28 @@ defmodule Worker.Jack.Zeit.Lesen do
       zeilen <> geloest <> befunde
   end
 
+  # **Drei Grade von Gewissheit, und sie stehen an der Zeile.** „belegt" ist
+  # gesagt worden, „gerechnet" liegt zwischen zwei Belegen und ist nach oben
+  # begrenzt, „fortgeschrieben" hat keinen oberen Beleg und wächst mit dem
+  # Abstand ins Beliebige. Der dritte Fall sah bis #1247 aus wie der zweite —
+  # das Modell hielt die Zahl für eine Messung und begann, die Anker
+  # zurückzunehmen, die sie erzeugt hatten.
   defp zeit(%{minute: nil}, _cal), do: "—        "
-  defp zeit(%{minute: m, herkunft: :belegt}, cal), do: "#{uhr(m, cal)} belegt"
-  defp zeit(%{minute: m}, cal), do: "#{uhr(m, cal)} gerechnet"
+
+  defp zeit(%{minute: m, herkunft: :belegt} = e, cal),
+    do: "#{uhr(m, cal)} belegt#{genauigkeit(e.aufloesung)}"
+
+  defp zeit(%{minute: m, herkunft: :fortgeschrieben}, cal), do: "#{uhr(m, cal)} fortgeschrieben"
+  defp zeit(%{minute: m} = e, cal), do: "#{uhr(m, cal)} gerechnet (#{e.gewissheit}%)"
+
+  # Wie fein der Ausdruck war — nur bei belegten Zeiten, und nur wenn es
+  # gröber als eine Stunde ist: „22:45 belegt" braucht keinen Zusatz,
+  # „Ende 2011 belegt" schon.
+  defp genauigkeit(nil), do: ""
+  defp genauigkeit(u) when u <= 60, do: ""
+  defp genauigkeit(u) when u < @minuten_pro_tag, do: " (auf #{div(u, 60)} h genau)"
+  defp genauigkeit(u) when u < 60 * @minuten_pro_tag, do: " (auf #{div(u, @minuten_pro_tag)} Tage genau)"
+  defp genauigkeit(u), do: " (auf #{Float.round(u / (365 * @minuten_pro_tag), 1)} Jahre genau)"
 
   # **Ein Tageszähler ist für niemanden lesbar** — das ist die #1092-Lehre, und
   # der erste Wurf hat sie hier wiederholt: Für das Jahr 2000 stand in der

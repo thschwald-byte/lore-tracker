@@ -163,7 +163,7 @@ defmodule Worker.Timeline.Ausdruck do
   @spec aufloesen(map(), term()) :: map()
   def aufloesen(%{art: art} = a, cal) when art in [:zeitpunkt, "zeitpunkt"] do
     wert = to_string(Map.get(a, :wert, ""))
-    a = mit_uhrzeit(a, wert)
+    a = a |> mit_uhrzeit(wert) |> mit_unschaerfe(wert, cal)
 
     case Parser.parse(cal, wert) do
       {:ok, %{typ: :date, von: von}} when is_integer(von) ->
@@ -197,6 +197,49 @@ defmodule Worker.Timeline.Ausdruck do
   end
 
   def aufloesen(a, _cal), do: a
+
+  @doc """
+  Wie breit der Zeitraum ist, den ein Ausdruck benennt — in Minuten.
+
+  **Auch ein Anker ist selten auf die Minute genau** (Maintainer,
+  19.09.2026): „1.1.1975 13:40" ist vollständig bestimmt, „im Jahr 2000"
+  meint irgendwann in 365 Tagen, „Montag 13:12" nennt die Uhrzeit genau und
+  lässt die Woche offen. Diese Breite ist die Unschärfe des Ankers, und sie
+  ist **gerechnet, nicht geschätzt**: `Worker.Timeline.Parser` liefert für
+  jeden Ausdruck `von` und `bis` in Tagen.
+
+  Eine Uhrzeit engt den Tag auf die Minute ein — wer sie nennt, meint nicht
+  irgendwann an diesem Tag. Ein Ausdruck ohne auflösbaren Zeitraum hat keine
+  Unschärfe, sondern gar keine Zahl (`nil`).
+  """
+  @spec unschaerfe(String.t(), term()) :: pos_integer() | nil
+  def unschaerfe(wert, cal) do
+    cond do
+      tagesminute(wert) || halbtag_minute(wert) -> 1
+      true -> aus_parser(wert, cal)
+    end
+  end
+
+  defp aus_parser(wert, cal) do
+    case Parser.parse(cal, wert) do
+      {:ok, %{typ: :date, von: von, bis: bis}} when is_integer(von) and is_integer(bis) ->
+        (bis - von + 1) * Linie.minuten_pro_tag()
+
+      {:ok, %{typ: :date, von: von}} when is_integer(von) ->
+        # Offenes Ende („ab 2000"): der Tag selbst ist bestimmt, mehr nicht.
+        Linie.minuten_pro_tag()
+
+      _ ->
+        nil
+    end
+  end
+
+  defp mit_unschaerfe(a, wert, cal) do
+    case unschaerfe(wert, cal) do
+      nil -> a
+      u -> Map.put(a, :unschaerfe, u)
+    end
+  end
 
   @doc """
   Die Tagesminute einer ziffernförmigen Uhrzeit (0–1439), sonst `nil`.
