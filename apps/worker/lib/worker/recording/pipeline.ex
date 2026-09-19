@@ -563,7 +563,7 @@ defmodule Worker.Recording.Pipeline do
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
            {:ok, verified} <- bestand_lesen(campaign.id, session.id, verify),
-           :ok <- zeit_jack(session, campaign, run_id, deps),
+           _ = zeit_jack(session, campaign, run_id, deps),
            {:ok, rendered} <- tag_error(render.(verified), :render) do
         Worker.Jack.Resuemee.Pipeline.veroeffentlichen(session, campaign, verified, rendered)
 
@@ -720,9 +720,13 @@ defmodule Worker.Recording.Pipeline do
   # den Prozess mitnahm und die Arbeit von 31 Minuten nie veröffentlicht
   # wurde.
   #
-  # Deshalb steht er als `:ok <- …` in der `with`-Kette und nicht als
-  # Seiteneffekt daneben: So ist an der Kette selbst zu sehen, an welcher
-  # Stelle er läuft (`einhaengen_test.exs` hält beides fest).
+  # **Er steht als schlichtes Match in der Kette, nicht als `:ok <- …`**
+  # (bob, 19.09.2026). Die Stelle im Ablauf soll an der Kette selbst sichtbar
+  # sein — dafür braucht es aber kein `<-`, und ein `<-` bedeutet genau
+  # eines: hier kann die Kette enden. Wer die Zeile läse, suchte danach den
+  # `else`-Zweig und fände die Antwort „nichts, kann er nicht" nur im
+  # Kommentar. Die Form verspräche einen Ausgang, den es nicht gibt.
+  # (`einhaengen_test.exs` hält Position und Ausgangslosigkeit fest.)
   defp zeit_jack(session, campaign, run_id, deps) do
     case Map.get(deps, :zeit, :standard) do
       :aus ->

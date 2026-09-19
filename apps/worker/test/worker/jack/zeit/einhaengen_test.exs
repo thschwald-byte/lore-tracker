@@ -16,18 +16,24 @@ defmodule Worker.Jack.Zeit.EinhaengenTest do
 
   defp quelle, do: File.read!(@pipeline)
 
-  test "der Zeit-Jack hängt in der with-Kette von run_wahrheitsbild" do
-    assert quelle() =~ ":ok <- zeit_jack(session, campaign, run_id, deps)",
-           "Der Zeit-Jack muss als Glied der with-Kette stehen, nicht als " <>
-             "Seiteneffekt daneben — nur so ist an der Kette selbst zu sehen, " <>
-             "an welcher Stelle er läuft."
+  test "der Zeit-Jack steht in der with-Kette — als Match, nicht als <-" do
+    q = quelle()
+
+    assert q =~ "_ = zeit_jack(session, campaign, run_id, deps)",
+           "Der Zeit-Jack gehört in die with-Kette, damit an ihr selbst zu sehen " <>
+             "ist, an welcher Stelle er läuft."
+
+    refute q =~ ":ok <- zeit_jack(",
+           "Ein `<-` bedeutet: hier kann die Kette enden. Der Zeit-Jack kann das " <>
+             "nicht — die Form verspräche einen Ausgang, den es nicht gibt (bob, " <>
+             "19.09.2026)."
   end
 
   test "er läuft NACH dem Bestand und VOR dem Resümee" do
     q = quelle()
 
     bestand = index(q, "{:ok, verified} <- bestand_lesen(")
-    zeit = index(q, ":ok <- zeit_jack(")
+    zeit = index(q, "_ = zeit_jack(")
     resuemee = index(q, "{:ok, rendered} <- tag_error(render.(verified)")
 
     assert bestand < zeit,

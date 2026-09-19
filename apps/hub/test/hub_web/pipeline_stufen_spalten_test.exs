@@ -40,6 +40,40 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
     end
   end
 
+  # **Die zweite Hälfte der Falle** (bob, 19.09.2026): Der Wächter oben
+  # verlangt eine Gruppe von SPALTENLOSEN Stufen. Eine Stufe *mit* Spalte,
+  # deren Gruppe eine andere sein müsste, fiele still auf die Spalte zurück —
+  # genau der Fall, der zu diesem Umbau geführt hat, eine Ebene versetzt. Und
+  # ein Tippfehler in `:gruppe` erzeugte eine Gruppe, die niemand erwartet:
+  # Der Statusendpunkt zeigte sie an, und niemand fragte, woher sie kommt.
+  @gruppen @col_names ++ ~w(zeit boegen)
+
+  test "jede Gruppe ist eine bekannte — ein Tippfehler erfindet keine neue" do
+    for stufe <- PipelineStufen.alle() do
+      gruppe = Map.get(stufe, :gruppe) || stufe.spalte
+
+      assert gruppe in @gruppen,
+             "Stufe #{stufe.name} gehört zur Gruppe #{inspect(gruppe)}, die es nicht " <>
+               "gibt. Absicht? Dann hier eintragen — sonst ist es ein Tippfehler, " <>
+               "den nur der Statusendpunkt zeigt."
+    end
+  end
+
+  test "eine Stufe MIT Spalte trägt keine abweichende Gruppe — ausser bewusst" do
+    abweichend =
+      for stufe <- PipelineStufen.alle(),
+          g = Map.get(stufe, :gruppe),
+          not is_nil(stufe.spalte),
+          g != stufe.spalte,
+          do: {stufe.name, stufe.spalte, g}
+
+    # Heute gibt es keine. Wer die erste einträgt, soll hier begründen, warum
+    # die Oberfläche sie anders gruppiert als der Statusendpunkt — sonst ist
+    # es ein Versehen, das an beiden Orten Verschiedenes anzeigt.
+    assert abweichend == [],
+           "Spalte und Gruppe fallen auseinander: #{inspect(abweichend)}"
+  end
+
   test "die Protokoll-Spalte gehört keiner Stufe — sie ist die Quelle" do
     spalten = Enum.map(PipelineStufen.alle(), & &1.spalte)
 
