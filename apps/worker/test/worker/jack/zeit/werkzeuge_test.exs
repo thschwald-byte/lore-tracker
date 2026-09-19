@@ -10,6 +10,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   """
   use ExUnit.Case, async: true
 
+  alias Worker.Agent.Aufruf
   alias Worker.Jack.Resuemee.Halter
   alias Worker.Jack.Zeit.{Stand, Werkzeuge}
 
@@ -26,18 +27,76 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     ]
   end
 
+  defp fakten do
+    [
+      %{fakt_id: "f1", claim: "Die Gruppe trifft sich im Lokal.", fact_type: "ereignis"},
+      %{fakt_id: "f2", claim: "Es ist Nacht.", fact_type: "zustand"}
+    ]
+  end
+
   defp halter(lauf \\ :einsortieren) do
     {:ok, h} = Halter.start_link(Stand.neu(lauf, mitschnitt()), abbild: &Stand.abbild/1)
     h
   end
 
+  # **Gerufen wird über DIESELBE Kette wie zur Laufzeit** (`Worker.Agent.Aufruf`),
+  # nicht über `w.ausfuehren` direkt. Der erste Wurf tat das Zweite und prüfte
+  # den blanken String — und ging damit an genau der Stelle vorbei, an der die
+  # Laufzeit die Form prüft: `Aufruf.sicher/2` verlangt `{:ok | :error | :halt
+  # | …, inhalt}`. Alle Zeit-Werkzeuge lieferten stattdessen nackten Text.
+  #
+  # Im echten Lauf war deshalb JEDER Aufruf „Werkzeug X lieferte ein ungültiges
+  # Ergebnis" — der Text kam trotzdem durch, das Modell sah eine Fehlermeldung
+  # über einer korrekten Antwort und zweifelte an sich statt am Werkzeug. Und
+  # `fertig()` konnte den Lauf nie beenden, weil `:halt` fehlte. Beides hätte
+  # dieser Helfer gefangen, wenn er die echte Kette gefahren wäre; 21 grüne
+  # Tests haben es nicht gemerkt.
   defp ruf(h, name, felder) do
-    w = Werkzeuge.fuer(h) |> Enum.find(&(&1.name == name))
-    assert w, "Werkzeug #{name} fehlt"
-    w.ausfuehren.(felder)
+    assert Enum.any?(Werkzeuge.fuer(h), &(&1.name == name)), "Werkzeug #{name} fehlt"
+
+    case laufzeit(h, name, felder) do
+      {art, text} when art in [:ok, :error, :halt] -> text
+      anderes -> flunk("#{name} lieferte eine Form, die die Laufzeit ablehnt: #{inspect(anderes)}")
+    end
+  end
+
+  # Wie das Werkzeug geantwortet hat — für die Fälle, in denen die ART zählt.
+  defp art(h, name, felder), do: laufzeit(h, name, felder) |> elem(0)
+
+  defp laufzeit(h, name, felder) do
+    werkzeuge = Werkzeuge.fuer(h) |> Map.new(&{&1.name, &1})
+    Aufruf.ausfuehren(%{name: name, argumente: {:ok, felder}}, werkzeuge)
   end
 
   defp stand(h), do: Halter.stand(h)
+
+  # Gültige Beispielargumente je Werkzeug — für den Formtest, der jedes
+  # einmal ruft.
+  defp beispiel("fakten"), do: %{"ab" => 1, "anzahl" => 2}
+  defp beispiel("fakt"), do: %{"id" => "f1"}
+  defp beispiel("mitschnitt"), do: %{"ab" => 1, "anzahl" => 2}
+  defp beispiel("linie"), do: %{}
+  defp beispiel(n) when n in ~w(offen zahlen fertig hilfe), do: %{}
+
+  defp beispiel(n) when n in ~w(zeitpunkt spanne),
+    do: %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"}
+
+  defp beispiel(n) when n in ~w(dazu ersetzen),
+    do: %{
+      "kennung" => "unbekannt",
+      "zeilen" => [1],
+      "art" => "zeitpunkt",
+      "wert" => "22:45",
+      "welt" => "spielwelt",
+      "beleg" => "b"
+    }
+
+  defp beispiel("verschieben"),
+    do: %{"zeilen" => [1], "richtung" => "vor", "ziel" => 3, "beleg" => "b"}
+
+  defp beispiel("loesen"), do: %{"zeilen" => [1], "grund" => "Tisch"}
+  defp beispiel("konflikt"), do: %{"zeilen" => [1], "befund" => "x", "beleg" => "b"}
+  defp beispiel("zweifel"), do: %{"zeilen" => [1], "text" => "unklar"}
 
   describe "welche Werkzeuge es gibt" do
     test "der Gedächtnis-Lauf setzt nichts" do
@@ -62,6 +121,118 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
       assert "hilfe" in namen
       assert Enum.count(namen, &(&1 == "hilfe")) == 1
+    end
+  end
+
+  describe "die Form, die die Laufzeit verlangt" do
+    # Der Befund des ersten echten Laufs (19.09.2026): Jedes Werkzeug lieferte
+    # nackten Text statt `{art, inhalt}`. `Worker.Agent.Aufruf.sicher/2` machte
+    # daraus „Werkzeug X lieferte ein ungültiges Ergebnis" — der Text kam
+    # trotzdem durch, das Modell sah also eine Fehlermeldung über einer
+    # korrekten Antwort und zweifelte an sich statt am Werkzeug. Nach drei
+    # inneren Fehlern desselben Werkzeugs endet der Lauf.
+    test "JEDES Werkzeug jedes Laufs antwortet in einer Form, die die Laufzeit annimmt" do
+      for lauf <- [:gedaechtnis, :einsortieren, :pruefen] do
+        {:ok, h} =
+          Halter.start_link(Stand.neu(lauf, mitschnitt(), fakten: fakten()),
+            abbild: &Stand.abbild/1
+          )
+
+        for w <- Werkzeuge.fuer(h) do
+          felder = beispiel(w.name)
+
+          assert {a, t} = laufzeit(h, w.name, felder),
+                 "#{lauf}/#{w.name}: kein Tupel"
+
+          assert a in [:ok, :error, :halt],
+                 "#{lauf}/#{w.name}: Art #{inspect(a)} — die Laufzeit kennt " <>
+                   ":ok, :error, :halt, :abbruch, :innerer_fehler"
+
+          assert is_binary(t), "#{lauf}/#{w.name}: Inhalt ist kein Text"
+
+          refute t =~ "ungültiges Ergebnis",
+                 "#{lauf}/#{w.name}: die Laufzeit hat die Form abgelehnt"
+        end
+      end
+    end
+
+    test "fertig beendet den Lauf mit :halt — sonst endet er nie" do
+      # `Worker.Jack.Resuemee.Lauf` prüft auf `%{ende: :halt}`. Ohne die Art
+      # wäre der Lauf in den Rundendeckel gelaufen: Stunden, vollständige
+      # Arbeit, kein Ergebnis.
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      assert art(h, "fertig", %{}) == :halt
+    end
+
+    test "eine Ablehnung ist :error, keine Auskunft" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+
+      # Noch ungelesene Zeilen: fertig lehnt ab.
+      assert art(h, "fertig", %{}) == :error
+
+      # Eine Zeilennummer, die es nicht gibt.
+      assert art(h, "zeitpunkt", %{
+               "zeilen" => [99],
+               "wert" => "x",
+               "welt" => "spielwelt",
+               "beleg" => "b"
+             }) == :error
+    end
+  end
+
+  describe "der Gedächtnis-Lauf liest FAKTEN, nicht den Mitschnitt" do
+    # Der Befund des ersten echten Laufs: Der Auftrag sagt „Lies die Fakten",
+    # die Werkzeuge kannten aber nur den Mitschnitt. Das Modell bemerkte es in
+    # der ERSTEN Runde („the task says Lies die Fakten — but the available
+    # tools are about a transcript. Maybe Fakten are in the transcript?") und
+    # las ersatzweise 2168 Zeilen Mitschnitt.
+    defp gedaechtnis do
+      {:ok, h} =
+        Halter.start_link(Stand.neu(:gedaechtnis, mitschnitt(), fakten: fakten()),
+          abbild: &Stand.abbild/1
+        )
+
+      h
+    end
+
+    test "er hat Werkzeuge für die Fakten" do
+      namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt(), fakten: fakten()))
+
+      assert "fakten" in namen
+      assert "fakt" in namen
+    end
+
+    test "fakten/2 gibt sie aus und zählt sie als gelesen" do
+      h = gedaechtnis()
+      assert Stand.zahlen(stand(h)).fakten_gelesen == 0
+
+      antwort = ruf(h, "fakten", %{"ab" => 1, "anzahl" => 2})
+
+      assert antwort =~ "Die Gruppe trifft sich im Lokal"
+      assert antwort =~ "gelesen 2"
+      assert Stand.zahlen(stand(h)).fakten_gelesen == 2
+    end
+
+    test "fertig prüft die FAKTEN, nicht die Zeilen" do
+      h = gedaechtnis()
+
+      # Alle Zeilen gelesen, keinen Fakt — im Gedächtnis-Lauf zählt das nicht.
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      antwort = ruf(h, "fertig", %{})
+
+      assert art(h, "fertig", %{}) == :error
+      assert antwort =~ "2 von 2 Fakten"
+
+      # Mit den Fakten geht es.
+      ruf(h, "fakten", %{"ab" => 1, "anzahl" => 2})
+      assert art(h, "fertig", %{}) == :halt
+    end
+
+    test "ein unbekannter Fakt wird abgelehnt, nicht erfunden" do
+      assert art(gedaechtnis(), "fakt", %{"id" => "gibts-nicht"}) == :error
     end
   end
 

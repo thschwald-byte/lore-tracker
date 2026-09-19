@@ -23,6 +23,40 @@ defmodule Worker.Jack.Zeit.Lesen do
   def werkzeuge(%Stand{}) do
     [
       %{
+        name: "fakten",
+        beschreibung:
+          "Zeigt die FAKTEN der Kampagne ab einem Eintrag — das sind die geprüften " <>
+            "Aussagen, die ein anderer Lauf aus dem Mitschnitt gezogen hat. Jeder " <>
+            "nennt seine Sitzung und die Blöcke, auf die er sich stützt. Nicht " <>
+            "jeder ist ein Ereignis der Spielwelt: Manche halten fest, was am " <>
+            "Tisch besprochen wurde.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "ab" => %{"type" => "integer"},
+            "anzahl" => %{"type" => "integer"}
+          },
+          "required" => []
+        },
+        optional: ~w(ab anzahl),
+        wiederholung: :zaehlt,
+        ausfuehren: &w_fakten/2
+      },
+      %{
+        name: "fakt",
+        beschreibung:
+          "Ein einzelner Fakt mit allem, was er trägt: Aussage, Figuren, Bögen, " <>
+            "Art und die Blöcke, auf die er sich stützt. Nimm das, wenn dir in der " <>
+            "Liste etwas unklar ist.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{"id" => %{"type" => "string"}},
+          "required" => ["id"]
+        },
+        wiederholung: :zaehlt,
+        ausfuehren: &w_fakt/2
+      },
+      %{
         name: "mitschnitt",
         beschreibung:
           "Zeigt den Mitschnitt ab einer Zeile. Eine Zeile ist eine ÄUSSERUNG — " <>
@@ -84,6 +118,55 @@ defmodule Worker.Jack.Zeit.Lesen do
     ]
   end
 
+  @fakten_fenster 40
+
+  defp w_fakten(%Stand{} = s, f) do
+    ab = max(f["ab"] || 1, 1)
+    anzahl = min(f["anzahl"] || @fakten_fenster, @fakten_fenster)
+    gewaehlt = s.fakten |> Enum.drop(ab - 1) |> Enum.take(anzahl)
+
+    case gewaehlt do
+      [] ->
+        {s, {:ok, "Ab Fakt #{ab} gibt es nichts mehr — es sind #{length(s.fakten)}."}}
+
+      _ ->
+        s = Stand.fakten_gelesen(s, gewaehlt)
+        z = Stand.zahlen(s)
+
+        {s,
+         {:ok,
+          Enum.map_join(Enum.with_index(gewaehlt, ab), "\n", &fakt_zeile/1) <>
+            "\n\n(Fakt #{ab}–#{ab + length(gewaehlt) - 1} von #{z.fakten}; gelesen " <>
+              "#{z.fakten_gelesen}, offen #{z.fakten_offen}.)"}}
+    end
+  end
+
+  defp w_fakt(%Stand{} = s, f) do
+    id = to_string(f["id"] || "")
+
+    case Enum.find(s.fakten, &(Stand.fakt_id(&1) == id)) do
+      nil ->
+        {s, {:error, "Einen Fakt #{id} gibt es nicht. Die Liste zeigt dir fakten()."}}
+
+      fakt ->
+        {Stand.fakten_gelesen(s, [fakt]), {:ok, fakt_voll(fakt)}}
+    end
+  end
+
+  defp fakt_zeile({fakt, nr}) do
+    "#{nr}  [#{feld(fakt, :fakt_id)}] #{feld(fakt, :claim)}"
+  end
+
+  defp fakt_voll(fakt) do
+    Enum.map_join(
+      [:fakt_id, :claim, :fact_type, :character_alias, :session_number, :source_refs],
+      "\n",
+      fn k -> "#{k}: #{inspect(feld(fakt, k), limit: 8)}" end
+    )
+  end
+
+  defp feld(f, k), do: Map.get(f, k) || Map.get(f, to_string(k))
+
   defp w_mitschnitt(%Stand{} = s, f) do
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || @fenster, @fenster)
@@ -92,7 +175,7 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     case zeilen do
       [] ->
-        {s, "Ab Zeile #{ab} gibt es nichts mehr — der Mitschnitt hat #{length(s.mitschnitt)} Zeilen."}
+        {s, {:ok, "Ab Zeile #{ab} gibt es nichts mehr — der Mitschnitt hat #{length(s.mitschnitt)} Zeilen."}}
 
       _ ->
         s = Stand.gelesen(s, zeilen)
@@ -100,9 +183,10 @@ defmodule Worker.Jack.Zeit.Lesen do
         z = Stand.zahlen(s)
 
         {s,
-         Mitschnitt.als_text(zeilen) <>
-           "\n\n(Zeile #{ab}–#{letzte} von #{z.utterances}; gelesen #{z.gelesen}, " <>
-             "offen #{z.offen}.)"}
+         {:ok,
+          Mitschnitt.als_text(zeilen) <>
+            "\n\n(Zeile #{ab}–#{letzte} von #{z.utterances}; gelesen #{z.gelesen}, " <>
+              "offen #{z.offen}.)"}}
     end
   end
 
@@ -113,13 +197,13 @@ defmodule Worker.Jack.Zeit.Lesen do
     anzahl = min(f["anzahl"] || 40, 40)
     ausschnitt = linie.reihe |> Enum.drop(ab - 1) |> Enum.take(anzahl)
 
-    {s, linien_text(s, linie, ausschnitt, ab)}
+    {s, {:ok, linien_text(s, linie, ausschnitt, ab)}}
   end
 
   defp w_offen(%Stand{} = s, _f) do
     case Abschluss.hindernisse(s) do
-      [] -> {s, "Nichts steht im Weg — fertig() geht."}
-      h -> {s, Enum.map_join(h, "\n", &("- " <> &1))}
+      [] -> {s, {:ok, "Nichts steht im Weg — fertig() geht."}}
+      h -> {s, {:ok, Enum.map_join(h, "\n", &("- " <> &1))}}
     end
   end
 
@@ -127,9 +211,12 @@ defmodule Worker.Jack.Zeit.Lesen do
     z = Stand.zahlen(s)
 
     {s,
-     "Lauf: #{z.lauf}\nZeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}\n" <>
-       "Anker: #{z.anker} (Zeitpunkte #{z.zeitpunkte}, Spannen #{z.spannen}, " <>
-       "Verschiebungen #{z.verschiebungen})\nGelöst: #{z.geloest}, Konflikte: #{z.konflikte}"}
+     {:ok,
+      "Lauf: #{z.lauf}\n" <>
+        "Fakten: #{z.fakten}, gelesen #{z.fakten_gelesen}, offen #{z.fakten_offen}\n" <>
+        "Zeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}\n" <>
+        "Anker: #{z.anker} (Zeitpunkte #{z.zeitpunkte}, Spannen #{z.spannen}, " <>
+        "Verschiebungen #{z.verschiebungen})\nGelöst: #{z.geloest}, Konflikte: #{z.konflikte}"}}
   end
 
   # Die Grundordnung dieses Laufs: der Mitschnitt in seiner Reihenfolge. Die

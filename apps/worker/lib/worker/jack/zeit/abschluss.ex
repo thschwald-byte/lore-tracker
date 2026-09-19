@@ -47,8 +47,27 @@ defmodule Worker.Jack.Zeit.Abschluss do
   abschließen. Jeder Eintrag ist ein Satz für das Modell, mit Zahl.
   """
   @spec hindernisse(Stand.t()) :: [String.t()]
-  def hindernisse(%Stand{} = s) do
-    ungelesen(s) ++ ohne_ziel(s)
+  def hindernisse(%Stand{lauf: :gedaechtnis} = s), do: fakten_ungelesen(s)
+  def hindernisse(%Stand{} = s), do: ungelesen(s) ++ ohne_ziel(s)
+
+  # **Der Gedächtnis-Lauf hat einen anderen Gegenstand** (#1247, Befund des
+  # ersten echten Laufs): Er liest die FAKTEN, um den Ablauf zu verstehen, und
+  # setzt nichts. Gegen die Zeilen-Abdeckung zu prüfen wäre dieselbe
+  # Verwechslung, die beim Chronik-Jack den Überblick gegen die Einträge
+  # prüfte, die es dort noch gar nicht gibt — `fertig` verwies auf ein
+  # Werkzeug, das dieser Lauf nicht hat, und Jack wiederholte bis zur Sperre.
+  defp fakten_ungelesen(%Stand{} = s) do
+    case Stand.offene_fakten(s, @deckel) do
+      %{anzahl: 0} ->
+        []
+
+      %{anzahl: n, fakten: naechste} ->
+        [
+          "#{n} von #{length(s.fakten)} Fakten hast du noch nicht gelesen. Ohne sie " <>
+            "fehlt dir der Ablauf, gegen den der nächste Lauf die Äußerungen liest. " <>
+            "Die nächsten: #{Enum.map_join(naechste, ", ", &Stand.fakt_id/1)}."
+        ]
+    end
   end
 
   @doc "Die Zeilen, die Jack nie ausgegeben bekommen hat."

@@ -132,6 +132,10 @@ defmodule Worker.Jack.Zeit do
       session_id: Map.get(eingabe, :session_id),
       campaign_id: Map.get(eingabe, :campaign_id),
       kalender: Map.get(eingabe, :kalender),
+      # **Die Fakten gehören in den Stand, nicht nur in die Eingabe** (#1247):
+      # Der Gedächtnis-Lauf liest sie, und `fertig()` prüft ihre Abdeckung.
+      # Ohne diese Zeile hätte er ein Werkzeug ohne Inhalt.
+      fakten: Map.get(eingabe, :fakten, []),
       anker: Map.get(eingabe, :anker, []),
       notizen: Map.get(eingabe, :notizen, %{})
     )

@@ -34,7 +34,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # selbst voran (Maintainer, 18.09.2026 — die Beschreibungen tragen die
   # Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
   # der Wortlaut weg).
-  @lesend ~w(mitschnitt linie offen zahlen)
+  @lesend ~w(fakten fakt mitschnitt linie offen zahlen)
   @setzend ~w(zeitpunkt spanne verschieben loesen dazu ersetzen konflikt zweifel)
 
   @doc """
@@ -339,16 +339,16 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         {:gesetzt, anker} ->
           anker = Ausdruck.aufloesen(anker, s.kalender)
           s = s |> entscheidung_verbrauchen(entscheidung) |> Stand.setzen(anker)
-          {s, gesetzt_text(anker, zeilen, s)}
+          {s, {:ok, gesetzt_text(anker, zeilen, s)}}
 
         {:rueckfrage, r} ->
-          {Stand.ausgeben(s, r.guid, %{utterance_ids: ids}), r.text}
+          {Stand.ausgeben(s, r.guid, %{utterance_ids: ids}), {:ok, r.text}}
 
         {:verworfen, v} ->
-          {s, v.text}
+          {s, {:error, v.text}}
       end
     else
-      {:fehler, text} -> {s, text}
+      {:fehler, text} -> {s, {:error, text}}
     end
   end
 
@@ -372,11 +372,12 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
 
       {s,
-       "Verschoben: #{length(ids)} Zeile(n) #{f["richtung"]} Zeile #{f["ziel"]}. " <>
-         reststand(s)}
+       {:ok,
+        "Verschoben: #{length(ids)} Zeile(n) #{f["richtung"]} Zeile #{f["ziel"]}. " <>
+          reststand(s)}}
     else
-      {:fehler, text} -> {s, text}
-      _ -> {s, "Das Ziel gibt es nicht. Nenn eine Zeilennummer aus dem Mitschnitt."}
+      {:fehler, text} -> {s, {:error, text}}
+      _ -> {s, {:error, "Das Ziel gibt es nicht. Nenn eine Zeilennummer aus dem Mitschnitt."}}
     end
   end
 
@@ -394,10 +395,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
 
       {s,
-       "#{length(ids)} Zeile(n) aus der Kette gelöst: #{f["grund"]}. Sie liegen nicht " <>
-         "mehr auf der Linie und werden nie interpoliert. " <> reststand(s)}
+       {:ok,
+        "#{length(ids)} Zeile(n) aus der Kette gelöst: #{f["grund"]}. Sie liegen nicht " <>
+          "mehr auf der Linie und werden nie interpoliert. " <> reststand(s)}}
     else
-      {:fehler, text} -> {s, text}
+      {:fehler, text} -> {s, {:error, text}}
     end
   end
 
@@ -410,10 +412,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       }
 
       {Stand.gelesen(s, zeilen) |> Stand.konflikt(eintrag),
-       "Konflikt eingetragen. Ein Mensch sieht sich das an; die abgesegnete Stelle " <>
-         "bleibt bis dahin, wie sie ist."}
+       {:ok,
+        "Konflikt eingetragen. Ein Mensch sieht sich das an; die abgesegnete Stelle " <>
+          "bleibt bis dahin, wie sie ist."}}
     else
-      {:fehler, text} -> {s, text}
+      {:fehler, text} -> {s, {:error, text}}
     end
   end
 
@@ -431,19 +434,26 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
       s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
 
-      {s, "Zweifel festgehalten — nichts gesetzt. " <> reststand(s)}
+      {s, {:ok, "Zweifel festgehalten — nichts gesetzt. " <> reststand(s)}}
     else
-      {:fehler, text} -> {s, text}
+      {:fehler, text} -> {s, {:error, text}}
     end
   end
 
+  # **`:halt` beendet den Lauf, `:error` lehnt ab** — und beides ist tragend.
+  # Der erste Wurf lieferte hier wie überall einen blanken String: Der Lauf
+  # hätte auch bei sonst fehlerfreier Arbeit NIE geendet, weil
+  # `Worker.Jack.Resuemee.Lauf` auf `%{ende: :halt}` prüft. Er wäre in den
+  # Rundendeckel gelaufen, nach Stunden, mit vollständiger Arbeit und ohne
+  # Ergebnis.
   defp w_fertig(s, _f) do
     case Abschluss.hindernisse(s) do
       [] ->
-        {s, "Abgeschlossen. " <> reststand(s)}
+        {s, {:halt, "Abgeschlossen. " <> reststand(s)}}
 
       hindernisse ->
-        {s, "Noch nicht fertig:\n" <> Enum.map_join(hindernisse, "\n", &("- " <> &1))}
+        {s,
+         {:error, "Noch nicht fertig:\n" <> Enum.map_join(hindernisse, "\n", &("- " <> &1))}}
     end
   end
 
