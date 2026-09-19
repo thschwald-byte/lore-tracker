@@ -544,6 +544,39 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
   end
 
+  describe "die Linie zeigt ein Datum, keinen Tageszähler" do
+    test "ein Jahr wird als Datum gezeigt, nicht als T+730000" do
+      # Der Befund des dritten echten Laufs, und es ist die #1092-Klasse:
+      # Für das Jahr 2000 stand `T+730000 00:00` in der Linie. Das Modell
+      # konnte die Zahl nicht deuten, riet („roughly 202 hours") und schloss
+      # daraus, die Anker seien falsch gemessen.
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      ruf(h, "zeitpunkt", %{
+        "zeilen" => [1],
+        "wert" => "15.11.2080",
+        "welt" => "spielwelt",
+        "beleg" => "am fünfzehnten November"
+      })
+
+      antwort = ruf(h, "linie", %{})
+
+      assert antwort =~ "2080"
+      refute antwort =~ "T+7", "der rohe Tageszähler ist für niemanden lesbar"
+    end
+
+    test "innerhalb des ersten Tages bleibt es bei der Uhrzeit" do
+      h = halter()
+      ruf(h, "zeitpunkt", %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
+
+      antwort = ruf(h, "linie", %{})
+
+      assert antwort =~ "22:45"
+      refute antwort =~ "T+"
+    end
+  end
+
   describe "linie zeigt das Ergebnis" do
     test "belegte und gerechnete Zeiten sind unterscheidbar" do
       h = halter()

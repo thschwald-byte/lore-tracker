@@ -15,7 +15,9 @@ defmodule Worker.Jack.Zeit.Lesen do
   """
 
   alias Worker.Jack.Zeit.{Abschluss, Mitschnitt, Stand}
-  alias Worker.Timeline.Linie
+  alias Worker.Timeline.{Calendar, Linie}
+
+  @minuten_pro_tag 1440
 
   @fenster 80
 
@@ -247,7 +249,7 @@ defmodule Worker.Jack.Zeit.Lesen do
         z = nach_id[e.utterance_id]
         nr = (z && z.nr) || "?"
         text = ((z && z.text) || "") |> String.slice(0, 60)
-        "#{nr}  #{zeit(e)}  #{text}"
+        "#{nr}  #{zeit(e, s.kalender)}  #{text}"
       end)
 
     befunde =
@@ -265,15 +267,31 @@ defmodule Worker.Jack.Zeit.Lesen do
       zeilen <> geloest <> befunde
   end
 
-  defp zeit(%{minute: nil}), do: "—        "
-  defp zeit(%{minute: m, herkunft: :belegt}), do: "#{uhr(m)} belegt"
-  defp zeit(%{minute: m}), do: "#{uhr(m)} gerechnet"
+  defp zeit(%{minute: nil}, _cal), do: "—        "
+  defp zeit(%{minute: m, herkunft: :belegt}, cal), do: "#{uhr(m, cal)} belegt"
+  defp zeit(%{minute: m}, cal), do: "#{uhr(m, cal)} gerechnet"
 
-  defp uhr(m) do
-    tag = Integer.floor_div(m, 1440)
-    rest = rem(m, 1440)
+  # **Ein Tageszähler ist für niemanden lesbar** — das ist die #1092-Lehre, und
+  # der erste Wurf hat sie hier wiederholt: Für das Jahr 2000 stand in der
+  # Linie `T+730000 00:00`. Das Modell konnte die Zahl nicht deuten, riet
+  # („the timestamps seem to be in seconds, so T+730000 would be roughly 202
+  # hours") und schloss daraus, die Anker seien falsch gemessen. Eine falsch
+  # verstandene Zahl ist schlechter als keine Angabe.
+  #
+  # Gezeigt wird deshalb das DATUM, sobald der Zähler über den ersten Tag
+  # hinausgeht, und die Uhrzeit nur dort, wo sie etwas aussagt. Ohne Kalender
+  # bleibt es beim relativen `T+n` — dann ist die Linie ohnehin relativ, und
+  # ein erfundenes Datum wäre schlimmer.
+  defp uhr(m, cal) do
+    tag = Integer.floor_div(m, @minuten_pro_tag)
+    rest = Integer.mod(m, @minuten_pro_tag)
     h = rest |> div(60) |> Integer.to_string() |> String.pad_leading(2, "0")
     min = rest |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")
-    if tag > 0, do: "T+#{tag} #{h}:#{min}", else: "#{h}:#{min}"
+
+    cond do
+      tag == 0 -> "#{h}:#{min}"
+      is_nil(cal) -> "T+#{tag} #{h}:#{min}"
+      true -> "#{Calendar.format(cal, tag, :day)} #{h}:#{min}"
+    end
   end
 end
