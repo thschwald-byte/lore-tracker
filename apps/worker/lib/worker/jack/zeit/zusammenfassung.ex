@@ -20,6 +20,7 @@ defmodule Worker.Jack.Zeit.Zusammenfassung do
 
   alias Worker.Agent.Kontext
   alias Worker.Jack.Resuemee.Halter
+  alias Worker.Jack.Zeit.Abschluss
   alias Worker.Jack.Zeit.Stand
 
   @doc "Der Rückruf für `kontext: [zusammenfassen: …]` eines Laufs mit diesem Halter."
@@ -72,17 +73,12 @@ defmodule Worker.Jack.Zeit.Zusammenfassung do
       "Du gehst durch den Mitschnitt und ordnest die Äußerungen ein: Anker, " <>
         "Spannen, Verschiebungen — oder begründet aus der Kette lösen."
 
-  # Die Nummern, nicht nur die Zahl: Ohne sie weiss Jack nach dem Schnitt,
+  # Die Bereiche, nicht nur die Zahl: Ohne sie weiss Jack nach dem Schnitt,
   # DASS etwas fehlt, aber nicht wo — und liest von vorn.
   defp offen(%Stand{} = s) do
-    case Stand.offen(s, 12) do
-      %{anzahl: 0} ->
-        "Alle Zeilen gelesen."
-
-      %{anzahl: n, zeilen: zeilen} ->
-        nummern = zeilen |> Enum.map(& &1.nr) |> Enum.join(", ")
-        rest = if n > length(zeilen), do: " (und #{n - length(zeilen)} weitere)", else: ""
-        "#{n} Zeilen noch nicht gelesen, ab: #{nummern}#{rest}"
+    case Stand.offen(s) do
+      %{anzahl: 0} -> "Alle Zeilen gelesen."
+      %{anzahl: n, zeilen: zeilen} -> "#{n} Zeilen ungelesen: #{Abschluss.bereiche(zeilen)}"
     end
   end
 

@@ -111,9 +111,12 @@ defmodule Worker.Timeline.LinieTest do
       assert nach["u11"].minute == nil
       assert nach["u11"].herkunft == :ohne
 
-      # Nach dem letzten Anker gilt er weiter (ohne Spanne vergeht nichts).
-      assert nach["u33"].minute == 1400
-      assert nach["u33"].herkunft == :interpoliert
+      # NACH dem letzten Anker ebenso wenig: Die Zeit dort fortzuschreiben
+      # machte aus einer Ordnung eine Datierung, die niemand nachprüfen kann
+      # (#1092-Klasse; an einer echten Sitzung bekamen so 2000 Zeilen dasselbe
+      # Jahr). Bekannt ist „später als u22" — und das trägt die Reihe selbst.
+      assert nach["u33"].minute == nil
+      assert nach["u33"].herkunft == :ohne
     end
 
     test "ein Zeitpunkt gilt an der frühesten Stelle seiner Menge" do
@@ -122,8 +125,56 @@ defmodule Worker.Timeline.LinieTest do
 
       assert nach["u21"].minute == 500
       assert nach["u21"].herkunft == :belegt
-      # Die übrigen der Menge liegen danach, nicht gleichauf.
-      assert nach["u22"].herkunft == :interpoliert
+
+      # Die übrigen der Menge liegen danach — aber ohne zweiten Anker ist
+      # nicht bekannt, WIE lange danach: keine erfundene Minute.
+      assert nach["u22"].minute == nil
+      assert nach["u22"].herkunft == :ohne
+    end
+  end
+
+  describe "hinter dem letzten Anker endet die Zeit" do
+    test "ohne Spanne bekommt die Strecke danach KEINE Zeit" do
+      # Der erste Wurf schrieb die Zeit des letzten Ankers fort. An einer
+      # echten Sitzung standen die einzigen Anker in den ersten hundert
+      # Zeilen — danach bekamen 2000 Zeilen dasselbe Jahr, ohne jede Stütze
+      # (#1092-Klasse). Was bekannt ist, ist die REIHENFOLGE, und die trägt
+      # die Reihe selbst.
+      linie =
+        Linie.bauen(stellen(), [anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60})])
+
+      assert linie.nach_utterance["u11"].minute == 22 * 60
+      assert linie.nach_utterance["u11"].herkunft == :belegt
+
+      for id <- ~w(u12 u13 u21 u33) do
+        assert linie.nach_utterance[id].minute == nil, id
+        assert linie.nach_utterance[id].herkunft == :ohne, id
+      end
+    end
+
+    test "eine Spanne trägt über den letzten Anker hinaus — sie wurde gesagt" do
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60}),
+          anker(:spanne, ["u13"], %{minuten: 30})
+        ])
+
+      assert linie.nach_utterance["u13"].minute == 22 * 60 + 30
+
+      # Zwischen Anker und Spanne ist die Strecke GEMESSEN — die Zeile
+      # dazwischen liegt nachweislich in diesem Fenster.
+      assert linie.nach_utterance["u12"].minute == 22 * 60
+
+      # Dahinter endet, was jemand gesagt hat.
+      assert linie.nach_utterance["u21"].minute == nil
+    end
+
+    test "die Reihenfolge bleibt vollständig, auch ohne jede Zeit" do
+      linie = Linie.bauen(stellen(), [])
+
+      assert length(linie.reihe) == length(stellen())
+      assert Enum.all?(linie.reihe, &(&1.minute == nil))
+      assert Enum.map(linie.reihe, & &1.utterance_id) == Enum.map(stellen(), & &1.utterance_id)
     end
   end
 
@@ -140,7 +191,10 @@ defmodule Worker.Timeline.LinieTest do
       # „wir sind zwei Stunden marschiert", wenn der Marsch vorbei ist.
       assert nach["u12"].minute == 600
       assert nach["u13"].minute == 720
-      assert nach["u21"].minute == 720
+
+      # Hinter der Spanne trägt nichts mehr: Die zwei Stunden sind gesagt
+      # worden, alles danach nicht.
+      assert nach["u21"].minute == nil
     end
 
     test "zwei Stunden sind auf einem Tageszähler nicht darstellbar — hier schon" do
@@ -244,11 +298,20 @@ defmodule Worker.Timeline.LinieTest do
       assert Enum.any?(liste, &(&1.wert == "kurz nach zwölf"))
     end
 
-    test "eine Äußerung ohne eigenen Anker liefert genau einen Eintrag mit gerechneter Zeit" do
-      a = [anker(:zeitpunkt, ["u11"], %{minute: 100})]
+    test "eine Äußerung ohne eigenen Anker liefert genau einen Eintrag" do
+      # Zwischen zwei Ankern trägt er die gerechnete Zeit; hinter dem letzten
+      # steht er ohne — und das ist eine Aussage, kein Fehler.
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 100}),
+        anker(:zeitpunkt, ["u21"], %{minute: 400})
+      ]
+
       linie = Linie.bauen(stellen(), a)
 
-      assert [%{herkunft: :interpoliert, minute: 100}] = Linie.anker_fuer(linie, ["u13"])
+      assert [%{herkunft: :interpoliert, minute: m}] = Linie.anker_fuer(linie, ["u13"])
+      assert m > 100 and m < 400
+
+      assert [%{herkunft: :ohne, minute: nil}] = Linie.anker_fuer(linie, ["u33"])
     end
 
     test "unbekannte Utterances erzeugen keinen Eintrag statt eines leeren" do

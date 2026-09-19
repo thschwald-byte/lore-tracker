@@ -27,13 +27,6 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     ]
   end
 
-  defp fakten do
-    [
-      %{fakt_id: "f1", claim: "Die Gruppe trifft sich im Lokal.", fact_type: "ereignis", session_id: "s-1"},
-      %{fakt_id: "f2", claim: "Es ist Nacht.", fact_type: "zustand", session_id: "s-2"}
-    ]
-  end
-
   defp halter(lauf \\ :einsortieren) do
     {:ok, h} = Halter.start_link(Stand.neu(lauf, mitschnitt()), abbild: &Stand.abbild/1)
     h
@@ -72,8 +65,6 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
   # Gültige Beispielargumente je Werkzeug — für den Formtest, der jedes
   # einmal ruft.
-  defp beispiel("fakten"), do: %{"ab" => 1, "anzahl" => 2}
-  defp beispiel("fakt"), do: %{"nummer" => 1}
   defp beispiel("notiz"), do: %{"abschnitt" => "ABLAUF", "schluessel" => "k", "text" => "t"}
   defp beispiel("notizen_lesen"), do: %{}
   defp beispiel("mitschnitt"), do: %{"ab" => 1, "anzahl" => 2}
@@ -135,10 +126,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     # inneren Fehlern desselben Werkzeugs endet der Lauf.
     test "JEDES Werkzeug jedes Laufs antwortet in einer Form, die die Laufzeit annimmt" do
       for lauf <- [:gedaechtnis, :einsortieren, :pruefen] do
-        {:ok, h} =
-          Halter.start_link(Stand.neu(lauf, mitschnitt(), fakten: fakten()),
-            abbild: &Stand.abbild/1
-          )
+        {:ok, h} = Halter.start_link(Stand.neu(lauf, mitschnitt()), abbild: &Stand.abbild/1)
 
         for w <- Werkzeuge.fuer(h) do
           felder = beispiel(w.name)
@@ -185,65 +173,42 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
   end
 
-  describe "der Gedächtnis-Lauf liest FAKTEN, nicht den Mitschnitt" do
-    # Der Befund des ersten echten Laufs: Der Auftrag sagt „Lies die Fakten",
-    # die Werkzeuge kannten aber nur den Mitschnitt. Das Modell bemerkte es in
-    # der ERSTEN Runde („the task says Lies die Fakten — but the available
-    # tools are about a transcript. Maybe Fakten are in the transcript?") und
-    # las ersatzweise 2168 Zeilen Mitschnitt.
+  describe "der Gedächtnis-Lauf liest die ÄUSSERUNGEN wie die anderen" do
+    # Maintainer, 19.09.2026: „wir stellen den jacklauf ganz auf die utts um —
+    # also auch datensammeln aus utts, werkzeug für fakten weg". Der Lauf las
+    # bis dahin die Fakten: eine andere Schicht mit anderer Körnung (418 gegen
+    # 2168), aus allen Sitzungen der Kampagne, nicht in Gesprächsreihenfolge.
+    # Das Modell rätselte darüber mehrfach („facts 205 through 239 seem to
+    # repeat earlier content"). Jetzt ist es Jacks eigenes Muster: Phase 1 und
+    # Phase 2 lesen denselben Mitschnitt.
     defp gedaechtnis do
-      {:ok, h} =
-        Halter.start_link(Stand.neu(:gedaechtnis, mitschnitt(), fakten: fakten()),
-          abbild: &Stand.abbild/1
-        )
-
+      {:ok, h} = Halter.start_link(Stand.neu(:gedaechtnis, mitschnitt()), abbild: &Stand.abbild/1)
       h
     end
 
-    test "er hat Werkzeuge für die Fakten" do
-      namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt(), fakten: fakten()))
+    test "er hat KEINE Fakten-Werkzeuge mehr" do
+      namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt()))
 
-      assert "fakten" in namen
-      assert "fakt" in namen
+      refute "fakten" in namen
+      refute "fakt" in namen
+      assert "mitschnitt" in namen
     end
 
-    test "fakten/2 gibt sie aus und zählt sie als gelesen" do
-      h = gedaechtnis()
-      assert Stand.zahlen(stand(h)).fakten_gelesen == 0
+    test "er setzt nichts — sein Ergebnis sind die Notizen" do
+      namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt()))
 
-      antwort = ruf(h, "fakten", %{"ab" => 1, "anzahl" => 2})
-
-      assert antwort =~ "Die Gruppe trifft sich im Lokal"
-      assert antwort =~ "gelesen 2"
-      assert Stand.zahlen(stand(h)).fakten_gelesen == 2
+      for w <- ~w(zeitpunkt spanne frist verschieben loesen konflikt), do: refute(w in namen, w)
+      assert "notiz" in namen
+      assert "notizen_lesen" in namen
     end
 
-    test "fertig prüft die FAKTEN, nicht die Zeilen" do
+    test "fertig prüft die Leseabdeckung des Mitschnitts" do
       h = gedaechtnis()
-
-      # Alle Zeilen gelesen, keinen Fakt — im Gedächtnis-Lauf zählt das nicht.
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
-      antwort = ruf(h, "fertig", %{})
 
       assert art(h, "fertig", %{}) == :error
-      assert antwort =~ "2 von 2 Fakten"
 
-      # Mit den Fakten geht es.
-      ruf(h, "fakten", %{"ab" => 1, "anzahl" => 2})
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
       assert art(h, "fertig", %{}) == :halt
-    end
-
-    test "ein unbekannter Fakt wird abgelehnt, nicht erfunden" do
-      assert art(gedaechtnis(), "fakt", %{"nummer" => 99}) == :error
-    end
-
-    test "die Faktenliste nennt die Sitzung" do
-      # Ohne sie sieht das Modell eine flache Liste aus vier Sitzungen und
-      # rätselt, warum Inhalte „sich wiederholen" (Befund des zweiten Laufs).
-      antwort = ruf(gedaechtnis(), "fakten", %{"ab" => 1, "anzahl" => 2})
-
-      assert antwort =~ "[S1]"
-      assert antwort =~ "[S2]"
     end
 
     test "notiz hält fest, was der nächste Lauf braucht" do
@@ -252,12 +217,12 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       h = gedaechtnis()
 
       assert ruf(h, "notiz", %{
-               "abschnitt" => "ABLAUF",
-               "schluessel" => "auftrag",
-               "text" => "Die Gruppe nimmt den Auftrag an."
-             }) =~ "Notiert unter ABLAUF/auftrag"
+               "abschnitt" => "ZEITEN",
+               "schluessel" => "elf",
+               "text" => "Zeile 3: „Drei viertel elf\" — Uhrzeit, Welt unklar."
+             }) =~ "Notiert unter ZEITEN/elf"
 
-      assert ruf(h, "notizen_lesen", %{}) =~ "Die Gruppe nimmt den Auftrag an"
+      assert ruf(h, "notizen_lesen", %{}) =~ "Drei viertel elf"
       assert map_size(stand(h).notizen) == 1
     end
 
@@ -463,6 +428,30 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
   end
 
+  describe "offen nennt Bereiche, keine Einzelnummern" do
+    test "drei Lücken in 2168 Zeilen werden zu drei Angaben" do
+      # Eine Liste der „nächsten zwölf" ist bei tausend offenen Zeilen keine
+      # Auskunft: Sie sagt nicht, WO die Lücken sind, und legt nahe, es seien
+      # nur diese.
+      lang = for i <- 1..2168, do: zeile(i, "u#{i}", "t")
+      {:ok, h} = Halter.start_link(Stand.neu(:einsortieren, lang), abbild: &Stand.abbild/1)
+
+      ruf(h, "mitschnitt", %{"ab" => 61, "anzahl" => 80})
+
+      antwort = ruf(h, "offen", %{})
+
+      assert antwort =~ "1–60"
+      assert antwort =~ "141–2168"
+    end
+
+    test "lückenlos gelesen ergibt einen Bereich" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+
+      assert ruf(h, "offen", %{}) =~ "3–5"
+    end
+  end
+
   describe "fertig" do
     test "lehnt ab, solange Zeilen ungelesen sind — mit Zahl und Nummern" do
       h = halter()
@@ -472,7 +461,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
       assert antwort =~ "Noch nicht fertig"
       assert antwort =~ "3 von 5"
-      assert antwort =~ "3, 4, 5"
+      assert antwort =~ "3–5"
     end
 
     test "geht, wenn alles gelesen ist — ohne dass jede Zeile bestätigt wäre" do
@@ -487,6 +476,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
 
       assert ruf(h, "offen", %{}) =~ "3 von 5"
+      assert ruf(h, "offen", %{}) =~ "3–5"
     end
   end
 

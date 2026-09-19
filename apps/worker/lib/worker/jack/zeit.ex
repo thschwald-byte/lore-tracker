@@ -115,13 +115,20 @@ defmodule Worker.Jack.Zeit do
   def lauf(eingabe, art, opts \\ []) do
     Lauf.starten(
       eingabe,
-      opts,
+      Keyword.put(opts, :vorbedingung, &mitschnitt_da/1),
       fn -> stand(eingabe, art) end,
       fn -> Auftrag.fuer(stand(eingabe, art), Map.get(eingabe, :kampagne, "")) end,
       fehlerklasse(art),
       jack()
     )
   end
+
+  # **Die Vorbedingung ist der Mitschnitt, nicht die Fakten** (Maintainer,
+  # 19.09.2026: „wir stellen den jacklauf ganz auf die utts um"). Alle drei
+  # Läufe lesen die Äußerungen; eine Sitzung ohne Fakten ist für den
+  # Zeit-Jack kein Hindernis, eine ohne Mitschnitt schon.
+  defp mitschnitt_da(%{mitschnitt: [_ | _]}), do: :ok
+  defp mitschnitt_da(_), do: {:error, :kein_mitschnitt}
 
   defp fehlerklasse(:gedaechtnis), do: :zeit_gedaechtnis_ohne_abschluss
   defp fehlerklasse(:pruefen), do: :zeit_pruefen_ohne_abschluss
@@ -132,10 +139,6 @@ defmodule Worker.Jack.Zeit do
       session_id: Map.get(eingabe, :session_id),
       campaign_id: Map.get(eingabe, :campaign_id),
       kalender: Map.get(eingabe, :kalender),
-      # **Die Fakten gehören in den Stand, nicht nur in die Eingabe** (#1247):
-      # Der Gedächtnis-Lauf liest sie, und `fertig()` prüft ihre Abdeckung.
-      # Ohne diese Zeile hätte er ein Werkzeug ohne Inhalt.
-      fakten: Map.get(eingabe, :fakten, []),
       anker: Map.get(eingabe, :anker, []),
       notizen: Map.get(eingabe, :notizen, %{})
     )

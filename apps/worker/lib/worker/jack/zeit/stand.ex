@@ -66,9 +66,7 @@ defmodule Worker.Jack.Zeit.Stand do
             campaign_id: nil,
             kalender: nil,
             mitschnitt: [],
-            fakten: [],
             gelesen: MapSet.new(),
-            gelesene_fakten: MapSet.new(),
             anker: %{},
             offene: %{},
             ausgegeben: %{},
@@ -87,7 +85,6 @@ defmodule Worker.Jack.Zeit.Stand do
       session_id: opts[:session_id],
       campaign_id: opts[:campaign_id],
       kalender: opts[:kalender] || Calendar.default(),
-      fakten: opts[:fakten] || [],
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{}
     }
@@ -101,48 +98,6 @@ defmodule Worker.Jack.Zeit.Stand do
   @spec gelesen(t(), [Mitschnitt.zeile()]) :: t()
   def gelesen(%__MODULE__{} = s, zeilen) do
     %{s | gelesen: Enum.reduce(zeilen, s.gelesen, &MapSet.put(&2, &1.utterance_id))}
-  end
-
-  @doc """
-  Merkt die Fakten, die Jack sich hat zeigen lassen.
-
-  **Der Gedächtnis-Lauf hat einen anderen Gegenstand als die beiden anderen**
-  (#1247, Befund des ersten echten Laufs): Er liest die FAKTEN, nicht den
-  Mitschnitt. Sein `fertig()` hängt deshalb an dieser Menge, nicht an der
-  Zeilen-Abdeckung. Der erste Wurf hatte für ihn gar kein Fakten-Werkzeug —
-  das Modell bemerkte es sofort („the task says Lies die Fakten, but the
-  available tools are about a transcript") und las ersatzweise den
-  Mitschnitt.
-  """
-  @spec fakten_gelesen(t(), [map()]) :: t()
-  def fakten_gelesen(%__MODULE__{} = s, fakten) do
-    %{s | gelesene_fakten: Enum.reduce(fakten, s.gelesene_fakten, &MapSet.put(&2, fakt_id(&1)))}
-  end
-
-  @doc """
-  Sitzungs-ID → Nummer, abgeleitet aus der Reihenfolge des ersten Auftretens
-  in den Fakten. Damit trägt jede Fakt-Zeile ihre Sitzung, ohne dass die
-  Eingabe eine zweite Liste mitschleppt.
-  """
-  @spec sitzungsnummern(t()) :: %{String.t() => pos_integer()}
-  def sitzungsnummern(%__MODULE__{fakten: fakten}) do
-    fakten
-    |> Enum.map(&(Map.get(&1, :session_id) || Map.get(&1, "session_id")))
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-    |> Enum.with_index(1)
-    |> Map.new()
-  end
-
-  @doc "Die ID eines Fakts, in beiden Schlüsselformen."
-  @spec fakt_id(map()) :: String.t()
-  def fakt_id(f), do: to_string(Map.get(f, :fakt_id) || Map.get(f, "fakt_id") || Map.get(f, "id") || "")
-
-  @doc "Die Fakten, die Jack noch nicht gesehen hat (höchstens `deckel`)."
-  @spec offene_fakten(t(), pos_integer()) :: %{anzahl: non_neg_integer(), fakten: [map()]}
-  def offene_fakten(%__MODULE__{} = s, deckel \\ 20) do
-    fehlend = Enum.reject(s.fakten, &MapSet.member?(s.gelesene_fakten, fakt_id(&1)))
-    %{anzahl: length(fehlend), fakten: Enum.take(fehlend, deckel)}
   end
 
   @doc """
@@ -249,14 +204,16 @@ defmodule Worker.Jack.Zeit.Stand do
   def konflikt(%__MODULE__{} = s, eintrag), do: %{s | konflikte: s.konflikte ++ [eintrag]}
 
   @doc """
-  Die Zeilen, die Jack noch nicht gesehen hat. Höchstens `deckel` Stück —
-  eine Antwort mit 3.679 Zeilen wäre keine Auskunft, sondern der Mitschnitt
-  noch einmal.
+  Die Zeilen, die Jack noch nicht gesehen hat — **alle**, samt Anzahl.
+
+  Gedeckelt wird erst bei der Ausgabe, und dort in **Bereichen** statt in
+  Einzelnummern (`Worker.Jack.Zeit.Abschluss.bereiche/1`): Wer tausend Zeilen
+  offen hat, dem sagen „die nächsten zwölf" nichts über die Lücken.
   """
-  @spec offen(t(), pos_integer()) :: %{anzahl: non_neg_integer(), zeilen: [Mitschnitt.zeile()]}
-  def offen(%__MODULE__{} = s, deckel \\ 20) do
+  @spec offen(t()) :: %{anzahl: non_neg_integer(), zeilen: [Mitschnitt.zeile()]}
+  def offen(%__MODULE__{} = s) do
     fehlend = Enum.reject(s.mitschnitt, &MapSet.member?(s.gelesen, &1.utterance_id))
-    %{anzahl: length(fehlend), zeilen: Enum.take(fehlend, deckel)}
+    %{anzahl: length(fehlend), zeilen: fehlend}
   end
 
   @doc "Die Zählwerte des Laufs — dieselben, die `fertig` prüft."
@@ -267,9 +224,6 @@ defmodule Worker.Jack.Zeit.Stand do
     %{
       lauf: s.lauf,
       utterances: length(s.mitschnitt),
-      fakten: length(s.fakten),
-      fakten_gelesen: MapSet.size(s.gelesene_fakten),
-      fakten_offen: length(s.fakten) - MapSet.size(s.gelesene_fakten),
       gelesen: MapSet.size(s.gelesen),
       offen: length(s.mitschnitt) - MapSet.size(s.gelesen),
       anker: length(aktiv),
@@ -298,8 +252,6 @@ defmodule Worker.Jack.Zeit.Stand do
       "lauf" => to_string(s.lauf),
       "utterances" => z.utterances,
       "gelesen" => z.gelesen,
-      "fakten" => z.fakten,
-      "fakten_gelesen" => z.fakten_gelesen,
       "offen" => z.offen,
       "anker" => z.anker,
       "zeitpunkte" => z.zeitpunkte,

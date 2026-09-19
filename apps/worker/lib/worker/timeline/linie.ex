@@ -334,14 +334,46 @@ defmodule Worker.Timeline.Linie do
   defp minute_an(i, _reihe, feste, _spannen) when is_map_key(feste, i),
     do: {feste[i][:minute], :belegt}
 
+  # **Interpolieren braucht ZWEI Anker.** Hinter dem letzten gibt es nur so
+  # viel Zeit, wie Spannen tragen; ohne Spanne keine.
+  #
+  # Der erste Wurf schrieb dort die Zeit des letzten Ankers fort, und das ist
+  # die #1092-Klasse in neuer Form: An einer echten Sitzung (seattleV5 S1)
+  # standen die einzigen Anker in der Weltgeschichts-Einführung der ersten
+  # hundert Zeilen — danach bekamen **2000 Zeilen** dasselbe Jahr, ohne jede
+  # Stütze. Ob die Weltgeschichte dabei an ihrer Erzählstelle steht oder an
+  # ihren historischen Ort verschoben wurde, ändert nur die Zahl: einmal
+  # 2064, einmal 2070.
+  #
+  # Was wirklich bekannt ist, ist die REIHENFOLGE — „später als der letzte
+  # Anker" —, und die trägt die Reihe selbst. Eine Minute dazuzuerfinden macht
+  # aus einer Ordnung eine Datierung, die niemand nachprüfen kann. Lieber
+  # keine Angabe (Maintainer-Frage, 19.09.2026: „selbst wenn kein anker
+  # während des rollenspielteils liegt — so sollte er doch die kette richtig
+  # hinbekommen"; die Kette stimmte, die Zeit war erfunden).
   defp minute_an(i, reihe, feste, spannen) do
     case {letzter_fest(i, feste), naechster_fest(i, reihe, feste)} do
       {nil, nil} -> {nil, :ohne}
-      {{vi, vm}, nil} -> {vm + gelaufen(vi, i, spannen), :interpoliert}
       {nil, {_ni, _nm}} -> {nil, :ohne}
+      {{vi, vm}, nil} -> nach_dem_letzten(vm, gelaufen(vi, i, spannen), i, spannen)
       {{vi, vm}, {ni, nm}} -> {zwischen(vi, vm, ni, nm, i, spannen), :interpoliert}
     end
   end
+
+  # **Nur Spannen tragen über den letzten Anker hinaus** — sie sind gesagt
+  # worden, alles andere nicht.
+  #
+  # Die Reichweite endet mit der LETZTEN Spanne, nicht mit der ersten Stelle
+  # ohne: Zwischen einem Anker und einer folgenden Spanne ist die Strecke
+  # gemessen („um 10 Uhr … zwei Stunden marschiert"), und die Zeilen
+  # dazwischen liegen nachweislich in diesem Fenster. Was DAHINTER kommt,
+  # liegt in keinem — dort endet, was jemand gesagt hat.
+  defp nach_dem_letzten(vm, minuten, i, spannen) do
+    if i <= letzte_spanne(spannen), do: {vm + minuten, :interpoliert}, else: {nil, :ohne}
+  end
+
+  defp letzte_spanne(spannen) when map_size(spannen) == 0, do: -1
+  defp letzte_spanne(spannen), do: spannen |> Map.keys() |> Enum.max()
 
   # Zwischen zwei festen Punkten: erst die genannten Dauern: sie sind belegt,
   # die Position ist es nicht. Passen sie nicht in den Abstand, wird linear

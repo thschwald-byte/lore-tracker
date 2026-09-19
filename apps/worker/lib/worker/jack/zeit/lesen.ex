@@ -25,41 +25,6 @@ defmodule Worker.Jack.Zeit.Lesen do
   def werkzeuge(%Stand{}) do
     [
       %{
-        name: "fakten",
-        beschreibung:
-          "Zeigt die FAKTEN der Kampagne ab einem Eintrag — das sind die geprüften " <>
-            "Aussagen, die ein anderer Lauf aus dem Mitschnitt gezogen hat. Jeder " <>
-            "nennt seine Sitzung und die Blöcke, auf die er sich stützt. Nicht " <>
-            "jeder ist ein Ereignis der Spielwelt: Manche halten fest, was am " <>
-            "Tisch besprochen wurde.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "ab" => %{"type" => "integer"},
-            "anzahl" => %{"type" => "integer"}
-          },
-          "required" => []
-        },
-        optional: ~w(ab anzahl),
-        wiederholung: :zaehlt,
-        ausfuehren: &w_fakten/2
-      },
-      %{
-        name: "fakt",
-        beschreibung:
-          "Ein einzelner Fakt mit allem, was er trägt: Aussage, Art, Figur, " <>
-            "Sitzung und die Blöcke, auf die er sich stützt. nummer ist die " <>
-            "laufende Nummer aus fakten(). Nimm das, wenn dir in der Liste etwas " <>
-            "unklar ist.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{"nummer" => %{"type" => "integer"}},
-          "required" => ["nummer"]
-        },
-        wiederholung: :zaehlt,
-        ausfuehren: &w_fakt/2
-      },
-      %{
         name: "mitschnitt",
         beschreibung:
           "Zeigt den Mitschnitt ab einer Zeile. Eine Zeile ist eine ÄUSSERUNG — " <>
@@ -121,67 +86,6 @@ defmodule Worker.Jack.Zeit.Lesen do
     ]
   end
 
-  @fakten_fenster 40
-
-  defp w_fakten(%Stand{} = s, f) do
-    ab = max(f["ab"] || 1, 1)
-    anzahl = min(f["anzahl"] || @fakten_fenster, @fakten_fenster)
-    gewaehlt = s.fakten |> Enum.drop(ab - 1) |> Enum.take(anzahl)
-
-    case gewaehlt do
-      [] ->
-        {s, {:ok, "Ab Fakt #{ab} gibt es nichts mehr — es sind #{length(s.fakten)}."}}
-
-      _ ->
-        s = Stand.fakten_gelesen(s, gewaehlt)
-        z = Stand.zahlen(s)
-        sitzungen = Stand.sitzungsnummern(s)
-
-        {s,
-         {:ok,
-          Enum.map_join(Enum.with_index(gewaehlt, ab), "\n", &fakt_zeile(&1, sitzungen)) <>
-            "\n\n(Fakt #{ab}–#{ab + length(gewaehlt) - 1} von #{z.fakten}; gelesen " <>
-              "#{z.fakten_gelesen}, offen #{z.fakten_offen}.)"}}
-    end
-  end
-
-  defp w_fakt(%Stand{} = s, f) do
-    nr = f["nummer"]
-
-    case nr && nr >= 1 && Enum.at(s.fakten, nr - 1) do
-      nil ->
-        {s, {:error, "Einen Fakt #{inspect(nr)} gibt es nicht — es sind #{length(s.fakten)}."}}
-
-      false ->
-        {s, {:error, "Einen Fakt #{inspect(nr)} gibt es nicht — es sind #{length(s.fakten)}."}}
-
-      fakt ->
-        {Stand.fakten_gelesen(s, [fakt]), {:ok, fakt_voll(fakt)}}
-    end
-  end
-
-  # **Die Sitzung gehört in die Zeile** (Befund des zweiten echten Laufs):
-  # Die Fakten sind kampagnenweit, und ohne die Nummer sieht das Modell 418
-  # Einträge aus vier Sitzungen als eine flache Liste. Es rätselte mehrfach —
-  # „facts 205 through 239 seem to repeat earlier content, suggesting they
-  # might be from a different session or out of sequence" — und baute sich
-  # daraus ein falsches Bild vom Ablauf. Raten statt nachsehen ist immer ein
-  # fehlendes Feld.
-  defp fakt_zeile({fakt, nr}, sitzungen) do
-    s = Map.get(sitzungen, feld(fakt, :session_id))
-    "#{nr}  [S#{s || "?"}] #{feld(fakt, :claim)}"
-  end
-
-  defp fakt_voll(fakt) do
-    Enum.map_join(
-      [:fakt_id, :claim, :fact_type, :character_alias, :session_id, :source_refs],
-      "\n",
-      fn k -> "#{k}: #{inspect(feld(fakt, k), limit: 8)}" end
-    )
-  end
-
-  defp feld(f, k), do: Map.get(f, k) || Map.get(f, to_string(k))
-
   defp w_mitschnitt(%Stand{} = s, f) do
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || @fenster, @fenster)
@@ -227,9 +131,7 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     {s,
      {:ok,
-      "Lauf: #{z.lauf}\n" <>
-        "Fakten: #{z.fakten}, gelesen #{z.fakten_gelesen}, offen #{z.fakten_offen}\n" <>
-        "Zeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}\n" <>
+      "Lauf: #{z.lauf}\nZeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}\n" <>
         "Anker: #{z.anker} (Zeitpunkte #{z.zeitpunkte}, Spannen #{z.spannen}, " <>
         "Verschiebungen #{z.verschiebungen})\nGelöst: #{z.geloest}, Konflikte: #{z.konflikte}"}}
   end

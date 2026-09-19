@@ -42,13 +42,36 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
       assert h =~ "20"
     end
 
-    test "viele offene Stellen werden gedeckelt aufgezählt" do
+    test "viele offene Stellen werden zu BEREICHEN, nicht zu einer Nummernliste" do
+      # Eine Liste der „nächsten zwölf" ist bei hundert offenen Zeilen keine
+      # Auskunft: Sie sagt nicht, WO die Lücken sind, und legt nahe, es seien
+      # nur diese (Maintainer, 19.09.2026).
       s = Stand.neu(:einsortieren, mitschnitt(100))
 
       assert [h] = Abschluss.hindernisse(s)
-      assert h =~ "…"
+      assert h =~ "1–100"
       # Nicht hundert Nummern in einem Satz.
       assert length(String.split(h, ",")) < 20
+    end
+
+    test "mehrere Lücken werden einzeln genannt" do
+      # Der häufige Fall: Jack liest mitten im Mitschnitt weiter und lässt
+      # vorn eine Lücke. Eine Aufzählung „ab der nächsten" verstecke sie.
+      m = mitschnitt(100)
+      mitte = Enum.filter(m, &(&1.nr in 21..60))
+      s = Stand.neu(:einsortieren, m) |> Stand.gelesen(mitte)
+
+      assert [h] = Abschluss.hindernisse(s)
+      assert h =~ "1–20"
+      assert h =~ "61–100"
+    end
+
+    test "einzelne Zeilen bleiben einzelne Nummern" do
+      m = mitschnitt(10)
+      s = Stand.neu(:einsortieren, m) |> Stand.gelesen(Enum.reject(m, &(&1.nr in [3, 7])))
+
+      assert [h] = Abschluss.hindernisse(s)
+      assert h =~ "3, 7"
     end
 
     test "alles gelesen und nichts angefasst → darf abschliessen" do

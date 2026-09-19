@@ -34,11 +34,20 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # selbst voran (Maintainer, 18.09.2026 — die Beschreibungen tragen die
   # Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
   # der Wortlaut weg).
-  @lesend ~w(fakten fakt mitschnitt linie offen zahlen)
+  @lesend ~w(mitschnitt linie offen zahlen)
   # Nur der Gedächtnis-Lauf notiert: Er SETZT nichts, und sein Ergebnis ist
   # genau diese Notiz — ohne sie wäre er wirkungslos (Befund des zweiten
   # echten Laufs, 19.09.2026). Die beiden anderen Läufe legen ihr Ergebnis in
   # Ankern ab.
+  #
+  # **Alle drei Läufe lesen die ÄUSSERUNGEN** (Maintainer, 19.09.2026: „wir
+  # stellen den jacklauf ganz auf die utts um — also auch datensammeln aus
+  # utts, werkzeug für fakten weg"). Der Gedächtnis-Lauf las bis dahin die
+  # Fakten; die sind eine andere Schicht mit anderer Körnung (418 gegen 2168),
+  # sie kommen aus allen Sitzungen der Kampagne, und ihre Reihenfolge ist
+  # nicht die des Gesprächs — das Modell rätselte darüber mehrfach. Jetzt ist
+  # es Jacks eigenes Muster: Phase 1 und Phase 2 lesen denselben Mitschnitt,
+  # die eine versteht ihn, die andere ordnet ein.
   @notierend ~w(notiz notizen_lesen)
   @setzend ~w(zeitpunkt spanne frist verschieben loesen dazu ersetzen konflikt zweifel)
 
@@ -77,8 +86,9 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
           "Hält etwas fest, das der nächste Lauf wissen muss. Das ist das " <>
             "ERGEBNIS dieses Laufs — was du nicht notierst, ist nach dem Lauf weg. " <>
             "abschnitt: „ABLAUF“ für die Stationen der Handlung in der Welt " <>
-            "(nicht das, was am Tisch besprochen wurde), „ZEITEN“ für alles, was " <>
-            "an Zeitangaben schon in den Fakten steht, „OFFEN“ für das, was du " <>
+            "(nicht das, was am Tisch besprochen wurde), „ZEITEN“ für jede " <>
+            "Zeitangabe, die dir beim Lesen begegnet — mit der Zeilennummer, " <>
+            "damit der nächste Lauf sie wiederfindet, „OFFEN“ für das, was du " <>
             "nicht einordnen konntest, mit Grund. schluessel: ein kurzes Wort, " <>
             "unter dem du es wiederfindest — derselbe Schlüssel ersetzt die " <>
             "Notiz, du kannst also korrigieren.",
@@ -133,7 +143,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         {s,
          {:ok,
           "Notiert unter #{abschnitt}/#{schluessel}. " <>
-            "Notizen: #{map_size(s.notizen)}. Fakten gelesen #{z.fakten_gelesen}/#{z.fakten}."}}
+            "Notizen: #{map_size(s.notizen)}. Gelesen #{z.gelesen}/#{z.utterances}."}}
     end
   end
 
@@ -418,9 +428,9 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       %{
         name: "fertig",
         beschreibung:
-          "Schliesst den Lauf ab. Geht, wenn du JEDEN Fakt gelesen hast — nicht, " <>
-            "wenn du jeden notiert hast: Notiert wird, was der nächste Lauf " <>
-            "braucht, und das ist weniger. Was noch fehlt, sagt dir diese " <>
+          "Schliesst den Lauf ab. Geht, wenn du JEDE Zeile gelesen hast — nicht, " <>
+            "wenn du jede notiert hast: Notiert wird, was der nächste Lauf " <>
+            "braucht, und das ist viel weniger. Was noch fehlt, sagt dir diese " <>
             "Antwort mit Zahlen, und offen() sagt es dir vorher.",
         parameter: %{"type" => "object", "properties" => %{}, "required" => []},
         wiederholung: :frei,

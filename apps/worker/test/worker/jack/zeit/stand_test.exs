@@ -34,14 +34,14 @@ defmodule Worker.Jack.Zeit.StandTest do
       assert Stand.zahlen(s).gelesen == 2
     end
 
-    test "offen/2 nennt die Zahl vollständig, die Zeilen gedeckelt" do
-      # Eine Antwort mit 3.679 Zeilen wäre keine Auskunft, sondern der
-      # Mitschnitt noch einmal.
+    test "offen/1 nennt alle offenen Zeilen — gedeckelt wird erst bei der Ausgabe" do
+      # Die Ausgabe fasst sie zu Bereichen zusammen
+      # (`Abschluss.bereiche/1`); eine vorab gekürzte Liste könnte das nicht.
       s = Stand.neu(:einsortieren, mitschnitt(100))
-      o = Stand.offen(s, 5)
+      o = Stand.offen(s)
 
       assert o.anzahl == 100
-      assert length(o.zeilen) == 5
+      assert length(o.zeilen) == 100
     end
   end
 

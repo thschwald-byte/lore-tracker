@@ -558,15 +558,23 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert text =~ "desto weniger muss ich raten"
   end
 
-  # Der Gedächtnis-Lauf baut aus den Fakten das Bild vom Ablauf — und der
-  # Faktenbestand enthält reichlich Tischgespräch (an einer gemessenen Sitzung
-  # 73 von 112). Ohne den Hinweis geht er mit der Tischorganisation im Bild in
-  # den Einsortier-Lauf, wo die Welt-Frage bei jedem Anker die erste ist.
-  test "der Gedächtnis-Auftrag warnt vor dem Tischgespräch in den Fakten" do
+  # Der Gedächtnis-Lauf liest seit dem 19.09.2026 die ÄUSSERUNGEN, nicht die
+  # Fakten (Maintainer: „wir stellen den jacklauf ganz auf die utts um").
+  test "der Gedächtnis-Auftrag liest den Mitschnitt und setzt nichts" do
     text = File.read!(Path.join(@dir, "zeit_gedaechtnis.md"))
 
-    assert text =~ "nicht jeder Fakt ist ein Ereignis der Spielwelt"
-    assert text =~ "73 von 112"
+    assert text =~ "Mitschnitt"
+    refute text =~ "Fakten", "der Lauf hat keine Fakten-Werkzeuge mehr"
+
+    # Er setzt nichts — das ist der Zweck der Trennung.
+    assert text =~ "setzt in diesem Lauf **nichts**"
+
+    # Die ZEITEN-Notizen tragen die Zeilennummer, sonst sucht der nächste Lauf
+    # noch einmal.
+    assert text =~ "mit der Zeilennummer"
+
+    # `fertig()` verlangt gelesen, nicht notiert.
+    assert text =~ "jede Zeile **gelesen**"
   end
 
   # Das sechste Symptom des Prüf-Laufs: läuft die Linie über eine

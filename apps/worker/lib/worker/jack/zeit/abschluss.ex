@@ -40,6 +40,8 @@ defmodule Worker.Jack.Zeit.Abschluss do
 
   alias Worker.Jack.Zeit.Stand
 
+  # Höchstens so viele BEREICHE — nicht Zeilen. Wer 1700 von 2168 Zeilen
+  # offen hat, dem sagen zwölf Einzelnummern nichts; er braucht die Lücken.
   @deckel 12
 
   @doc """
@@ -47,28 +49,8 @@ defmodule Worker.Jack.Zeit.Abschluss do
   abschließen. Jeder Eintrag ist ein Satz für das Modell, mit Zahl.
   """
   @spec hindernisse(Stand.t()) :: [String.t()]
-  def hindernisse(%Stand{lauf: :gedaechtnis} = s), do: fakten_ungelesen(s)
+  def hindernisse(%Stand{lauf: :gedaechtnis} = s), do: ungelesen(s)
   def hindernisse(%Stand{} = s), do: ungelesen(s) ++ ohne_ziel(s)
-
-  # **Der Gedächtnis-Lauf hat einen anderen Gegenstand** (#1247, Befund des
-  # ersten echten Laufs): Er liest die FAKTEN, um den Ablauf zu verstehen, und
-  # setzt nichts. Gegen die Zeilen-Abdeckung zu prüfen wäre dieselbe
-  # Verwechslung, die beim Chronik-Jack den Überblick gegen die Einträge
-  # prüfte, die es dort noch gar nicht gibt — `fertig` verwies auf ein
-  # Werkzeug, das dieser Lauf nicht hat, und Jack wiederholte bis zur Sperre.
-  defp fakten_ungelesen(%Stand{} = s) do
-    case Stand.offene_fakten(s, @deckel) do
-      %{anzahl: 0} ->
-        []
-
-      %{anzahl: n, fakten: naechste} ->
-        [
-          "#{n} von #{length(s.fakten)} Fakten hast du noch nicht gelesen. Ohne sie " <>
-            "fehlt dir der Ablauf, gegen den der nächste Lauf die Äußerungen liest. " <>
-            "Die nächsten: #{Enum.map_join(naechste, ", ", &Stand.fakt_id/1)}."
-        ]
-    end
-  end
 
   @doc "Die Zeilen, die Jack nie ausgegeben bekommen hat."
   @spec nie_gelesen(Stand.t()) :: [map()]
@@ -86,7 +68,7 @@ defmodule Worker.Jack.Zeit.Abschluss do
           "#{length(fehlend)} von #{length(s.mitschnitt)} Zeilen hast du noch nicht " <>
             "gelesen. Eine ungelesene Zeile gilt als „steht an ihrer Erzählposition“ — " <>
             "das ist eine Aussage über die Welt, und die kannst du nur treffen, wenn du " <>
-            "sie gesehen hast. Die nächsten: #{nummern(fehlend)}."
+            "sie gesehen hast. Ungelesen: #{bereiche(fehlend)}."
         ]
     end
   end
@@ -119,12 +101,43 @@ defmodule Worker.Jack.Zeit.Abschluss do
   defp erreichbar?(s, ziel),
     do: Enum.any?(s.mitschnitt, &(&1.utterance_id == ziel))
 
-  defp nummern(fehlend) do
-    fehlend
-    |> Enum.take(@deckel)
-    |> Enum.map(&to_string(&1.nr))
-    |> Enum.join(", ")
-    |> Kernel.<>(if length(fehlend) > @deckel, do: " …", else: "")
+  @doc """
+  Die ungelesenen Zeilen als **Bereiche**, nicht als Einzelnummern.
+
+  Eine Liste der „nächsten zwölf" ist bei tausend offenen Zeilen keine
+  Auskunft: Sie sagt nicht, WO die Lücken sind, und sie legt nahe, es seien
+  nur diese. `1–60, 500–2168` sagt in zwei Angaben, was zu tun ist — und
+  deckt den häufigen Fall ab, dass Jack mitten im Mitschnitt weitergelesen
+  hat und vorn eine Lücke blieb.
+  """
+  @spec bereiche([map()]) :: String.t()
+  def bereiche(fehlend) do
+    gruppen =
+      fehlend
+      |> Enum.map(& &1.nr)
+      |> Enum.sort()
+      |> Enum.chunk_while(
+        nil,
+        fn nr, nil -> {:cont, {nr, nr}}
+           nr, {von, bis} when nr == bis + 1 -> {:cont, {von, nr}}
+           nr, offen -> {:cont, offen, {nr, nr}}
+        end,
+        fn
+          nil -> {:cont, nil}
+          offen -> {:cont, offen, nil}
+        end
+      )
+      |> Enum.reject(&is_nil/1)
+
+    text =
+      gruppen
+      |> Enum.take(@deckel)
+      |> Enum.map_join(", ", fn
+        {n, n} -> "#{n}"
+        {von, bis} -> "#{von}–#{bis}"
+      end)
+
+    if length(gruppen) > @deckel, do: text <> " … (#{length(gruppen)} Lücken)", else: text
   end
 
   defp feld(a, k) when is_map(a), do: Map.get(a, k) || Map.get(a, to_string(k))

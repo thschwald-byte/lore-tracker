@@ -45,7 +45,7 @@ defmodule Worker.Jack.Resuemee.Lauf do
   @spec starten(map(), keyword(), (-> Stand.t()), (-> term()), atom(), map()) ::
           {:ok, map()} | {:error, term()}
   def starten(eingabe, opts, stand, auftrag, fehler, jack) do
-    with :ok <- fakten_da(eingabe),
+    with :ok <- Keyword.get(opts, :vorbedingung, &fakten_da/1).(eingabe),
          {:ok, modell} <- aus_opts(opts, :modell, &Pipeline.modell/0),
          {:ok, fenster} <- fenster(opts),
          {:ok, auftrag} <- aus_opts(opts, :auftrag, auftrag) do
@@ -56,7 +56,14 @@ defmodule Worker.Jack.Resuemee.Lauf do
     end
   end
 
-  @doc "`:ok`, wenn die Eingabe Fakten hat, sonst `{:error, :keine_fakten}`."
+  @doc """
+  `:ok`, wenn die Eingabe Fakten hat, sonst `{:error, :keine_fakten}`.
+
+  **Die Vorbedingung ist seit #1247 wählbar** (Option `:vorbedingung`): Der
+  Zeit-Jack arbeitet auf den Äußerungen, nicht auf den Fakten — für ihn ist
+  ein leerer Mitschnitt der Abbruchgrund, und eine Sitzung ohne Fakten kein
+  Hindernis.
+  """
   @spec fakten_da(map()) :: :ok | {:error, :keine_fakten}
   def fakten_da(%{fakten: [_ | _]}), do: :ok
   def fakten_da(_eingabe), do: {:error, :keine_fakten}

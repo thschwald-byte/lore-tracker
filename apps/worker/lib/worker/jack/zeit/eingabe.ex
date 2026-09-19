@@ -9,9 +9,11 @@ defmodule Worker.Jack.Zeit.Eingabe do
   Einordnen von Sitzung 4 sichtbar sein. Sonst könnte Jack einen Widerspruch
   zu einer früheren Festlegung gar nicht sehen.
 
-  **Die Fakten kommen aus der Kampagne, nicht aus der Sitzung.** Der
-  Gedächtnis-Lauf baut das Bild vom Ablauf, und der Ablauf beginnt nicht mit
-  dieser Sitzung.
+  **Fakten gibt es hier nicht** (Maintainer, 19.09.2026). Der Gedächtnis-Lauf
+  las sie bis dahin, um den Ablauf zu verstehen; sie sind aber eine andere
+  Schicht mit anderer Körnung, kommen aus allen Sitzungen und stehen nicht in
+  Gesprächsreihenfolge. Alle drei Läufe lesen jetzt die Äußerungen — dieselbe
+  Adresse, dieselbe Ordnung, dieselbe Sitzung.
 
   **Die menschlich gesetzten Anker reisen mit** (`Worker.Repo.Zeit.anker/1`
   liest sie aus `SessionInGameAnchorSet` und den eigenen Rows). Jack sieht
@@ -41,7 +43,6 @@ defmodule Worker.Jack.Zeit.Eingabe do
          campaign_id: campaign.id,
          kampagne: Map.get(campaign, :name) || campaign.id,
          mitschnitt: mitschnitt,
-         fakten: Worker.Repo.list_campaign_facts(campaign.id),
          anker: Worker.Repo.Zeit.anker(campaign.id),
          kalender: Worker.Repo.get_campaign_calendar(campaign.id)
        }}
