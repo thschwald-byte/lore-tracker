@@ -20,6 +20,16 @@ defmodule Worker.Jack.Resuemee.Halter do
 
   Wirft ein Werkzeug oder liefert es keinen Stand zurück, bleibt der Stand,
   wie er war, und das Ergebnis ist ein Fehler mit der Meldung.
+
+  **Geprüft wird der TYP, nicht der Inhalt** (bob, 19.09.2026). Ein Werkzeug,
+  das einen frischen Stand desselben Moduls zurückgibt statt des
+  fortgeschriebenen, kommt durch: Die Struct stimmt, die Buchführung darin ist
+  zurückgesetzt. Bei einem Jack, dessen Abschlussregel daran hängt (der
+  Zeit-Jack zählt gelesene Zeilen), hiesse das je nach Richtung ein
+  unerreichbares `fertig()` oder eine Buchführung, die nichts mehr belegt. Das
+  kann dieser Halter nicht sehen — er kennt den Typ nicht, das ist gerade
+  sein Zweck. Wer ein Werkzeug schreibt, reicht den **übergebenen** Stand
+  fort; ein neu gebauter ist ein Fehler, den erst die Werkzeugtests fangen.
   """
 
   alias Worker.Jack.Resuemee.Stand

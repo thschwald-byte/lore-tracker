@@ -123,7 +123,7 @@ defmodule Worker.Repo.Zeit do
   # Nur bekannte Schlüssel werden zu Atomen — die Atom-Tabelle ist endlich und
   # wird nie aufgeräumt, und die Daten kommen aus einem Ereignis.
   @bekannt ~w(utterance_ids art wert welt zweifel beleg quelle abgesegnet_von
-              abgesegnet_am ziel richtung)
+              abgesegnet_am ziel richtung halbtag)
   defp schluessel(k) when k in @bekannt, do: String.to_existing_atom(k)
   defp schluessel(k), do: k
 

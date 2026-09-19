@@ -353,6 +353,146 @@ defmodule Worker.Timeline.LinieTest do
     end
   end
 
+  describe "Wortform-Uhrzeiten: die KETTE entscheidet den Halbtag" do
+    # Die drei echten Anker der Referenzsitzung S3, in ihrer Reihenfolge:
+    # „Drei viertel elf" (10:45/22:45) → „kurz nach zwölf" (00:05/12:05) →
+    # „kurz vor zwei" (01:50/13:50).
+    defp s3_kette do
+      [
+        anker(:zeitpunkt, ["u11"], %{halbtag_minute: 10 * 60 + 45, anker_id: "z_1"}),
+        anker(:zeitpunkt, ["u12"], %{halbtag_minute: 5, anker_id: "z_2"}),
+        anker(:zeitpunkt, ["u13"], %{halbtag_minute: 60 + 50, anker_id: "z_3"})
+      ]
+    end
+
+    test "die Abstände stimmen — unabhängig davon, welcher Halbtag gemeint war" do
+      # Das ist der Kern: 22:45 → 00:05 → 01:50 und 10:45 → 12:05 → 13:50
+      # haben IDENTISCHE Abstände, und die Linie braucht die Abstände. Läge
+      # die Wahl beim Modell und es entschiede falsch, spannte die Sitzung
+      # fünfzehn Stunden statt drei (Befund dave, 19.09.2026).
+      linie = Linie.bauen(stellen(), s3_kette())
+
+      [a, b, c] = for id <- ~w(u11 u12 u13), do: linie.nach_utterance[id].minute
+
+      assert b - a == 80, "drei viertel elf → kurz nach zwölf sind 1h20"
+      assert c - b == 105, "kurz nach zwölf → kurz vor zwei sind 1h45"
+      assert c - a == 185, "die ganze Kette spannt 3h05, nicht 15 Stunden"
+    end
+
+    test "kein Anker springt rückwärts" do
+      linie = Linie.bauen(stellen(), s3_kette())
+      minuten = for id <- ~w(u11 u12 u13), do: linie.nach_utterance[id].minute
+
+      assert minuten == Enum.sort(minuten)
+    end
+
+    test "ein Datum davor gibt der ganzen Kette ihren Tag" do
+      tag = 734_372
+
+      linie =
+        Linie.bauen(
+          stellen(),
+          [anker(:zeitpunkt, ["u11"], %{minute: tag * 1440, anker_id: "z_datum"})] ++
+            [
+              # „Drei viertel elf" im 12-Stunden-Raum: 10:45 ODER 22:45.
+              anker(:zeitpunkt, ["u12"], %{halbtag_minute: 10 * 60 + 45, anker_id: "z_a"}),
+              anker(:zeitpunkt, ["u13"], %{halbtag_minute: 5, anker_id: "z_b"})
+            ]
+        )
+
+      # Das Datum steht auf Mitternacht, die Wortform läuft vorwärts: 10:45.
+      assert linie.nach_utterance["u12"].minute == tag * 1440 + 10 * 60 + 45
+      assert Linie.tag(linie.nach_utterance["u12"]) == tag
+
+      # 10:45 → „kurz nach zwölf": vorwärts auf 12:05, NICHT zurück auf 00:05.
+      assert linie.nach_utterance["u13"].minute == tag * 1440 + 12 * 60 + 5
+      assert Linie.tag(linie.nach_utterance["u13"]) == tag
+    end
+
+    test "eine Wortform erzeugt KEINEN Tageswechsel-Befund" do
+      # Bei der Wortform geht die Auflösung immer vorwärts — der „Wechsel" ist
+      # dort die Regel und keine Annahme über den Inhalt. Nur eine FESTE
+      # Uhrzeit, die zurückspringt, ist eine Annahme.
+      linie = Linie.bauen(stellen(), s3_kette())
+
+      refute Enum.any?(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+    end
+  end
+
+  describe "der angenommene Tageswechsel ist ein Befund" do
+    test "eine feste Uhrzeit, die zurückspringt, wird gemeldet" do
+      # Der Fall dahinter ist der ÜBERSEHENE Rückblick (bob, 19.09.2026): Hat
+      # Jack ihn nicht verschoben, steht seine Uhrzeit an der Erzählstelle,
+      # springt zurück, und die Rechnung macht Mitternacht daraus — und weil
+      # der Vorlauf fortgeschrieben wird, erbt der ganze REST der Sitzung den
+      # erhöhten Tag.
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60, anker_id: "z_spaet"}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 9 * 60, anker_id: "z_frueh"})
+        ])
+
+      befund = Enum.find(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+
+      assert befund, "ein erfundener Tageswechsel muss sichtbar sein"
+      assert befund.anker_id == "z_frueh"
+      assert befund.text =~ "Rückblick"
+    end
+
+    test "eine aufsteigende Folge meldet nichts" do
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 9 * 60}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 22 * 60})
+        ])
+
+      refute Enum.any?(linie.befunde, &(&1.art == :tagwechsel_angenommen))
+    end
+  end
+
+  describe "Verfeinerung ist kein Widerspruch" do
+    test "eine Uhrzeit füllt das abgesegnete Datum aus, statt ihm zu weichen" do
+      # Das Sitzungsdatum kommt vom GM und ist abgesegnet; die Uhrzeit kommt
+      # von Jack. Stünde die Absegnung vor der Genauigkeit, gewänne
+      # Mitternacht — und die einzige wirklich gesagte Uhrzeit fiele genau in
+      # dem Fall aus der Rechnung, für den die Stufe eingezogen wurde (bob,
+      # 19.09.2026).
+      tag = 734_372
+
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{
+            minute: tag * 1440,
+            anker_id: "z_gm",
+            abgesegnet_am: "2026-09-19"
+          }),
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60 + 45, anker_id: "z_jack"})
+        ])
+
+      eintrag = linie.nach_utterance["u11"]
+      assert eintrag.minute == tag * 1440 + 22 * 60 + 45
+      assert eintrag.anker_id == "z_jack"
+    end
+
+    test "an einem ANDEREN Tag ist es ein Widerspruch — die Kuration gewinnt" do
+      tag = 734_372
+
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{
+            minute: tag * 1440,
+            anker_id: "z_gm",
+            abgesegnet_am: "2026-09-19"
+          }),
+          # Ein anderes DATUM, keine Verfeinerung: beide sind grob, die
+          # Absegnung entscheidet.
+          anker(:zeitpunkt, ["u11"], %{minute: (tag + 3) * 1440, anker_id: "z_jack"})
+        ])
+
+      assert linie.nach_utterance["u11"].anker_id == "z_gm"
+    end
+  end
+
   describe "Befunde" do
     test "Spannen, die nicht zwischen zwei Anker passen, werden gemeldet statt gestaucht" do
       a = [

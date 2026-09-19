@@ -69,6 +69,7 @@ defmodule Worker.Jack.Zeit.Setzen do
           required(:wert) => String.t(),
           required(:welt) => String.t(),
           required(:beleg) => String.t(),
+          optional(:halbtag) => String.t(),
           optional(:zweifel) => String.t()
         }
 
@@ -192,6 +193,11 @@ defmodule Worker.Jack.Zeit.Setzen do
       wert: w.wert,
       welt: w.welt,
       beleg: w.beleg,
+      # Der Halbtag ist eine Angabe ÜBER den Ausdruck, kein Teil von ihm —
+      # deshalb geht er nicht in die Adresse ein (`Linie.anker_id/3` hasht
+      # utterance_ids, art und wert). Derselbe Ausdruck an derselben Stelle
+      # bleibt derselbe Anker, ob Jack den Halbtag nun dazusagt oder nicht.
+      halbtag: Map.get(w, :halbtag, ""),
       zweifel: Map.get(w, :zweifel, ""),
       quelle: "jack",
       abgesegnet_von: "",

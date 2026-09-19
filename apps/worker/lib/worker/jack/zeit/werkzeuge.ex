@@ -69,17 +69,27 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         beschreibung:
           "Hängt einen ZEITPUNKT an eine oder mehrere Zeilen: etwas, das im Spiel " <>
             "als Zeit GESAGT wurde — „drei viertel elf“, „am 15. November“, „kurz " <>
-            "nach zwölf“. Nicht ableiten, nicht rechnen: nur was dasteht. " <>
-            "Meinst du eine UHRZEIT, schreib sie in wert als Ziffern im " <>
-            "24-Stunden-Format („22:45“, „9:05“) — eine Wortform ist zwölfdeutig " <>
-            "(„drei viertel elf“ ist 10:45 oder 22:45), und welche gilt, weisst " <>
-            "nur du aus dem Gespräch. Eine Wortform bleibt sonst ohne Zahl: Der " <>
-            "Anker ordnet dann, datiert aber nicht. Das Zitat gehört unverändert " <>
-            "in beleg. " <>
-            "welt: „spielwelt“, wenn die Zeit in der erzählten Welt gilt; „tisch“, " <>
-            "wenn sie den Abend meint (Restzeit, Pause, Termin) — das ist der " <>
-            "häufigere Fall, als man denkt. Bist du unsicher, setz zweifel dazu, " <>
-            "statt zu raten. beleg: das wörtliche Zitat aus der Zeile.",
+            "nach zwölf“. Nicht ableiten, nicht rechnen: nur was dasteht, und in " <>
+            "wert genau so, wie es gesagt wurde. Wortformen sind ausdrücklich " <>
+            "erwünscht: Ich lese „halb elf“, „viertel vor zwölf“, „kurz nach " <>
+            "zwei“ — schreib sie nicht in Ziffern um. " <>
+            "ZUERST die Welt-Frage, bei JEDEM Anker: welt ist „spielwelt“, wenn " <>
+            "die Zeit in der erzählten Welt gilt, und „tisch“, wenn sie den Abend " <>
+            "meint (Restzeit, Pause, wann wir aufhören, wann jemand aufstehen " <>
+            "muss). Tisch ist häufiger als Spielwelt — in der Referenzsitzung 24 " <>
+            "zu 20. Steht es nicht da, nimm zweifel statt zu raten. " <>
+            "EINE ZAHL IST KEINE ZEIT: Geldbeträge („2000 jeder“), Seitenzahlen " <>
+            "(„Seite 42“), Modifikatoren („um eins erhöht“), Entfernungen („5 bis " <>
+            "50 Meter“), Schadenswerte („um sechs K“), Würfelergebnisse — die " <>
+            "gehören mit loesen heraus, nicht hierher. " <>
+            "VORSICHT bei ziffernförmigen Uhrzeiten in einem Satz über " <>
+            "Weltgeschichte: „ab um etwa 20:10 Uhr gebären Menschen …“ ist die " <>
+            "JAHRESZAHL 2010, die die Spracherkennung als Uhrzeit geschrieben " <>
+            "hat. Ich kann das nicht sehen, du am Satz drumherum schon. " <>
+            "halbtag: nur wenn im Gespräch steht, ob Vormittag oder Nachmittag " <>
+            "gemeint ist — sonst weglassen. Ich löse das aus der Reihe der " <>
+            "Anker auf; eine Angabe auf Verdacht wäre zwölf Stunden Risiko ohne " <>
+            "Gewinn. beleg: das wörtliche Zitat aus der Zeile.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -87,11 +97,12 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "wert" => %{"type" => "string"},
             "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch)},
             "beleg" => %{"type" => "string"},
+            "halbtag" => %{"type" => "string", "enum" => ~w(vormittag nachmittag unklar)},
             "zweifel" => %{"type" => "string", "minLength" => 0}
           },
           "required" => ~w(zeilen wert welt beleg)
         },
-        optional: ["zweifel"],
+        optional: ~w(halbtag zweifel),
         wiederholung: :zaehlt,
         ausfuehren: &w_zeitpunkt/2
       },
@@ -294,6 +305,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         wert: to_string(f["wert"]),
         welt: to_string(f["welt"]),
         beleg: to_string(f["beleg"]),
+        halbtag: to_string(f["halbtag"] || ""),
         zweifel: to_string(f["zweifel"] || "")
       }
 
@@ -457,9 +469,17 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # zweites Mal den Parser: Was hier steht, ist genau das, womit gerechnet
   # wird.
   defp gelesen_hinweis(%{art: :zeitpunkt} = a, s) do
-    case a[:minute] do
-      m when is_integer(m) -> ""
-      _ -> "Als Datum lesbar ist er nicht#{als(a, s)} — er ordnet, datiert aber nicht. "
+    cond do
+      is_integer(a[:minute]) ->
+        ""
+
+      is_integer(a[:halbtag_minute]) ->
+        "Gelesen als #{uhr(a[:halbtag_minute])} oder #{uhr(a[:halbtag_minute] + 720)}; " <>
+          "welches von beiden, ergibt sich aus der Reihe der Anker. " <>
+          "Steht es im Gespräch, nenn es in halbtag. "
+
+      true ->
+        "Als Zeit lesbar ist er nicht#{als(a, s)} — er ordnet, datiert aber nicht. "
     end
   end
 
@@ -471,6 +491,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   end
 
   defp gelesen_hinweis(_a, _s), do: ""
+
+  defp uhr(m) do
+    "#{String.pad_leading(to_string(div(m, 60)), 2, "0")}:" <>
+      String.pad_leading(to_string(rem(m, 60)), 2, "0")
+  end
 
   defp als(a, s) do
     case Ausdruck.gelesen_als(a.wert, s.kalender) do

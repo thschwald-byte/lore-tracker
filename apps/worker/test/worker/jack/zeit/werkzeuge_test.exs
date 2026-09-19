@@ -231,6 +231,60 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
   end
 
+  describe "Wortform-Uhrzeiten durch die ganze Kette" do
+    test "drei gesagte Uhrzeiten ergeben eine Linie mit stimmenden Abständen" do
+      # Die drei echten Anker der Referenzsitzung, so wie Jack sie setzen
+      # würde — in Worten, ohne Halbtag. Die Kette entscheidet ihn.
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      for {zeile, wert} <- [{1, "Drei viertel elf"}, {3, "kurz nach zwölf"}, {5, "kurz vor zwei"}] do
+        ruf(h, "zeitpunkt", %{
+          "zeilen" => [zeile],
+          "wert" => wert,
+          "welt" => "spielwelt",
+          "beleg" => wert
+        })
+      end
+
+      antwort = ruf(h, "linie", %{})
+
+      assert antwort =~ "10:45 belegt"
+      assert antwort =~ "12:05 belegt"
+      assert antwort =~ "13:50 belegt"
+    end
+
+    test "die Antwort sagt, dass die Wortform gelesen wurde" do
+      h = halter()
+
+      antwort =
+        ruf(h, "zeitpunkt", %{
+          "zeilen" => [3],
+          "wert" => "Drei viertel elf",
+          "welt" => "spielwelt",
+          "beleg" => "Drei viertel elf."
+        })
+
+      assert antwort =~ "10:45"
+      assert antwort =~ "22:45"
+    end
+
+    test "mit genanntem Halbtag ist die Uhrzeit sofort eindeutig" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      ruf(h, "zeitpunkt", %{
+        "zeilen" => [1],
+        "wert" => "Drei viertel elf",
+        "welt" => "spielwelt",
+        "beleg" => "b",
+        "halbtag" => "nachmittag"
+      })
+
+      assert ruf(h, "linie", %{}) =~ "22:45 belegt"
+    end
+  end
+
   describe "linie zeigt das Ergebnis" do
     test "belegte und gerechnete Zeiten sind unterscheidbar" do
       h = halter()

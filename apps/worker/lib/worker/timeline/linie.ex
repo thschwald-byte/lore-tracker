@@ -410,16 +410,36 @@ defmodule Worker.Timeline.Linie do
     end
   end
 
-  # Die Uhrzeiten: eine TAGESMINUTE, noch ohne Tag.
+  # Die Uhrzeiten, in zwei Formen: `:fest` ist eine eindeutige Tagesminute
+  # (0–1439, ziffernförmig oder mit genanntem Halbtag), `:halb` eine
+  # Halbtagsminute (0–719) aus einer Wortform, deren Halbtag die Kette
+  # entscheidet.
   defp uhrzeit_punkte(anker, index) do
     for a <- anker,
         art(a) == :zeitpunkt,
-        tm = Map.get(a, :tagesminute),
-        is_integer(tm),
+        {form, zahl} = uhrzeit_form(a),
+        not is_nil(form),
         i = frueheste(a, index),
         not is_nil(i),
         into: %{},
-        do: {i, {tm, a}}
+        do: {i, {form, zahl, a}}
+  end
+
+  # **Die Wertebereiche werden geprüft, nicht angenommen.** Eine
+  # Halbtagsminute über 719 ist in Wahrheit eine Tagesminute im falschen Feld;
+  # die Restklassenrechnung in `absolute_minute/3` machte daraus stillschweigend
+  # eine andere Uhrzeit (22:45 wurde zu 10:45) statt eines Fehlers. Gefunden
+  # von einem Test, der selbst den Fehler machte — genau deshalb steht der
+  # Riegel hier und nicht nur in der Schreibstelle.
+  defp uhrzeit_form(a) do
+    tm = Map.get(a, :tagesminute)
+    hm = Map.get(a, :halbtag_minute)
+
+    cond do
+      is_integer(tm) and tm in 0..1439 -> {:fest, tm}
+      is_integer(hm) and hm in 0..719 -> {:halb, hm}
+      true -> {nil, nil}
+    end
   end
 
   # **Eine Uhrzeit bekommt ihren Tag aus ihrer Stelle in der Reihe.** „Drei
@@ -441,13 +461,44 @@ defmodule Worker.Timeline.Linie do
   defp verankern(datierte, uhrzeiten) do
     uhrzeiten
     |> Enum.sort_by(&elem(&1, 0))
-    |> Enum.reduce(datierte, fn {i, {tm, a}}, acc ->
-      eintragen(acc, i, punkt(a, absolute_minute(tm, vorlauf(acc, i)), true))
+    |> Enum.reduce(datierte, fn {i, {form, zahl, a}}, acc ->
+      vorher = vorlauf(acc, i)
+      minute = absolute_minute(form, zahl, vorher)
+      eintragen(acc, i, punkt(a, minute, true, tagwechsel?(form, zahl, vorher)))
     end)
   end
 
-  defp punkt(a, minute, genau?),
-    do: %{minute: minute, anker_id: Map.get(a, :anker_id), abgesegnet?: abgesegnet?(a), genau?: genau?}
+  # **Ein erfundener Tageswechsel ist eine Annahme und gehört als Befund
+  # sichtbar** (bob, 19.09.2026). Der Fall dahinter ist der ÜBERSEHENE
+  # Rückblick: Hat Jack ihn nicht verschoben, steht seine Uhrzeit an der
+  # Erzählstelle, springt zurück, und die Regel macht Mitternacht daraus. Der
+  # Schaden bleibt nicht lokal — `vorlauf/2` liest aus dem fortgeschriebenen
+  # Stand, also erbt jede folgende Uhrzeit den erhöhten Tag, und ein einziger
+  # übersehener Rückblick verschiebt den REST der Sitzung um einen Tag. In
+  # Prod tragen 230 Fakten `narration_time: "flashback"`; das ist Alltag, kein
+  # Randfall.
+  #
+  # Eine bessere Regel gibt es nicht — ohne Zusatzwissen IST ein Rücksprung
+  # mehrdeutig. Sichtbar zu sein ist der Unterschied zwischen einer Annahme
+  # und einem stillen Fehler.
+  #
+  # **Nur bei der festen Uhrzeit.** Bei einer Wortform geht die Auflösung
+  # immer vorwärts (die Kette entscheidet den Halbtag), ein „Wechsel" dort ist
+  # die Regel und keine Annahme über den Inhalt.
+  defp tagwechsel?(:fest, tagesminute, vorher) when is_integer(vorher),
+    do: Integer.floor_div(vorher, @minuten_pro_tag) * @minuten_pro_tag + tagesminute < vorher
+
+  defp tagwechsel?(_, _, _), do: false
+
+  defp punkt(a, minute, genau?, tagwechsel? \\ false) do
+    %{
+      minute: minute,
+      anker_id: Map.get(a, :anker_id),
+      abgesegnet?: abgesegnet?(a),
+      genau?: genau?,
+      tagwechsel?: tagwechsel?
+    }
+  end
 
   defp eintragen(acc, i, neu) do
     case acc[i] do
@@ -466,30 +517,65 @@ defmodule Worker.Timeline.Linie do
     end
   end
 
-  defp absolute_minute(tagesminute, nil), do: tagesminute
+  defp absolute_minute(_form, zahl, nil), do: zahl
 
-  defp absolute_minute(tagesminute, vorher) do
+  defp absolute_minute(:fest, tagesminute, vorher) do
     tag = Integer.floor_div(vorher, @minuten_pro_tag)
     kandidat = tag * @minuten_pro_tag + tagesminute
 
     if kandidat < vorher, do: kandidat + @minuten_pro_tag, else: kandidat
   end
 
-  # Erst die menschliche Festlegung, dann die genauere Angabe, dann der
-  # frühere Wert. Zwei abgesegnete untereinander entscheidet wieder die
-  # Minute — beide sind gleich viel wert, und der Widerspruch steht ohnehin
-  # als Befund da.
+  # **Eine Wortform wird relativ aufgelöst: die nächste Minute vorwärts, die
+  # auf diese Halbtagsminute endet.** Damit ist der Halbtag keine Entscheidung
+  # mehr, sondern eine Folge — und der Fehler, den eine Entscheidung erzeugen
+  # könnte, strukturell ausgeschlossen: Die Kette 22:45 → 00:05 → 01:50 und
+  # die Kette 10:45 → 12:05 → 13:50 haben identische Abstände, und die Linie
+  # braucht die Abstände. Läge die Wahl beim Modell und es entschiede den
+  # ersten Anker falsch, spannte diese Sitzung fünfzehn Stunden statt drei,
+  # bei grüner Einzelprüfung (Befund dave, 19.09.2026).
   #
-  # **Die Genauigkeit steht zwischen beiden, weil Datum und Uhrzeit sich nicht
-  # widersprechen, sondern ergänzen.** „Am 15. November" ergibt Mitternacht,
-  # „22:45" denselben Tag um 22:45 — ohne diese Stufe gewönne das Datum nach
-  # der Minutenregel (Mitternacht ist früher), und die einzige wirklich
-  # gesagte Uhrzeit fiele aus der Rechnung.
-  defp gewinnt?(%{abgesegnet?: true}, %{abgesegnet?: false}), do: true
-  defp gewinnt?(%{abgesegnet?: false}, %{abgesegnet?: true}), do: false
-  defp gewinnt?(%{genau?: true}, %{genau?: false}), do: true
-  defp gewinnt?(%{genau?: false}, %{genau?: true}), do: false
-  defp gewinnt?(%{minute: neu}, %{minute: alt}), do: neu < alt
+  # Der absolute Tagesbezug kommt von einem Datums-Anker; ohne einen ist die
+  # Linie relativ — was sie ohne Uhrzeiten ohnehin ist.
+  defp absolute_minute(:halb, halbtag_minute, vorher),
+    do: vorher + Integer.mod(halbtag_minute - Integer.mod(vorher, 720), 720)
+
+  # **Verfeinerung zuerst, dann die menschliche Festlegung, dann die genauere
+  # Angabe, dann der frühere Wert.**
+  #
+  # Die Reihenfolge der ersten beiden war im ersten Wurf verkehrt, und der
+  # Fall, den sie kippte, ist der häufigste (bob, 19.09.2026): Das
+  # Sitzungsdatum kommt vom GM (es gibt dafür ein Feld) und ist damit
+  # abgesegnet; die Uhrzeit kommt von Jack. Ein abgesegnetes Datum ergibt
+  # Mitternacht — nach der Absegnungsstufe hätte es gewonnen, und die einzige
+  # wirklich gesagte Uhrzeit wäre genau dort aus der Rechnung gefallen, wofür
+  # die Genauigkeitsstufe eingezogen wurde.
+  #
+  # Getrennt werden deshalb **Widerspruch** und **Verfeinerung**: Eine Uhrzeit
+  # INNERHALB des abgesegneten Tages widerspricht ihm nicht, sie füllt ihn
+  # aus — dann gewinnt sie. Liegt sie an einem anderen Tag, ist es ein echter
+  # Widerspruch, und die Kuration gewinnt wie zuvor.
+  defp gewinnt?(neu, alt) do
+    cond do
+      verfeinert?(neu, alt) -> true
+      verfeinert?(alt, neu) -> false
+      neu.abgesegnet? and not alt.abgesegnet? -> true
+      alt.abgesegnet? and not neu.abgesegnet? -> false
+      neu.genau? and not alt.genau? -> true
+      alt.genau? and not neu.genau? -> false
+      true -> neu.minute < alt.minute
+    end
+  end
+
+  # Eine Uhrzeit am selben Tag wie die gröbere Angabe. `floor_div`, nicht
+  # `div`: Ein Tag vor der Epoche hat eine negative Minute, und `div`
+  # schneidet dort zur Null hin ab — zwei Zeiten desselben Tages sähen dann
+  # aus wie zwei verschiedene.
+  defp verfeinert?(%{genau?: true, minute: fein}, %{genau?: false, minute: grob})
+       when is_integer(fein) and is_integer(grob),
+       do: Integer.floor_div(fein, @minuten_pro_tag) == Integer.floor_div(grob, @minuten_pro_tag)
+
+  defp verfeinert?(_, _), do: false
 
   # Die Stellen, an denen sich zwei Zeitpunkt-Anker widersprechen.
   defp uneinige_zeitpunkte(reihe, anker) do
@@ -588,7 +674,23 @@ defmodule Worker.Timeline.Linie do
     ohne_ziel(anker, reihe) ++
       spannen_ueberlauf(eintraege, reihe, anker) ++
       uneinige_zeitpunkte(reihe, anker) ++
+      erfundene_tagwechsel(reihe, anker) ++
       zweifel(anker)
+  end
+
+  # s. `tagwechsel?/3` — jeder gerechnete Tageswechsel ist eine Annahme und
+  # steht deshalb in der Liste, die ein Mensch durchsieht.
+  defp erfundene_tagwechsel(reihe, anker) do
+    for {_i, %{tagwechsel?: true} = p} <- feste_punkte(reihe, anker) do
+      %{
+        art: :tagwechsel_angenommen,
+        anker_id: p.anker_id,
+        text:
+          "Diese Uhrzeit liegt vor der vorhergehenden; gerechnet wird mit einem " <>
+            "Tageswechsel. Stimmt das nicht, ist es vermutlich ein Rückblick, der " <>
+            "noch verschoben werden muss."
+      }
+    end
   end
 
   defp ohne_ziel(anker, reihe) do

@@ -31,17 +31,71 @@ defmodule Worker.Timeline.AusdruckTest do
     end
   end
 
-  describe "was bewusst KEINE Uhrzeit ist" do
-    test "Wortformen bleiben ohne Zahl — sie sind zwölfdeutig" do
-      # „drei viertel elf" ist 10:45 ODER 22:45. Welche gilt, steht nicht im
-      # Ausdruck, sondern im Gespräch — das ist Jacks Urteil, nicht das eines
-      # Regex. Ein geratenes AM/PM wäre ein Fehler von zwölf Stunden, der wie
-      # ein Ergebnis aussieht.
-      assert Ausdruck.tagesminute("drei viertel elf") == nil
-      assert Ausdruck.tagesminute("halb zehn") == nil
-      assert Ausdruck.tagesminute("kurz nach zwölf") == nil
+  describe "halbtag_minute/1 — die Wortform ist der Normalfall" do
+    test "die DREI echten Anker der Referenzsitzung" do
+      # dave hat die handgelesene Referenzliste ausgezählt (19.09.2026): Alle
+      # drei echten Spielwelt-Uhrzeit-Anker aus S3 sind Wortform, keiner
+      # ziffernförmig. Der erste Wurf dieses Moduls löste genau sie nicht auf.
+      assert Ausdruck.halbtag_minute("Drei viertel elf") == 10 * 60 + 45
+      assert Ausdruck.halbtag_minute("kurz nach zwölf") == 5
+      assert Ausdruck.halbtag_minute("Es ist kurz vor zwei") == 60 + 50
     end
 
+    test "die übrigen Formen der geschlossenen Liste" do
+      assert Ausdruck.halbtag_minute("halb elf") == 10 * 60 + 30
+      assert Ausdruck.halbtag_minute("viertel nach zehn") == 10 * 60 + 15
+      assert Ausdruck.halbtag_minute("viertel vor zwölf") == 11 * 60 + 45
+      assert Ausdruck.halbtag_minute("gegen acht Uhr") == 8 * 60
+      assert Ausdruck.halbtag_minute("zehn Uhr") == 10 * 60
+    end
+
+    test "das längere Muster schlägt das kürzere — sonst eine halbe Stunde daneben" do
+      # Stünde das kürzere Muster vorn, läse es aus „drei viertel elf" die
+      # Form „viertel elf" (10:15 statt 10:45). Still und um 30 Minuten
+      # falsch.
+      assert Ausdruck.halbtag_minute("drei viertel elf") == 10 * 60 + 45
+      assert Ausdruck.halbtag_minute("viertel elf") == 10 * 60 + 15
+    end
+
+    test "die Halbtagsminute bleibt im 12-Stunden-Raum" do
+      for w <- ["kurz nach zwölf", "halb eins", "viertel vor eins", "zwölf Uhr"] do
+        assert Ausdruck.halbtag_minute(w) in 0..719, w
+      end
+    end
+
+    test "eine ziffernförmige Uhrzeit ist hier nichts — sie ist schon eindeutig" do
+      assert Ausdruck.halbtag_minute("22:45") == nil
+      assert Ausdruck.halbtag_minute("22 Uhr 45") == nil
+    end
+
+    test "das Rauschen der echten Sitzung wird nicht getroffen" do
+      # daves Befundliste: Nuyen-Beträge, Seitenzahlen, Modifikatoren,
+      # Entfernungen, Schadenswerte. Eine Zahl ist keine Zeit.
+      for w <- ["2000 jeder", "Seite 42", "um eins erhöht", "5 bis 50 Meter", "um sechs K"] do
+        assert Ausdruck.halbtag_minute(w) == nil, w
+        assert Ausdruck.tagesminute(w) == nil, w
+      end
+    end
+  end
+
+  describe "mit_halbtag/2 — wenn Jack ihn doch weiß" do
+    test "vormittag und nachmittag machen die Wortform eindeutig" do
+      hm = Ausdruck.halbtag_minute("drei viertel elf")
+
+      assert Ausdruck.mit_halbtag(hm, "vormittag") == 10 * 60 + 45
+      assert Ausdruck.mit_halbtag(hm, "nachmittag") == 22 * 60 + 45
+    end
+
+    test "unklar, leer und Unbekanntes lassen sie der Kette" do
+      hm = Ausdruck.halbtag_minute("drei viertel elf")
+
+      assert Ausdruck.mit_halbtag(hm, "unklar") == nil
+      assert Ausdruck.mit_halbtag(hm, nil) == nil
+      assert Ausdruck.mit_halbtag(hm, "abends") == nil
+    end
+  end
+
+  describe "was bewusst KEINE Uhrzeit ist" do
     test "ein Datum wird nicht als Uhrzeit gelesen" do
       # Der Punkt als Trenner ist deshalb nicht erlaubt: „15.11." sähe sonst
       # aus wie 15:11.
@@ -66,6 +120,24 @@ defmodule Worker.Timeline.AusdruckTest do
 
       refute Map.has_key?(uhr, :minute)
       assert uhr.tagesminute == 22 * 60 + 45
+    end
+
+    test "eine Wortform bekommt die Halbtagsminute, keine Tagesminute" do
+      a = Ausdruck.aufloesen(%{art: :zeitpunkt, wert: "Drei viertel elf"}, cal())
+
+      assert a.halbtag_minute == 10 * 60 + 45
+      refute Map.has_key?(a, :tagesminute)
+    end
+
+    test "mit genanntem Halbtag wird daraus sofort eine Tagesminute" do
+      a =
+        Ausdruck.aufloesen(
+          %{art: :zeitpunkt, wert: "Drei viertel elf", halbtag: "nachmittag"},
+          cal()
+        )
+
+      assert a.tagesminute == 22 * 60 + 45
+      refute Map.has_key?(a, :halbtag_minute)
     end
 
     test "eine Spanne bekommt ihre Dauer in Minuten" do
