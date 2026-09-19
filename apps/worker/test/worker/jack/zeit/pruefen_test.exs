@@ -172,6 +172,43 @@ defmodule Worker.Jack.Zeit.PruefenTest do
     end
   end
 
+  describe "linie() adressiert über Zeilennummern, wie mitschnitt()" do
+    # Der Defekt des Laufs vom 19.09.2026: `ab` war die Position in der
+    # Reihe, aus der die gelösten Zeilen heraus sind — angezeigt wurden aber
+    # Zeilennummern. Bei 459 gelösten Zeilen bedeutete `linie(ab: n)` etwas
+    # anderes als `mitschnitt(ab: n)`, und hinter dem Ende der Reihe kam
+    # nichts. Das Modell schloss daraus, die halbe Sitzung sei gelöst, und
+    # prüfte das fünf Runden lang nach.
+    test "eine Zeile hinter gelösten Zeilen ist unter ihrer eigenen Nummer erreichbar" do
+      h = halter(:pruefen)
+      ruf(h, "loesen", %{"von" => 1, "bis" => 3, "grund" => "Tischgespräch"})
+
+      antwort = ruf(h, "linie", %{"ab" => 4})
+
+      assert antwort =~ "von Zeile 4"
+      assert antwort =~ "Ihr kommt an.", "Zeile 4 muss im Ausschnitt stehen"
+    end
+
+    test "hinter der letzten Zeile sagt die Antwort, WO die Linie endet" do
+      h = halter(:pruefen)
+
+      antwort = ruf(h, "linie", %{"ab" => 99})
+
+      assert antwort =~ "Ab Zeile 99 liegt nichts mehr auf der Linie"
+      assert antwort =~ "die letzte ist Zeile 5"
+    end
+
+    test "der Kopf sagt, dass Lücken in der Nummernfolge gelöste Zeilen sind" do
+      h = halter(:pruefen)
+      ruf(h, "loesen", %{"von" => 2, "bis" => 3, "grund" => "Regelfrage"})
+
+      antwort = ruf(h, "linie", %{"ab" => 1})
+
+      assert antwort =~ "gelöste erscheinen hier nicht"
+      refute antwort =~ "Ihr geht los.", "Zeile 2 ist gelöst und darf nicht erscheinen"
+    end
+  end
+
   describe "jeder Lauf sagt selbst, was fertig() von ihm verlangt" do
     test "die Beschreibung des Prüf-Laufs spricht von Befunden, nicht vom Einordnen" do
       # Der Auffangzweig war der Defekt des Chronik-Jack (#1211): Der Lauf

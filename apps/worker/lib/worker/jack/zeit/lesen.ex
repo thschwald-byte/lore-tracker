@@ -68,7 +68,7 @@ defmodule Worker.Jack.Zeit.Lesen do
           "type" => "object",
           "properties" => %{
             "ab" => %{"type" => "integer",
-              "description" => "Erste Zeilennummer des Ausschnitts der Linie; ohne Angabe von vorn."},
+              "description" => "Erste ZEILENNUMMER des Ausschnitts — dieselbe Nummerierung wie im Mitschnitt. Gelöste Zeilen erscheinen nicht; gezeigt wird ab der nächsten, die noch auf der Linie liegt. Ohne Angabe von vorn."},
             "anzahl" => %{"type" => "integer",
               "description" => "Wie viele Zeilen der Linie gezeigt werden."}
           },
@@ -173,7 +173,7 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || 40, 40)
-    ausschnitt = linie.reihe |> Enum.drop(ab - 1) |> Enum.take(anzahl)
+    ausschnitt = ab_zeile(s, linie, ab, anzahl)
 
     # **Gezeigt werden die NOCH NICHT angesehenen Befunde zuerst, und nur
     # die gezeigten gelten als angesehen** (#1247). Der erste Wurf hakte mit
@@ -189,6 +189,26 @@ defmodule Worker.Jack.Zeit.Lesen do
     s = Stand.gesehen(s, Enum.map(zeigen, & &1.id))
 
     {s, {:ok, linien_text(s, linie, ausschnitt, ab, zeigen, length(linie.befunde))}}
+  end
+
+  # **`ab` ist eine ZEILENNUMMER, keine Position in der Reihe** (#1247).
+  # Bis zum Lauf vom 19.09.2026 war es `Enum.drop(ab - 1)` — also der Index
+  # in der Reihe, aus der die gelösten Zeilen bereits heraus sind, während
+  # die Antwort die Zeilennummern druckt. Bei 459 gelösten Zeilen laufen
+  # beide Zählungen auseinander, und `mitschnitt(ab: n)` bedeutete etwas
+  # anderes als `linie(ab: n)`.
+  #
+  # Am Denkstrom nachzulesen, was das kostet: „ab 100 showed lines 155–194.
+  # ab 194 showed lines 249–288. So it skips …" — und weil die Reihe bei
+  # Position 1709 endet, lieferte `linie(ab: 1789)` nichts, obwohl Zeile
+  # 1789 ff. sehr wohl auf der Linie liegen. Daraus schloss das Modell, die
+  # Sitzungsszene sei gelöst worden, und prüfte das fünf Runden lang nach.
+  defp ab_zeile(%Stand{} = s, linie, ab, anzahl) do
+    nr_von = Map.new(s.mitschnitt, &{&1.utterance_id, &1.nr})
+
+    linie.reihe
+    |> Enum.filter(&((Map.get(nr_von, &1.utterance_id) || 0) >= ab))
+    |> Enum.take(anzahl)
   end
 
   @befund_deckel 15
@@ -263,8 +283,43 @@ defmodule Worker.Jack.Zeit.Lesen do
         do: "\n(#{MapSet.size(linie.geloest)} Zeilen sind aus der Kette gelöst.)",
         else: ""
 
-    "Die Linie ab Zeile #{ab} (#{length(linie.reihe)} auf der Linie):\n" <>
-      zeilen <> geloest <> befunde
+    kopf =
+      case ausschnitt do
+        [] ->
+          letzte = letzte_auf_der_linie(s, linie)
+
+          "Ab Zeile #{ab} liegt nichts mehr auf der Linie" <>
+            if(letzte, do: " — die letzte ist Zeile #{letzte}.", else: ".") <>
+            " (#{length(linie.reihe)} Zeilen auf der Linie.)"
+
+        _ ->
+          bis = ausschnitt |> List.last() |> zeilennummer(s)
+
+          "Die Linie von Zeile #{ab} bis #{bis} (#{length(linie.reihe)} Zeilen auf der " <>
+            "Linie; gelöste erscheinen hier nicht, Lücken in der Nummernfolge sind also " <>
+            "gelöste Zeilen):\n"
+      end
+
+    kopf <> zeilen <> geloest <> befunde
+  end
+
+  defp zeilennummer(eintrag, %Stand{mitschnitt: m}) do
+    case Enum.find(m, &(&1.utterance_id == eintrag.utterance_id)) do
+      nil -> "?"
+      z -> z.nr
+    end
+  end
+
+  defp letzte_auf_der_linie(%Stand{} = s, linie) do
+    ids = MapSet.new(linie.reihe, & &1.utterance_id)
+
+    s.mitschnitt
+    |> Enum.filter(&MapSet.member?(ids, &1.utterance_id))
+    |> List.last()
+    |> case do
+      nil -> nil
+      z -> z.nr
+    end
   end
 
   # **Drei Grade von Gewissheit, und sie stehen an der Zeile.** „belegt" ist
