@@ -19,10 +19,19 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
     for stufe <- PipelineStufen.alle() do
       case stufe.spalte do
         nil ->
-          # Nur die Bogen-Progressionen dürfen spaltenlos sein — ihr Ergebnis
-          # steht in der Nachlese, nicht in einer Spalte.
-          assert stufe.name == "render_arc_progressions",
+          # Spaltenlos sein dürfen die Bogen-Progressionen (ihr Ergebnis steht
+          # in der Nachlese) und die beiden Stufen der Zeitlinie (#1247 — sie
+          # hat in der CampaignLive noch keine eigene Spalte; das wäre #1243).
+          assert stufe.name in ~w(render_arc_progressions zeit_gedaechtnis zeit),
                  "#{stufe.name} hat keine Spalte — Absicht? Dann hier eintragen."
+
+          # **Und sie muss ihre Gruppe selbst nennen.** Der Statusendpunkt
+          # (#1218) gruppiert darüber; bis #1247 hiess jede spaltenlose Stufe
+          # dort „boegen", und die Zeitlinie wäre zu einer Bogen-Progression
+          # geworden.
+          assert is_binary(Map.get(stufe, :gruppe)),
+                 "#{stufe.name} ist spaltenlos und nennt keine :gruppe — im " <>
+                   "Statusendpunkt wäre sie nicht zuzuordnen."
 
         spalte ->
           assert spalte in @col_names,

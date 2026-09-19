@@ -105,7 +105,7 @@ defmodule Worker.Status.EndpunktTest do
       lage = Jason.decode!(koerper)
       assert is_boolean(lage["aufnahme"])
       assert Map.has_key?(lage, "lauf")
-      assert length(lage["gruppen"]) == 6
+      assert length(lage["gruppen"]) == 7
       assert lage["teilnehmer"] == []
     end
 

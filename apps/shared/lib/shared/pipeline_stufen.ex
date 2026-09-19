@@ -95,6 +95,35 @@ defmodule Shared.PipelineStufen do
       art: :best_effort,
       einheit: :bloecke
     },
+    # #1247 (Z4): der Zeit-Jack. Er läuft NACH dem Bestand und VOR dem
+    # Resümee — die Linie ist Wahrheitsbasis, keine Prosa, und der
+    # Chronik-Jack muss sie lesen können.
+    #
+    # Beide Stufen sind **best-effort**: Eine Linie ist eine Verbesserung,
+    # keine Vorbedingung. Als Pflichtstufen hielte `Fortschritt` den Lauf bei
+    # ihrem Fehlschlag für beendet, und das Laufband verschwände, während
+    # Resümee, Chronik und Epos weiterrechnen.
+    #
+    # Der Prüf-Lauf hat KEINE eigene Stufe: Er ist derselbe Gegenstand wie
+    # das Einsortieren, nur ein zweiter Blick darauf, und er läuft innerhalb
+    # von `zeit`. Eine eigene Stufe zeigte dem Betrachter zwei Balken für
+    # eine Arbeit.
+    %{
+      name: "zeit_gedaechtnis",
+      titel: "Zeitlinie: Gedächtnis",
+      spalte: nil,
+      gruppe: "zeit",
+      art: :best_effort,
+      einheit: :fakten
+    },
+    %{
+      name: "zeit",
+      titel: "Zeitlinie",
+      spalte: nil,
+      gruppe: "zeit",
+      art: :best_effort,
+      einheit: :bloecke
+    },
     # J5 (#1209): die drei Läufe des Resümee-Jack. Überblick und Schreiben
     # sind Pflicht — ohne sie gibt es kein Resümee, und der Lauf endet dort
     # wie bisher beim Render. Die Durchsicht ist best-effort: scheitert sie,
@@ -183,6 +212,7 @@ defmodule Shared.PipelineStufen do
       name: "render_arc_progressions",
       titel: "Bögen",
       spalte: nil,
+      gruppe: "boegen",
       art: :best_effort,
       einheit: :boegen
     }
@@ -192,11 +222,21 @@ defmodule Shared.PipelineStufen do
 
   @typedoc "Eine Stufe des Wahrheitsbild-Laufs."
   @type stufe :: %{
-          name: String.t(),
-          titel: String.t(),
-          spalte: String.t() | nil,
-          art: :pflicht | :best_effort,
-          einheit: atom() | nil
+          :name => String.t(),
+          :titel => String.t(),
+          # Die Spalte der CampaignLive, in der diese Stufe „arbeitet" zeigt.
+          # `nil` heisst: Sie hat dort keine — die Bogen-Progressionen haben
+          # keine eigene Spalte, und die Zeitlinie hat noch keine (#1243).
+          :spalte => String.t() | nil,
+          :art => :pflicht | :best_effort,
+          :einheit => atom() | nil,
+          # **Die Gruppe des Statusendpunkts (#1218) ist NICHT die Spalte.**
+          # Bis #1247 fielen beide zusammen, und was keine Spalte hatte, hiess
+          # dort „boegen" — eine Regel, die genau so lange trug, wie es EINE
+          # spaltenlose Stufe gab. Die Zeitlinie wäre darin zu einer
+          # Bogen-Progression geworden. Fehlt die Angabe, gilt weiterhin die
+          # Spalte.
+          optional(:gruppe) => String.t()
         }
 
   @doc """

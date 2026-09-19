@@ -14,12 +14,16 @@ defmodule Worker.PipelineStufenTest do
       # J4 (#1207): Gedächtnis, Extraktion und Verifikation statt Extraktion
       # und Prüfung. „verify“ gibt es als Stufe nicht mehr. J5 (#1209): das
       # Resümee schreibt der Resümee-Jack in drei Läufen; „render“ ist das
-      # Schreiben.
+      # Schreiben. #1247: die Zeitlinie steht NACH dem Bestand und VOR dem
+      # Resümee — sie ist Wahrheitsbasis, keine Prosa, und der Chronik-Jack
+      # muss sie lesen können.
       assert PipelineStufen.namen() == [
                "smooth",
                "jack_gedaechtnis",
                "extract",
                "jack_verifikation",
+               "zeit_gedaechtnis",
+               "zeit",
                "resuemee_ueberblick",
                "render",
                "resuemee_durchsicht",
@@ -36,6 +40,7 @@ defmodule Worker.PipelineStufenTest do
     test "Position ist 1-basiert und liefert das „von N\" der Anzeige" do
       assert PipelineStufen.position("smooth") == 1
       assert PipelineStufen.position("extract") == 3
+      assert PipelineStufen.position("zeit") == 6
       assert PipelineStufen.position("verify") == nil
       assert PipelineStufen.position("render_arc_progressions") == PipelineStufen.anzahl()
     end
@@ -57,11 +62,16 @@ defmodule Worker.PipelineStufenTest do
 
       # J5 (#1209): Überblick (gelesene Fakten) und Durchsicht (entschiedene
       # Absätze); das Schreiben nicht — die Absatzzahl steht vorher nicht fest.
+      # #1247: der Gedächtnis-Lauf der Zeitlinie zählt gelesene Fakten, das
+      # Einsortieren gelesene Zeilen. Der Prüf-Lauf hat keine eigene Stufe —
+      # er ist derselbe Gegenstand, nur ein zweiter Blick darauf.
       assert zaehlbar == [
                "smooth",
                "jack_gedaechtnis",
                "extract",
                "jack_verifikation",
+               "zeit_gedaechtnis",
+               "zeit",
                "resuemee_ueberblick",
                "resuemee_durchsicht",
                "chronik_ueberblick",
