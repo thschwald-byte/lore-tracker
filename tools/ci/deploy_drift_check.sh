@@ -66,7 +66,11 @@ case "$code" in
 esac
 
 # Nur Stdlib-Mittel: die SHA aus dem JSON schneiden (kein jq im alpine-Image).
-prod_sha=$(printf '%s' "$body" | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')
+# Leerraum um den Doppelpunkt wird mitgelesen: Phoenix' Jason schreibt zwar
+# kompakt (`{"sha":"…"}`), aber ein Muster, das daran hängt, meldet bei jeder
+# anderen Formatierung „keine brauchbare SHA" — also einen Build-Fehler, wo in
+# Wahrheit ein Drift vorliegt. Beim Test des roten Pfads genau so passiert.
+prod_sha=$(printf '%s' "$body" | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 if [ -z "$prod_sha" ] || [ "$prod_sha" = "unknown" ]; then
   echo "[deploy_drift] FEHLER: HTTP 200, aber keine brauchbare SHA: $body"
