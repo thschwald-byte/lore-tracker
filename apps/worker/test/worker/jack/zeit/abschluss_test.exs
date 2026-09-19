@@ -16,12 +16,19 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
 
   defp alles_gelesen(s), do: Stand.gelesen(s, s.mitschnitt)
 
+  # Seit #1247 braucht jede Zeile eine Einordnung. Die Tests dieser Datei
+  # prüfen je EINE Bedingung; damit die anderen nicht dazwischenfunken,
+  # ordnen sie vorab ein — ausser dort, wo genau das der Gegenstand ist.
+  defp alles_eingeordnet(s), do: Stand.einordnen(s, s.mitschnitt, :ingame)
+
+  defp nur_lesen_offen(s), do: s |> alles_eingeordnet()
+
   describe "die Leseabdeckung" do
     test "blockiert, solange Zeilen nie ausgegeben wurden" do
       # Ohne diese Schranke hiesse „fertig" bloss „Jack hat aufgehört": Er
       # könnte nach 3 von 100 Zeilen abschliessen, und die übrigen 97 gälten
       # als richtig eingeordnet — ein Fehler, der wie ein Ergebnis aussieht.
-      s = Stand.neu(:einsortieren, mitschnitt(100))
+      s = Stand.neu(:einsortieren, mitschnitt(100)) |> alles_eingeordnet()
       s = Stand.gelesen(s, Enum.take(s.mitschnitt, 3))
 
       assert [hindernis] = Abschluss.hindernisse(s)
@@ -32,7 +39,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
       # #1211-Lehre: Eine Ablehnung, die die gezählte Zahl verschweigt,
       # schickte den Chronik-Jack durch 112 Fakten, obwohl seine Arbeit
       # vollständig war.
-      s = Stand.neu(:einsortieren, mitschnitt(20))
+      s = Stand.neu(:einsortieren, mitschnitt(20)) |> alles_eingeordnet()
       s = Stand.gelesen(s, Enum.take(s.mitschnitt, 18))
 
       assert [h] = Abschluss.hindernisse(s)
@@ -46,7 +53,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
       # Eine Liste der „nächsten zwölf" ist bei hundert offenen Zeilen keine
       # Auskunft: Sie sagt nicht, WO die Lücken sind, und legt nahe, es seien
       # nur diese (Maintainer, 19.09.2026).
-      s = Stand.neu(:einsortieren, mitschnitt(100))
+      s = Stand.neu(:einsortieren, mitschnitt(100)) |> alles_eingeordnet()
 
       assert [h] = Abschluss.hindernisse(s)
       assert h =~ "1–100"
@@ -59,7 +66,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
       # vorn eine Lücke. Eine Aufzählung „ab der nächsten" verstecke sie.
       m = mitschnitt(100)
       mitte = Enum.filter(m, &(&1.nr in 21..60))
-      s = Stand.neu(:einsortieren, m) |> Stand.gelesen(mitte)
+      s = Stand.neu(:einsortieren, m) |> alles_eingeordnet() |> Stand.gelesen(mitte)
 
       assert [h] = Abschluss.hindernisse(s)
       assert h =~ "1–20"
@@ -68,7 +75,11 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
 
     test "einzelne Zeilen bleiben einzelne Nummern" do
       m = mitschnitt(10)
-      s = Stand.neu(:einsortieren, m) |> Stand.gelesen(Enum.reject(m, &(&1.nr in [3, 7])))
+
+      s =
+        Stand.neu(:einsortieren, m)
+        |> alles_eingeordnet()
+        |> Stand.gelesen(Enum.reject(m, &(&1.nr in [3, 7])))
 
       assert [h] = Abschluss.hindernisse(s)
       assert h =~ "3, 7"
@@ -77,7 +88,59 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
     test "alles gelesen und nichts angefasst → darf abschliessen" do
       # Die Erzählposition IST eine Zuordnung. Wer nichts anfasst, hat nichts
       # offen — kein Quittieren je Utterance.
-      s = Stand.neu(:einsortieren, mitschnitt(50)) |> alles_gelesen()
+      s = Stand.neu(:einsortieren, mitschnitt(50)) |> alles_gelesen() |> alles_eingeordnet()
+
+      assert Abschluss.hindernisse(s) == []
+    end
+  end
+
+  describe "die Einordnung" do
+    # Maintainer, 19.09.2026: „er muss zu jeder schreiben Tischgespräch /
+    # In-Game / unklar — alle utts mit tischgespräche müssen aus der kette
+    # entfernt sein."
+    test "blockiert, solange Zeilen keine Einordnung haben" do
+      s = Stand.neu(:einsortieren, mitschnitt(100)) |> alles_gelesen()
+
+      assert [h] = Abschluss.hindernisse(s)
+      assert h =~ "100 von 100 Zeilen sind noch nicht eingeordnet"
+      assert h =~ "1–100"
+    end
+
+    test "Tischgespräch muss AUS der Kette heraus, nicht nur etikettiert" do
+      # Eine Zeile, die als Tisch eingeordnet ist und trotzdem auf der Linie
+      # liegt, wird interpoliert und bekommt eine Spielzeit, die es nicht gibt.
+      m = mitschnitt(10)
+
+      s =
+        Stand.neu(:einsortieren, m)
+        |> alles_gelesen()
+        |> Stand.einordnen(m, :ingame)
+        |> Stand.einordnen(Enum.take(m, 3), :tisch)
+
+      assert [h] = Abschluss.hindernisse(s)
+      assert h =~ "3 Zeile(n) sind als Tischgespräch eingeordnet"
+      assert h =~ "1–3"
+    end
+
+    test "gelöst und als Tisch eingeordnet ist in Ordnung" do
+      m = mitschnitt(10)
+      raus = Enum.take(m, 3)
+
+      anker =
+        Setzen.bauen(%{
+          utterance_ids: Enum.map(raus, & &1.utterance_id),
+          art: :geloest,
+          wert: "Tisch",
+          welt: "tisch",
+          beleg: ""
+        })
+
+      s =
+        Stand.neu(:einsortieren, m)
+        |> alles_gelesen()
+        |> Stand.einordnen(m, :ingame)
+        |> Stand.einordnen(raus, :tisch)
+        |> Stand.setzen(anker)
 
       assert Abschluss.hindernisse(s) == []
     end
@@ -87,7 +150,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
     test "eine Verschiebung ohne auflösbares Ziel blockiert" do
       s =
         Stand.neu(:einsortieren, mitschnitt(5))
-        |> alles_gelesen()
+        |> alles_gelesen() |> alles_eingeordnet()
         |> Stand.setzen(
           Setzen.bauen(%{
             utterance_ids: ["u3"],
@@ -106,7 +169,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
     test "mit auflösbarem Ziel ist sie in Ordnung" do
       s =
         Stand.neu(:einsortieren, mitschnitt(5))
-        |> alles_gelesen()
+        |> alles_gelesen() |> alles_eingeordnet()
         |> Stand.setzen(
           Setzen.bauen(%{
             utterance_ids: ["u3"],
@@ -124,7 +187,7 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
     test "Zeitpunkte und Spannen blockieren nie — sie sind vollständig für sich" do
       s =
         Stand.neu(:einsortieren, mitschnitt(5))
-        |> alles_gelesen()
+        |> alles_gelesen() |> alles_eingeordnet()
         |> Stand.setzen(
           Setzen.bauen(%{
             utterance_ids: ["u1"],

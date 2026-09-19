@@ -88,6 +88,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     do: %{"zeilen" => [1], "richtung" => "vor", "ziel" => 3, "beleg" => "b"}
 
   defp beispiel("loesen"), do: %{"zeilen" => [1], "grund" => "Tisch"}
+  defp beispiel("ingame"), do: %{"von" => 1, "bis" => 2}
   defp beispiel("konflikt"), do: %{"zeilen" => [1], "befund" => "x", "beleg" => "b"}
   defp beispiel("zweifel"), do: %{"zeilen" => [1], "text" => "unklar"}
 
@@ -152,6 +153,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       # Arbeit, kein Ergebnis.
       h = halter()
       ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
 
       assert art(h, "fertig", %{}) == :halt
     end
@@ -452,6 +454,59 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
   end
 
+  describe "jede Zeile braucht eine Einordnung" do
+    # Maintainer, 19.09.2026: „er muss zu jeder schreiben Tischgespräch /
+    # In-Game / unklar — alle utts mit tischgespräche müssen aus der kette
+    # entfernt sein". Der Grund ist die Linie selbst: Was auf ihr liegt, soll
+    # Spielwelt sein. Eine nicht eingeordnete Zeile wird trotzdem
+    # interpoliert und bekommt eine Spielzeit, die es nicht gibt.
+    test "gelesen allein reicht nicht mehr" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      antwort = ruf(h, "fertig", %{})
+
+      assert art(h, "fertig", %{}) == :error
+      assert antwort =~ "nicht eingeordnet"
+      assert antwort =~ "1–5"
+    end
+
+    test "ingame, loesen und zweifel ordnen ein — dann geht fertig" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      ruf(h, "ingame", %{"von" => 1, "bis" => 3})
+      ruf(h, "loesen", %{"zeilen" => [4], "grund" => "Pausenabsprache"})
+      ruf(h, "zweifel", %{"zeilen" => [5], "text" => "Tisch oder Welt unklar"})
+
+      assert Stand.zahlen(stand(h)).eingeordnet == 5
+      assert art(h, "fertig", %{}) == :halt
+    end
+
+    test "ingame nimmt einen Bereich — nicht achtzig Einzelnummern" do
+      h = halter()
+      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+
+      antwort = ruf(h, "ingame", %{"von" => 2, "bis" => 4})
+
+      assert antwort =~ "3 Zeile(n)"
+      assert Stand.zahlen(stand(h)).eingeordnet == 3
+    end
+
+    test "ingame zählt die Zeilen auch als gelesen" do
+      # Wer eine Zeile einordnet, hat sie gesehen — sonst müsste er sie
+      # zweimal anfassen.
+      h = halter()
+      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
+
+      assert Stand.zahlen(stand(h)).gelesen == 5
+    end
+
+    test "eine Zeile ohne jede Angabe wird abgelehnt" do
+      assert art(halter(), "ingame", %{}) == :error
+    end
+  end
+
   describe "fertig" do
     test "lehnt ab, solange Zeilen ungelesen sind — mit Zahl und Nummern" do
       h = halter()
@@ -464,9 +519,10 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       assert antwort =~ "3–5"
     end
 
-    test "geht, wenn alles gelesen ist — ohne dass jede Zeile bestätigt wäre" do
+    test "geht, wenn alles gelesen UND eingeordnet ist" do
       h = halter()
       ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
 
       assert ruf(h, "fertig", %{}) =~ "Abgeschlossen"
     end

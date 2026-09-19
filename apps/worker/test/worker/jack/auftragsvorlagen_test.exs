@@ -540,10 +540,11 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     # Die Frist zeigt nach vorn und verschiebt nichts.
     assert text =~ "`frist`"
 
-    # Wie viel Tischgespräch gelöst werden MUSS — die Regellücke, an der das
-    # Modell im dritten Lauf rang („do I need to explicitly loesen every line
-    # of table talk? … that's a huge number of lines").
-    assert text =~ "Du musst nicht jede Zeile Tischgespräch lösen"
+    # Seit #1247 braucht JEDE Zeile eine Einordnung, und Tischgespräch muss
+    # aus der Kette heraus (Maintainer, 19.09.2026).
+    assert text =~ "Jede Zeile braucht eine Einordnung"
+    assert text =~ "`ingame`"
+    assert text =~ "von`/`bis"
 
     # Der Rückblick am Sitzungsanfang ist ein Ritual, kein Einzelfall — und
     # der bösartige Fall steht dabei: Die neue Sitzung begänne sonst vor dem

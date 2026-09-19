@@ -67,6 +67,7 @@ defmodule Worker.Jack.Zeit.Stand do
             kalender: nil,
             mitschnitt: [],
             gelesen: MapSet.new(),
+            einordnung: %{},
             anker: %{},
             offene: %{},
             ausgegeben: %{},
@@ -98,6 +99,53 @@ defmodule Worker.Jack.Zeit.Stand do
   @spec gelesen(t(), [Mitschnitt.zeile()]) :: t()
   def gelesen(%__MODULE__{} = s, zeilen) do
     %{s | gelesen: Enum.reduce(zeilen, s.gelesen, &MapSet.put(&2, &1.utterance_id))}
+  end
+
+  @doc """
+  Ordnet Zeilen ein: `:tisch`, `:ingame` oder `:unklar`.
+
+  **Jede Zeile braucht eine Einordnung, bevor der Einsortier-Lauf
+  abschliessen darf** (Maintainer, 19.09.2026). Der Grund ist die Linie
+  selbst: Was auf ihr liegt, soll Spielwelt sein. Eine Zeile Tischgespräch,
+  die niemand herausgenommen hat, wird interpoliert und bekommt eine
+  Spielzeit, die es nicht gibt — und sie sieht hinterher aus wie jede andere.
+
+  Die Einordnung ist **kein eigener Arbeitsschritt**: `loesen` setzt
+  `:tisch` (und nimmt die Zeile aus der Kette), `zweifel` setzt `:unklar`,
+  `ingame` setzt `:ingame`. Ein zweites Werkzeug nur zum Etikettieren wäre
+  derselbe Aufruf zweimal.
+  """
+  @spec einordnen(t(), [Mitschnitt.zeile()], :tisch | :ingame | :unklar) :: t()
+  def einordnen(%__MODULE__{} = s, zeilen, art) when art in [:tisch, :ingame, :unklar] do
+    %{s | einordnung: Enum.reduce(zeilen, s.einordnung, &Map.put(&2, &1.utterance_id, art))}
+  end
+
+  @doc "Die Zeilen ohne Einordnung — alle, samt Anzahl."
+  @spec ohne_einordnung(t()) :: %{anzahl: non_neg_integer(), zeilen: [Mitschnitt.zeile()]}
+  def ohne_einordnung(%__MODULE__{} = s) do
+    fehlend = Enum.reject(s.mitschnitt, &Map.has_key?(s.einordnung, &1.utterance_id))
+    %{anzahl: length(fehlend), zeilen: fehlend}
+  end
+
+  @doc """
+  Die als `:tisch` eingeordneten Zeilen, die noch auf der Linie liegen.
+
+  Sie sind der zweite Teil der Abschlussbedingung: Tischgespräch gehört aus
+  der Kette heraus, nicht bloss etikettiert.
+  """
+  @spec tisch_in_der_kette(t()) :: [Mitschnitt.zeile()]
+  def tisch_in_der_kette(%__MODULE__{} = s) do
+    geloest =
+      for a <- Map.values(s.anker),
+          to_string(feld(a, :art)) == "geloest",
+          u <- List.wrap(feld(a, :utterance_ids)),
+          into: MapSet.new(),
+          do: u
+
+    Enum.filter(s.mitschnitt, fn z ->
+      Map.get(s.einordnung, z.utterance_id) == :tisch and
+        not MapSet.member?(geloest, z.utterance_id)
+    end)
   end
 
   @doc """
@@ -232,6 +280,8 @@ defmodule Worker.Jack.Zeit.Stand do
       fristen: zaehle(aktiv, "frist"),
       verschiebungen: zaehle(aktiv, "ordnung"),
       geloest: map_size(s.anker) - length(aktiv),
+      eingeordnet: map_size(s.einordnung),
+      ohne_einordnung: length(s.mitschnitt) - map_size(s.einordnung),
       konflikte: length(s.konflikte)
     }
   end
@@ -259,6 +309,7 @@ defmodule Worker.Jack.Zeit.Stand do
       "fristen" => z.fristen,
       "verschiebungen" => z.verschiebungen,
       "geloest" => z.geloest,
+      "eingeordnet" => z.eingeordnet,
       "konflikte" => z.konflikte,
       "notizen" => s.notizen
     }

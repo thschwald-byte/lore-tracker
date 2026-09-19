@@ -50,7 +50,49 @@ defmodule Worker.Jack.Zeit.Abschluss do
   """
   @spec hindernisse(Stand.t()) :: [String.t()]
   def hindernisse(%Stand{lauf: :gedaechtnis} = s), do: ungelesen(s)
-  def hindernisse(%Stand{} = s), do: ungelesen(s) ++ ohne_ziel(s)
+
+  def hindernisse(%Stand{} = s),
+    do: ungelesen(s) ++ nicht_eingeordnet(s) ++ tisch_auf_der_linie(s) ++ ohne_ziel(s)
+
+  # **Jede Zeile braucht eine Einordnung** (Maintainer, 19.09.2026): Was auf
+  # der Linie liegt, soll Spielwelt sein. Eine nicht eingeordnete Zeile wird
+  # trotzdem interpoliert und bekommt eine Spielzeit, die es nicht gibt — und
+  # sie sieht hinterher aus wie jede andere. „Gelesen" allein reicht dafür
+  # nicht: Es ist die Aussage „ich habe hingesehen", nicht „ich habe
+  # entschieden".
+  defp nicht_eingeordnet(%Stand{} = s) do
+    case Stand.ohne_einordnung(s) do
+      %{anzahl: 0} ->
+        []
+
+      %{anzahl: n, zeilen: zeilen} ->
+        [
+          "#{n} von #{length(s.mitschnitt)} Zeilen sind noch nicht eingeordnet. Jede " <>
+            "braucht eine Antwort auf die Frage, ob hier gespielt oder am Tisch " <>
+            "geredet wird: ingame() für die Welt, loesen() für Tischgespräch, " <>
+            "zweifel() wenn du es nicht entscheiden kannst. Ohne Einordnung: " <>
+            "#{bereiche(zeilen)}."
+        ]
+    end
+  end
+
+  # **Tischgespräch gehört aus der Kette heraus, nicht bloss etikettiert.**
+  # Praktisch tritt der Fall nur ein, wenn jemand `loesen` rückgängig macht
+  # oder eine Zeile doppelt einordnet — die Regel steht trotzdem hier, weil
+  # sie die Zusage der Linie ist und nicht die Disziplin eines Werkzeugs.
+  defp tisch_auf_der_linie(%Stand{} = s) do
+    case Stand.tisch_in_der_kette(s) do
+      [] ->
+        []
+
+      zeilen ->
+        [
+          "#{length(zeilen)} Zeile(n) sind als Tischgespräch eingeordnet, liegen aber " <>
+            "noch auf der Linie — sie werden interpoliert und bekommen eine Spielzeit, " <>
+            "die es nicht gibt. Mit loesen() heraus: #{bereiche(zeilen)}."
+        ]
+    end
+  end
 
   @doc "Die Zeilen, die Jack nie ausgegeben bekommen hat."
   @spec nie_gelesen(Stand.t()) :: [map()]

@@ -84,10 +84,16 @@ die Seuche 2010 ausbrach, ist das **Spielwelt** — und es bekommt einen Anker.
 Das ist kein Tischgespräch: Es sind Ereignisse der erzählten Welt, nur eben
 lange vor der Handlung.
 
-**Und weil sie lange davor liegen, gehört die Zeile auch dorthin.** Setz den
-Anker und **verschieb** die Äußerung an ihren Platz in der Vergangenheit —
-genauso wie einen Rückblick der Gruppe. Sonst behauptet die Linie, im Jahr
-2011 sei mitten in der Sitzung gewesen.
+**Und weil sie lange davor liegen, gehört die Zeile auch dorthin.** Drei
+Schritte, und alle drei gehören zusammen:
+
+1. **`ingame`** — es ist die erzählte Welt, kein Tischgespräch.
+2. **`zeitpunkt`** — mit dem Jahr, das genannt wurde.
+3. **`verschieben`** — an ihren Platz in der Vergangenheit, genauso wie einen
+   Rückblick der Gruppe.
+
+Ohne den dritten Schritt behauptet die Linie, das Jahr 2011 sei mitten in der
+Sitzung gewesen — und alles, was danach kommt, hängt daran.
 
 Die Grenze zum Rauschen ist die Welt, nicht das Alter: „Die Rams sind vor
 vier Jahren hingegangen“ ist **unsere** Welt und fliegt raus; „die
@@ -117,19 +123,30 @@ sieht so aus:
 [1106]  „… dann wird es jetzt so kurz nach zwölf sein.“   ← DAS ist die Antwort
 ```
 
-## Wie viel Tischgespräch du lösen musst
+## Jede Zeile braucht eine Einordnung — das ist die Hauptarbeit
 
-**Du musst nicht jede Zeile Tischgespräch lösen.** `fertig()` verlangt, dass
-du jede Zeile **gelesen** hast — nicht, dass du jede entschieden hast. Eine
-ungelöste Zeile steht an ihrer Erzählposition, und das ist für Tischgespräch
-zwischen zwei Szenen völlig richtig: Es wurde ja dort gesprochen.
+Zu **jeder** Zeile musst du sagen, ob hier gespielt oder am Tisch geredet
+wird. Drei Antworten, und sie sind zugleich die Werkzeuge:
 
-`loesen` lohnt sich, wo eine Zeile die Rechnung **stören** würde — wo eine
-Zahl wie eine Zeit aussieht, wo Smalltalk über unsere Welt eine Jahreszahl
-nennt, wo eine Wirkdauer nach einer Spanne aussieht. Dafür ist es da.
+- **`ingame`** — gehört zur erzählten Welt, bleibt auf der Linie.
+- **`loesen`** — Tischgespräch, Regelfrage, Würfelwurf, Smalltalk, Pause.
+  Raus aus der Kette.
+- **`zweifel`** — du kannst es nicht entscheiden. Bleibt auf der Linie, ist
+  aber vermerkt.
 
-Und es nimmt eine **Liste**: Ein zusammenhängender Abschnitt Regelgespräch ist
-ein Aufruf, nicht dreißig.
+**Warum das nicht optional ist:** Was auf der Linie liegt, bekommt eine
+Spielzeit — auch wenn es keine hat. Eine Zeile Tischgespräch, die niemand
+herausgenommen hat, wird zwischen zwei Ankern interpoliert und sieht
+hinterher aus wie jede andere. Deshalb verlangt `fertig()` beides: jede
+Zeile eingeordnet, und alles Tischgespräch aus der Kette heraus.
+
+**Nimm große Abschnitte.** Alle drei Werkzeuge nehmen `von`/`bis`:
+`ingame(von: 200, bis: 640)` ist ein Aufruf für 441 Zeilen. Ein Mitschnitt
+wechselt nicht im Satztakt zwischen Tisch und Welt — er tut es in
+Abschnitten, und genau so ordnest du ihn ein.
+
+Die Reihenfolge, die sich bewährt: ein Stück lesen, dieses Stück einordnen,
+dabei die Anker setzen, die dir begegnet sind. Dann das nächste.
 
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 
@@ -213,10 +230,16 @@ Arbeit zu wiederholen.
 
 ## Der Abschluss
 
-`fertig()` verlangt **nicht**, dass du jede Zeile bestätigst. Es verlangt, dass
-du jede **gelesen** hast: „nicht angefasst“ heißt „die Erzählreihenfolge
-stimmt hier“, und das ist eine Aussage über die Welt, die du nur treffen
-kannst, wenn du die Zeile gesehen hast.
+`fertig()` verlangt dreierlei:
+
+1. **Jede Zeile gelesen.** „Nicht angefasst“ heißt „die Erzählreihenfolge
+   stimmt hier“, und das ist eine Aussage über die Welt, die du nur treffen
+   kannst, wenn du die Zeile gesehen hast.
+2. **Jede Zeile eingeordnet** — `ingame`, `loesen` oder `zweifel`.
+3. **Kein Tischgespräch mehr auf der Linie.**
+
+Was es **nicht** verlangt: dass jede Zeile einen Anker hat. Die meisten haben
+keinen, und das ist richtig.
 
 Was noch fehlt, sagt dir `offen()` mit Zahlen und Zeilennummern. `zahlen()`
 nennt dir den Stand; die Zählung ist meine, nicht deine — nimm sie, statt

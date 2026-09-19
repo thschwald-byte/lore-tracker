@@ -27,7 +27,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   alias Worker.Jack.Resuemee.Halter
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
-  alias Worker.Jack.Zeit.{Abschluss, Lesen, Setzen, Stand}
+  alias Worker.Jack.Zeit.{Abschluss, Lesen, Notizen, Setzen, Stand}
   alias Worker.Timeline.Ausdruck
 
   # `hilfe` steht hier NICHT: `Gemeinsam.aus/3` stellt es jedem Lauf von
@@ -49,7 +49,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # es Jacks eigenes Muster: Phase 1 und Phase 2 lesen denselben Mitschnitt,
   # die eine versteht ihn, die andere ordnet ein.
   @notierend ~w(notiz notizen_lesen)
-  @setzend ~w(zeitpunkt spanne frist verschieben loesen dazu ersetzen konflikt zweifel)
+  @setzend ~w(zeitpunkt spanne frist verschieben loesen ingame dazu ersetzen konflikt zweifel)
 
   @doc """
   Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Liste.
@@ -71,96 +71,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   @doc false
   def definitionen(%Stand{} = s) do
-    Lesen.werkzeuge(s) ++ notiz_werkzeuge() ++ setzen_werkzeuge() ++ abschluss_werkzeuge(s.lauf)
-  end
-
-  # ─── Notizen (nur Gedächtnis-Lauf) ──────────────────────────────────
-
-  @abschnitte ~w(ABLAUF ZEITEN OFFEN)
-
-  defp notiz_werkzeuge do
-    [
-      %{
-        name: "notiz",
-        beschreibung:
-          "Hält etwas fest, das der nächste Lauf wissen muss. Das ist das " <>
-            "ERGEBNIS dieses Laufs — was du nicht notierst, ist nach dem Lauf weg. " <>
-            "abschnitt: „ABLAUF“ für die Stationen der Handlung in der Welt " <>
-            "(nicht das, was am Tisch besprochen wurde), „ZEITEN“ für jede " <>
-            "Zeitangabe, die dir beim Lesen begegnet — mit der Zeilennummer, " <>
-            "damit der nächste Lauf sie wiederfindet, „OFFEN“ für das, was du " <>
-            "nicht einordnen konntest, mit Grund. schluessel: ein kurzes Wort, " <>
-            "unter dem du es wiederfindest — derselbe Schlüssel ersetzt die " <>
-            "Notiz, du kannst also korrigieren.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "abschnitt" => %{"type" => "string", "enum" => @abschnitte},
-            "schluessel" => %{"type" => "string"},
-            "text" => %{"type" => "string"}
-          },
-          "required" => ~w(abschnitt schluessel text)
-        },
-        wiederholung: :zaehlt,
-        ausfuehren: &w_notiz/2
-      },
-      %{
-        name: "notizen_lesen",
-        beschreibung:
-          "Zeigt, was du bisher notiert hast — ohne Angabe alles, mit " <>
-            "abschnitt nur diesen. Nimm das, statt dich zu erinnern.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{"abschnitt" => %{"type" => "string", "enum" => @abschnitte}},
-          "required" => []
-        },
-        optional: ["abschnitt"],
-        wiederholung: :bis_aenderung,
-        ausfuehren: &w_notizen_lesen/2
-      }
-    ]
-  end
-
-  defp w_notiz(s, f) do
-    abschnitt = to_string(f["abschnitt"])
-    schluessel = String.trim(to_string(f["schluessel"] || ""))
-    text = String.trim(to_string(f["text"] || ""))
-
-    cond do
-      abschnitt not in @abschnitte ->
-        {s, {:error, "abschnitt muss einer von #{Enum.join(@abschnitte, ", ")} sein."}}
-
-      schluessel == "" ->
-        {s, {:error, "Ohne schluessel findest du die Notiz nicht wieder."}}
-
-      text == "" ->
-        {s, {:error, "Eine leere Notiz hält nichts fest."}}
-
-      true ->
-        s = Stand.notieren(s, abschnitt, schluessel, text)
-        z = Stand.zahlen(s)
-
-        {s,
-         {:ok,
-          "Notiert unter #{abschnitt}/#{schluessel}. " <>
-            "Notizen: #{map_size(s.notizen)}. Gelesen #{z.gelesen}/#{z.utterances}."}}
-    end
-  end
-
-  defp w_notizen_lesen(s, f) do
-    abschnitt = f["abschnitt"] && to_string(f["abschnitt"])
-
-    case Stand.notizen(s, abschnitt) do
-      [] ->
-        {s, {:ok, "Noch nichts notiert#{if abschnitt, do: " unter #{abschnitt}", else: ""}."}}
-
-      eintraege ->
-        {s,
-         {:ok,
-          Enum.map_join(eintraege, "\n", fn n ->
-            "- **#{n.schluessel}** (#{n.abschnitt}): #{n.text}"
-          end)}}
-    end
+    Lesen.werkzeuge(s) ++ Notizen.werkzeuge() ++ setzen_werkzeuge() ++ abschluss_werkzeuge(s.lauf)
   end
 
   # ─── Setzen ─────────────────────────────────────────────────────────
@@ -307,7 +218,9 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         name: "loesen",
         beschreibung:
           "Nimmt Zeilen aus der Kette: Sie liegen dann nicht mehr auf der Linie und " <>
-            "werden nie interpoliert. Dafür: Tischgespräch, Regelfrage, " <>
+            "werden nie interpoliert. **Das ist zugleich die Einordnung " <>
+            "„Tischgespräch“** — du brauchst kein zweites Werkzeug dafür. " <>
+            "Dafür: Tischgespräch, Regelfrage, " <>
             "Würfelergebnis, Pausenabsprache — und generische Wirkdauern („eine " <>
             "Stunde hat man Zeit“), die sagen, wie lange etwas dauert, aber nicht, " <>
             "wann es geschieht. grund: in deinen Worten, kurz. Das ist eine " <>
@@ -316,13 +229,40 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1},
+            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}},
+            "von" => %{"type" => "integer"},
+            "bis" => %{"type" => "integer"},
             "grund" => %{"type" => "string"}
           },
-          "required" => ~w(zeilen grund)
+          "required" => ["grund"]
         },
+        optional: ~w(zeilen von bis),
         wiederholung: :zaehlt,
         ausfuehren: &w_loesen/2
+      },
+      %{
+        name: "ingame",
+        beschreibung:
+          "Sagt: Diese Zeilen gehören zur erzählten Welt — sie bleiben auf der " <>
+            "Linie. Das ist keine Zeitangabe und kein Anker, sondern die Antwort " <>
+            "auf die Frage, ob hier gespielt oder am Tisch geredet wird. " <>
+            "JEDE Zeile braucht eine solche Antwort, bevor du fertig bist: " <>
+            "entweder ingame(), oder loesen() für Tischgespräch, oder zweifel(), " <>
+            "wenn du es nicht entscheiden kannst. Was niemand einordnet, wird " <>
+            "trotzdem interpoliert und bekommt eine Spielzeit, die es nicht gibt. " <>
+            "Nimm grosse Abschnitte auf einmal — von/bis ist dafür da.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}},
+            "von" => %{"type" => "integer"},
+            "bis" => %{"type" => "integer"}
+          },
+          "required" => []
+        },
+        optional: ~w(zeilen von bis),
+        wiederholung: :zaehlt,
+        ausfuehren: &w_ingame/2
       },
       %{
         name: "dazu",
@@ -393,7 +333,9 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         name: "zweifel",
         beschreibung:
           "Hält fest, dass du dich an einer Stelle NICHT entscheiden kannst — und " <>
-            "setzt nichts. Zweifeln soll so billig sein wie Setzen: Lieber keine " <>
+            "setzt nichts. **Das ist zugleich die Einordnung „unklar“**: Die Zeile " <>
+            "bleibt auf der Linie, ist aber vermerkt. " <>
+            "Zweifeln soll so billig sein wie Setzen: Lieber keine " <>
             "Angabe als eine geratene. Der häufigste Fall ist die Welt-Frage: Aus " <>
             "„drei viertel elf“ allein geht nicht hervor, ob die Uhr am Tisch oder " <>
             "in der Welt gemeint ist. Lies dann zuerst die Zeilen davor — die Frage " <>
@@ -401,11 +343,14 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1},
+            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}},
+            "von" => %{"type" => "integer"},
+            "bis" => %{"type" => "integer"},
             "text" => %{"type" => "string"}
           },
-          "required" => ~w(zeilen text)
+          "required" => ["text"]
         },
+        optional: ~w(zeilen von bis),
         wiederholung: :zaehlt,
         ausfuehren: &w_zweifel/2
       }
@@ -444,7 +389,12 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       %{
         name: "fertig",
         beschreibung:
-          "Schliesst den Lauf ab. Geht erst, wenn JEDE Zeile zugeordnet ist: Sie " <>
+          "Schliesst den Lauf ab. Dafür muss JEDE Zeile zweierlei haben: eine " <>
+            "EINORDNUNG (ingame / loesen / zweifel — gespielt, Tisch oder unklar) " <>
+            "und einen Platz in der Reihe. Und alles, was du als Tischgespräch " <>
+            "eingeordnet hast, muss mit loesen() aus der Kette heraus sein: Was " <>
+            "auf der Linie liegt, bekommt eine Spielzeit, auch wenn es keine " <>
+            "hat. Zum Platz in der Reihe: Sie " <>
             "steht in der Reihe — das tut sie durch die Erzählreihenfolge, solange " <>
             "du sie nicht anfasst — oder sie ist gelöst. Dazu musst du jede Zeile " <>
             "GELESEN haben: „nicht angefasst“ heisst „die Erzählreihenfolge stimmt " <>
@@ -538,7 +488,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   end
 
   defp w_loesen(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f["zeilen"]) do
+    with {:ok, ids, zeilen} <- aufloesen(s, f) do
       anker =
         Setzen.bauen(%{
           utterance_ids: ids,
@@ -548,12 +498,26 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
           beleg: ""
         })
 
-      s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
+      s = s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :tisch) |> Stand.setzen(anker)
 
       {s,
        {:ok,
         "#{length(ids)} Zeile(n) aus der Kette gelöst: #{f["grund"]}. Sie liegen nicht " <>
           "mehr auf der Linie und werden nie interpoliert. " <> reststand(s)}}
+    else
+      {:fehler, text} -> {s, {:error, text}}
+    end
+  end
+
+  defp w_ingame(s, f) do
+    with {:ok, _ids, zeilen} <- aufloesen(s, f) do
+      s = s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :ingame)
+      z = Stand.zahlen(s)
+
+      {s,
+       {:ok,
+        "#{length(zeilen)} Zeile(n) als Spielwelt eingeordnet — sie bleiben auf der " <>
+          "Linie. Eingeordnet #{z.eingeordnet}/#{z.utterances}."}}
     else
       {:fehler, text} -> {s, {:error, text}}
     end
@@ -577,7 +541,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   end
 
   defp w_zweifel(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f["zeilen"]) do
+    with {:ok, ids, zeilen} <- aufloesen(s, f) do
       anker =
         Setzen.bauen(%{
           utterance_ids: ids,
@@ -588,9 +552,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
           zweifel: to_string(f["text"])
         })
 
-      s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
+      s =
+        s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :unklar) |> Stand.setzen(anker)
 
-      {s, {:ok, "Zweifel festgehalten — nichts gesetzt. " <> reststand(s)}}
+      {s, {:ok, "Zweifel festgehalten — nichts gesetzt, #{length(ids)} Zeile(n) als " <>
+                  "unklar vermerkt. " <> reststand(s)}}
     else
       {:fehler, text} -> {s, {:error, text}}
     end
@@ -618,6 +584,14 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # Zeilennummern → Utterance-IDs. Eine unbekannte Nummer ist ein Fehler mit
   # Grund, kein stilles Weglassen: Sonst hinge der Anker an weniger Zeilen,
   # als Jack meinte, und niemand merkte es.
+  # **Ein Bereich statt einer Liste** (#1247): Bei 2168 Zeilen, die alle
+  # eingeordnet werden müssen, wäre `zeilen: [1, 2, …, 80]` je Aufruf eine
+  # Zumutung — und die Wiederholungssperre zählte jeden mit. `von`/`bis`
+  # nimmt denselben Abschnitt in zwei Zahlen.
+  defp aufloesen(%Stand{} = s, %{} = f) do
+    aufloesen(s, nummern_aus(f))
+  end
+
   defp aufloesen(%Stand{mitschnitt: m}, nummern) do
     gewaehlt = for nr <- List.wrap(nummern), z = Enum.find(m, &(&1.nr == nr)), do: z
 
@@ -635,6 +609,21 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
       true ->
         {:ok, Enum.map(gewaehlt, & &1.utterance_id), gewaehlt}
     end
+  end
+
+  # `zeilen` und `von`/`bis` ergänzen sich; beides leer ist ein Fehler, den
+  # `aufloesen/2` mit seiner eigenen Meldung abfängt.
+  defp nummern_aus(f) do
+    aus_liste = List.wrap(f["zeilen"])
+
+    aus_bereich =
+      case {f["von"], f["bis"]} do
+        {von, bis} when is_integer(von) and is_integer(bis) and von <= bis -> Enum.to_list(von..bis)
+        {von, nil} when is_integer(von) -> [von]
+        _ -> []
+      end
+
+    (aus_liste ++ aus_bereich) |> Enum.uniq() |> Enum.sort()
   end
 
   defp gesetzt_text(anker, zeilen, s) do
@@ -704,8 +693,15 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   # Jede Antwort eines setzenden Werkzeugs nennt den Reststand — sonst muss
   # Jack ihn sich mit `zahlen()` holen, und das kostet eine Runde je Anker.
+  # **Der Reststand nennt die Einordnung mit** — sie ist seit #1247 die
+  # zweite Abschlussbedingung, und was in keiner Antwort steht, erfährt das
+  # Modell erst durch eine Ablehnung.
   defp reststand(s) do
     z = Stand.zahlen(s)
-    "Gelesen #{z.gelesen}/#{z.utterances}, Anker #{z.anker}."
+
+    offen =
+      if z.ohne_einordnung > 0, do: " Noch ohne Einordnung: #{z.ohne_einordnung}.", else: ""
+
+    "Gelesen #{z.gelesen}/#{z.utterances}, Anker #{z.anker}.#{offen}"
   end
 end

@@ -66,9 +66,11 @@ defmodule Worker.Jack.Zeit.Lesen do
       %{
         name: "offen",
         beschreibung:
-          "Nennt, was fertig() noch im Weg steht: ungelesene Zeilen mit ihren " <>
-            "Nummern, Verschiebungen ohne auflösbares Ziel. Frag das, statt zu " <>
-            "raten — es ist billiger als ein abgelehntes fertig().",
+          "Nennt, was fertig() noch im Weg steht: ungelesene Zeilen, Zeilen ohne " <>
+            "Einordnung, Tischgespräch das noch auf der Linie liegt, " <>
+            "Verschiebungen ohne auflösbares Ziel — jeweils als Bereiche " <>
+            "(„1–60, 501–899“). Frag das, statt zu raten — es ist billiger als " <>
+            "ein abgelehntes fertig().",
         parameter: %{"type" => "object", "properties" => %{}, "required" => []},
         wiederholung: :bis_aenderung,
         ausfuehren: &w_offen/2
@@ -76,8 +78,9 @@ defmodule Worker.Jack.Zeit.Lesen do
       %{
         name: "zahlen",
         beschreibung:
-          "Der Stand dieses Laufs in Zahlen: gelesene Zeilen, Anker nach Art, " <>
-            "Gelöstes, Konflikte. Die Zählung ist meine, nicht deine — nimm sie, " <>
+          "Der Stand dieses Laufs in Zahlen: gelesene und eingeordnete Zeilen, " <>
+            "Anker nach Art, Gelöstes, Konflikte. Die Zählung ist meine, nicht " <>
+            "deine — nimm sie, " <>
             "statt selbst nachzuzählen.",
         parameter: %{"type" => "object", "properties" => %{}, "required" => []},
         wiederholung: :bis_aenderung,
@@ -131,7 +134,8 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     {s,
      {:ok,
-      "Lauf: #{z.lauf}\nZeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}\n" <>
+      "Lauf: #{z.lauf}\nZeilen: #{z.utterances}, gelesen #{z.gelesen}, " <>
+        "eingeordnet #{z.eingeordnet}, ohne Einordnung #{z.ohne_einordnung}\n" <>
         "Anker: #{z.anker} (Zeitpunkte #{z.zeitpunkte}, Spannen #{z.spannen}, " <>
         "Verschiebungen #{z.verschiebungen})\nGelöst: #{z.geloest}, Konflikte: #{z.konflikte}"}}
   end
