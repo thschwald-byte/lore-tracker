@@ -120,9 +120,16 @@ defmodule Worker.Timeline.Ausdruck do
   # Das Ergebnis ist eine TAGESMINUTE, keine Halbtagsminute: Wer eine Ziffer
   # sagt, sagt sie konventionell im 24-Stunden-Raum („um 19 Uhr" ist nie 7
   # Uhr früh). Bei `gegen`/`um` ist das Wort „Uhr" Pflicht — ohne es sind die
-  # beiden zu häufig („um eins erhöht", „gegen 5 Grad"); bei den übrigen
-  # Modifikatoren ist es optional, weil „kurz vor 19" praktisch immer eine
-  # Zeit ist.
+  # beiden zu häufig; bei den übrigen Modifikatoren ist es optional, weil
+  # „kurz vor 19" praktisch immer eine Zeit ist.
+  #
+  # **Die „Uhr"-Pflicht ist belegt, nicht bloss vorsichtig** (dave, vier
+  # Sitzungen von Hand bewertet, 274 Stellen): Es gibt darin KEINEN einzigen
+  # Fall von `um`/`gegen` + Zahl ohne „Uhr", der eine echte Uhrzeit wäre — die
+  # Treffer sind ausnahmslos „um eins reduzieren", „um zwei Haupthandlungen",
+  # „um Drei von vier Spielern", „um sechs K", „um ein Community-Event".
+  # Umgekehrt treffen die Wortformen in denselben vier Sitzungen **nur** echte
+  # Anker, kein einziges Falsch-Positiv.
   @ziffernformen [
     {~r/\bdrei\s*viertel\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 45, :vor_naechster},
     {~r/\bviertel\s+vor\s+(?<z>\d{1,2})(?:\s*uhr)?\b/iu, 45, :vor_naechster},

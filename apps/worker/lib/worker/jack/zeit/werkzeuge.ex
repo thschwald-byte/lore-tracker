@@ -76,16 +76,31 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "ZUERST die Welt-Frage, bei JEDEM Anker: welt ist „spielwelt“, wenn " <>
             "die Zeit in der erzählten Welt gilt, und „tisch“, wenn sie den Abend " <>
             "meint (Restzeit, Pause, wann wir aufhören, wann jemand aufstehen " <>
-            "muss). Tisch ist häufiger als Spielwelt — in der Referenzsitzung 24 " <>
-            "zu 20. Steht es nicht da, nimm zweifel statt zu raten. " <>
+            "muss). Das ist fast ein Münzwurf, keine Ausnahmebehandlung: Über " <>
+            "vier von Hand bewertete Sitzungen sind 121 Angaben Spielwelt und 90 " <>
+            "Tisch — in zweien davon ist Tisch die Mehrheit. Steht es nicht da, " <>
+            "nimm zweifel statt zu raten. " <>
             "EINE ZAHL IST KEINE ZEIT: Geldbeträge („2000 jeder“), Seitenzahlen " <>
             "(„Seite 42“), Modifikatoren („um eins erhöht“), Entfernungen („5 bis " <>
             "50 Meter“), Schadenswerte („um sechs K“), Würfelergebnisse — die " <>
             "gehören mit loesen heraus, nicht hierher. " <>
+            "UND UNSERE WELT IST NICHT DIE SPIELWELT: „New York ist leidend seit " <>
+            "2014“, „die Rams sind vor vier Jahren hingegangen“, „in den letzten " <>
+            "30 Jahren zweimal“ — Smalltalk über Fußball, Filme, Politik. Das " <>
+            "sind echte Zeitangaben mit echten Jahreszahlen, und sie sehen " <>
+            "überzeugender aus als jede Küchenuhr; für die Linie sind sie " <>
+            "genauso falsch. Allein in einer Sitzung neun Stellen, meist in den " <>
+            "ersten Blöcken, bevor das Spiel anfängt. Raus damit über loesen. " <>
             "VORSICHT bei ziffernförmigen Uhrzeiten in einem Satz über " <>
             "Weltgeschichte: „ab um etwa 20:10 Uhr gebären Menschen …“ ist die " <>
             "JAHRESZAHL 2010, die die Spracherkennung als Uhrzeit geschrieben " <>
             "hat. Ich kann das nicht sehen, du am Satz drumherum schon. " <>
+            "EIN ZEITPUNKT BRAUCHT KEINEN KALENDER: „Tag 2 unserer " <>
+            "Bekanntschaft“, „am Tag nach dem Überfall“ ordnen, auch wenn " <>
+            "niemand weiß, welches Datum das ist — setz sie. In dieser Kampagne " <>
+            "hat der Spielleiter das Datum ausdrücklich offengelassen („nur das " <>
+            "Jahr, ich habe noch nicht entschieden, wann das ist“); die Reihe " <>
+            "trägt trotzdem. " <>
             "halbtag: nur wenn es BELEGT ist — steht im selben Satz eine Tageszeit " <>
             "(„nachts um halb zwei“, „morgens das um zehn“, „abends“, „mittags“), " <>
             "gehört sie hierher; das ist keine Vermutung, sondern eine Angabe. " <>

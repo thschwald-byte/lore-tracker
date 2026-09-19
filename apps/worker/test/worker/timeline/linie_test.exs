@@ -416,6 +416,58 @@ defmodule Worker.Timeline.LinieTest do
     end
   end
 
+  describe "die Abend-Kette aus S4 — der Zweig OHNE Mitternacht" do
+    # Vier Glieder aus einer Sitzung (dave, vollständige Referenzliste):
+    #
+    #   [ 896] „kommt ihr kurz vor 19 Uhr in Tacoma an"   → 18:50
+    #   [ 898] „Also um 19 Uhr Beginn"                     → 19:00
+    #   [1007] „Dreiviertelstunde, Stunde … endet das Ganze"  → Spanne
+    #   [1203] „Drei Viertel neun … also 20:45 Uhr"        → 20:45
+    #
+    # Zusammen mit der Nacht-Kette aus S3 (22:45 → 00:05 → 01:50) prüfen die
+    # beiden Ketten beide Zweige der Verankerung: mit und ohne Tageswechsel.
+    test "zwei Anker, eine Spanne dazwischen, ein Endanker — monoton und ohne Befund" do
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 18 * 60 + 50, anker_id: "z_ankunft"}),
+          anker(:zeitpunkt, ["u12"], %{tagesminute: 19 * 60, anker_id: "z_beginn"}),
+          anker(:spanne, ["u13"], %{minuten: 60, anker_id: "z_dauer"}),
+          anker(:zeitpunkt, ["u21"], %{tagesminute: 20 * 60 + 45, anker_id: "z_ende"})
+        ])
+
+      minuten = for id <- ~w(u11 u12 u21), do: linie.nach_utterance[id].minute
+
+      assert minuten == [18 * 60 + 50, 19 * 60, 20 * 60 + 45]
+      assert minuten == Enum.sort(minuten)
+
+      # Die Stunde Veranstaltung passt in die 105 Minuten zwischen Beginn und
+      # Ende — kein Überlauf, kein angenommener Sprung.
+      refute Enum.any?(linie.befunde, &(&1.art == :zeitsprung_angenommen))
+      refute Enum.any?(linie.befunde, &(&1.art == :spannen_ueberlauf))
+    end
+
+    test "Ankunft und Beginn bleiben getrennte Punkte" do
+      # Ohne den Modifikator vor der Ziffer fielen beide auf 19:00, und die
+      # Anfahrt verschwände (dave, 19.09.2026).
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{
+            tagesminute: Worker.Timeline.Ausdruck.tagesminute("kurz vor 19 Uhr"),
+            anker_id: "z_ankunft"
+          }),
+          anker(:zeitpunkt, ["u12"], %{
+            tagesminute: Worker.Timeline.Ausdruck.tagesminute("um 19 Uhr Beginn"),
+            anker_id: "z_beginn"
+          })
+        ])
+
+      a = linie.nach_utterance["u11"].minute
+      b = linie.nach_utterance["u12"].minute
+
+      assert b - a == 10
+    end
+  end
+
   describe "der grosse Vorwärtssprung ist ein Befund" do
     test "eine feste Uhrzeit, die zurückspringt, wird gemeldet" do
       # Der Fall dahinter ist der ÜBERSEHENE Rückblick (bob, 19.09.2026): Hat
