@@ -498,6 +498,28 @@ defmodule Worker.Timeline.Parser do
   # Die Spanne einer erkannten Dauer: `{menge, einheit}` oder `nil`, wenn sich
   # keine eindeutige Menge findet („seit mehreren tausend Jahren" — das ist
   # keine Zahl, sondern eine Geste).
+  @doc """
+  Liest einen Ausdruck als **Dauer**, wenn die Art schon feststeht:
+  `{menge, einheit}` oder `nil`.
+
+  **Ohne das Nachwort** („lang", „später", „hindurch"), das `parse/2`
+  verlangt. Der Unterschied ist der Kontext: In freiem Text ist „zwei
+  Stunden" mehrdeutig — es könnte eine Wirkdauer, eine Entfernung in Zeit
+  oder gar keine Zeitangabe sein, und deshalb ist das Nachwort dort die
+  Absicherung. Hat jemand den Ausdruck bereits als Spanne oder Frist
+  benannt (`Worker.Jack.Zeit`), ist diese Frage entschieden, und das
+  Nachwort zu verlangen hiesse, die Antwort zu ignorieren.
+
+  Das ist kein Randfall: Am Tisch sagt niemand „zwei Stunden lang" — gesagt
+  wird „das dauert gut zwei Stunden", und was Jack einträgt, ist das
+  Gesagte. Ohne diesen Weg ergaben die allermeisten Spannen **keine Zahl**,
+  und die Spanne ist der einzige Mechanismus für vergehende Spielzeit ohne
+  Uhr (#1247).
+  """
+  @spec dauer(String.t()) :: {integer(), atom()} | nil
+  def dauer(roh) when is_binary(roh), do: spanne_von(String.downcase(roh))
+  def dauer(_), do: nil
+
   defp spanne_von(s) do
     with [_, menge_roh, einheit_roh] <-
            Regex.run(~r/\b(#{@mengenwort}|die|der|das|den)\s+(#{@zeiteinheit})\b/iu, s),

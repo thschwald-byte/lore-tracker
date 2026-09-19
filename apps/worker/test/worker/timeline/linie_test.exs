@@ -87,7 +87,7 @@ defmodule Worker.Timeline.LinieTest do
   end
 
   describe "Zeitpunkte und Interpolation" do
-    test "zwischen zwei Ankern wird interpoliert, ausserhalb nicht rückwärts erfunden" do
+    test "zwischen zwei Ankern wird interpoliert, ausserhalb zurückgeschrieben" do
       a = [
         anker(:zeitpunkt, ["u12"], %{minute: 1000}),
         anker(:zeitpunkt, ["u22"], %{minute: 1400})
@@ -108,10 +108,11 @@ defmodule Worker.Timeline.LinieTest do
 
       assert nach["u13"].minute <= nach["u21"].minute
 
-      # VOR dem ersten Anker gibt es keine Zeit: rückwärts zu rechnen hiesse,
-      # eine Zeit zu erfinden, für die nichts spricht.
-      assert nach["u11"].minute == nil
-      assert nach["u11"].herkunft == :ohne
+      # VOR dem ersten Anker wird zurückgeschrieben, wenn keine Spanne
+      # dazwischen liegt: Bekannt ist nur „vorher", und die Herkunft sagt es.
+      # Mit Spannen dazwischen wird gerechnet (s. „rückwärts rechnen").
+      assert nach["u11"].minute == 1000
+      assert nach["u11"].herkunft == :fortgeschrieben
 
       # NACH dem letzten Anker wird fortgeschrieben — die Rechnung ist
       # transient, und ein grober Wert trägt mehr als ein Strich. Aber sie
@@ -664,6 +665,59 @@ defmodule Worker.Timeline.LinieTest do
 
       assert Linie.tag(nach["u13"]) == Linie.tag(nach["u11"])
       assert nach["u13"].minute == Linie.tag(nach["u11"]) * 1440 + 22 * 60 + 45
+    end
+  end
+
+  describe "rückwärts rechnen und der Tageswechsel" do
+    # Maintainer-Szenario, 19.09.2026: „gut, dass heute Montag ist" … „die
+    # Nacht vergeht" … „ihr müsst 3 Tage warten" … „Schlagzeile am
+    # 12.12.2024" — daraus weiss man, an welchem Tag der Montag war. Das
+    # Datum fällt am ENDE, und am Tisch ist das der Normalfall.
+    test "ein Anker am Ende datiert über Spannen zurück" do
+      anker = [
+        anker(:spanne, ["u12"], %{minuten: 3 * 1440}),
+        anker(:zeitpunkt, ["u21"], %{minute: 739_105 * 1440})
+      ]
+
+      nach = Linie.bauen(stellen(), anker).nach_utterance
+
+      assert Linie.tag(nach["u21"]) == 739_105
+      assert Linie.tag(nach["u11"]) == 739_105 - 3, "drei Tage vor dem Beleg"
+      assert nach["u11"].herkunft == :interpoliert
+    end
+
+    test "ohne Spanne dazwischen wird nichts gerechnet, nur zurückgeschrieben" do
+      nach =
+        Linie.bauen(stellen(), [anker(:zeitpunkt, ["u21"], %{minute: 739_105 * 1440})]).nach_utterance
+
+      assert nach["u11"].minute == 739_105 * 1440
+      assert nach["u11"].herkunft == :fortgeschrieben, "kein Mass, also kein Rechnen"
+    end
+
+    test "der Tageswechsel springt auf den Morgen danach, nicht um N Stunden" do
+      # „Es vergeht eine Nacht" sagt nicht, wie lange — es sagt, dass ein
+      # neuer Tag begann. Ob ein Satz das meint, entscheidet Jack; die Linie
+      # rechnet es nur (`morgen_stunde`).
+      anker = [
+        anker(:zeitpunkt, ["u11"], %{minute: 100 * 1440 + 22 * 60}),
+        anker(:spanne, ["u12"], %{morgen_stunde: 7})
+      ]
+
+      nach = Linie.bauen(stellen(), anker).nach_utterance
+
+      assert nach["u12"].minute == 101 * 1440 + 7 * 60, "22 Uhr + eine Nacht = 7 Uhr am Folgetag"
+    end
+
+    test "zwei Nächte sind zwei Tage, egal wie spät es war" do
+      anker = [
+        anker(:zeitpunkt, ["u11"], %{minute: 100 * 1440 + 2 * 60}),
+        anker(:spanne, ["u12"], %{morgen_stunde: 7}),
+        anker(:spanne, ["u13"], %{morgen_stunde: 7})
+      ]
+
+      nach = Linie.bauen(stellen(), anker).nach_utterance
+
+      assert Linie.tag(nach["u13"]) == 102, "zwei Uhr nachts, zwei Nächte, zwei Tage weiter"
     end
   end
 

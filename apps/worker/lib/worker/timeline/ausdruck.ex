@@ -81,7 +81,17 @@ defmodule Worker.Timeline.Ausdruck do
   Tagesbezug der ganzen Kette kommt ohnehin erst von einem Datums-Anker; ohne
   einen ist die Linie relativ, und das ist sie ohne Uhrzeiten auch.
 
-  ## Was dieses Modul NICHT erkennen kann
+  ## Was dieses Modul NICHT erkennen kann — und nicht erkennen soll
+
+  **Der Tageswechsel wird nicht geparst.** „Es vergeht eine Nacht" heisst:
+  Wir sind am Tag danach — die Information ist der Tageswechsel, nicht eine
+  Dauer. Ob ein Satz das meint, ist aber ein **Urteil über Sprache**, und das
+  fällt Jack (`tageswechsel: true` am Spannen-Werkzeug), nicht ein Muster
+  hier. Ein erster Entwurf hatte sechs Regexe dafür; sie sind zurückgenommen,
+  bevor sie liefen. Dieselbe Klasse wie die `event:`-Anker aus #1109 und der
+  Zeit-Vorlauf aus #1213: ein Matcher, der auf Deutsch danebengreift, ohne
+  dass es auffällt.
+
 
   „um 20:10 Uhr" ist eine formal einwandfreie Uhrzeit und in Wahrheit eine
   Jahreszahl. Kein Muster trennt das — nur der Zusammenhang, in dem der Satz
@@ -187,16 +197,37 @@ defmodule Worker.Timeline.Ausdruck do
   # Eine Frist trägt dieselbe Rechnung wie eine Spanne — nur zeigt sie nach
   # vorn. Die Linie nutzt die Zahl nicht; der Chronik-Jack wird sie nutzen.
   def aufloesen(%{art: art} = a, cal) when art in [:spanne, "spanne", :frist, "frist"] do
-    case Parser.parse(cal, to_string(Map.get(a, :wert, ""))) do
+    wert = to_string(Map.get(a, :wert, ""))
+
+    # Erst der volle Parser (er kennt Vorworte wie „knapp", „rund"), dann der
+    # schlanke Weg ohne Nachwort: Die Art steht hier schon fest, also ist
+    # „zwei Stunden" eindeutig eine Dauer (`Parser.dauer/1`).
+    case Parser.parse(cal, wert) do
       {:ok, %{laenge: {menge, einheit}}} when is_integer(menge) ->
         Map.put(a, :minuten, minuten(menge, einheit))
 
       _ ->
-        a
+        case Parser.dauer(wert) do
+          {menge, einheit} when is_integer(menge) ->
+            Map.put(a, :minuten, minuten(menge, einheit))
+
+          _ ->
+            a
+        end
     end
+    |> mit_tageswechsel()
   end
 
   def aufloesen(a, _cal), do: a
+
+  # Jack hat den Tageswechsel gesetzt — daraus wird die Stunde, auf die die
+  # Linie springt. 7 Uhr steht für „Morgen"; sie ist gegriffen, und die
+  # Auflösung einer solchen Spanne ist entsprechend grob (sechs Stunden).
+  defp mit_tageswechsel(%{tageswechsel: true} = a),
+    do: a |> Map.put(:morgen_stunde, 7) |> Map.put(:unschaerfe, 6 * 60)
+
+  defp mit_tageswechsel(a), do: a
+
 
   @doc """
   Wie breit der Zeitraum ist, den ein Ausdruck benennt — in Minuten.

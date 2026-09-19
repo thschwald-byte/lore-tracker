@@ -70,6 +70,7 @@ defmodule Worker.Jack.Zeit.Setzen do
           required(:welt) => String.t(),
           required(:beleg) => String.t(),
           optional(:halbtag) => String.t(),
+          optional(:tageswechsel) => boolean(),
           optional(:zweifel) => String.t()
         }
 
@@ -198,6 +199,12 @@ defmodule Worker.Jack.Zeit.Setzen do
       # utterance_ids, art und wert). Derselbe Ausdruck an derselben Stelle
       # bleibt derselbe Anker, ob Jack den Halbtag nun dazusagt oder nicht.
       halbtag: Map.get(w, :halbtag, ""),
+      # **Der Tageswechsel ist Jacks Urteil, kein Parser-Treffer** (#1247):
+      # „Es vergeht eine Nacht" heisst „wir sind am Tag danach", und ob ein
+      # Satz das meint, entscheidet er am Sinn. Ein Muster dafür wäre die
+      # #1109-Klasse — sechs Regexe dafür waren geschrieben und sind
+      # zurückgenommen worden, bevor sie liefen.
+      tageswechsel: Map.get(w, :tageswechsel, false),
       zweifel: Map.get(w, :zweifel, ""),
       quelle: "jack",
       abgesegnet_von: "",

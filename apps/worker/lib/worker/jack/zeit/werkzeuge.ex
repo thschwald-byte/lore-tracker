@@ -148,7 +148,13 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "Eine generische Wirkdauer ist KEINE Spanne („eine Stunde hat man Zeit, " <>
             "um das zu benutzen“ sagt, wie lange etwas dauert, nicht wann es " <>
             "geschieht) — die gehört mit loesen heraus. Eine konkrete Restzeit " <>
-            "dieser Figur an dieser Stelle dagegen schon.",
+            "dieser Figur an dieser Stelle dagegen schon. " <>
+            "tageswechsel: setz es auf true, wenn die Spanne über eine NACHT " <>
+            "führt — „es vergeht eine Nacht“, „am nächsten Morgen“, „tags " <>
+            "darauf“. Dann zählt nicht, wie viele Stunden es waren (das hängt " <>
+            "davon ab, wann die Nacht begann), sondern DASS ein neuer Tag " <>
+            "begonnen hat: Ich rechne auf den Morgen danach. Am Wortlaut " <>
+            "erkennen kann ich das nicht — du schon.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -156,11 +162,12 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
             "wert" => %{"type" => "string"},
             "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch)},
             "beleg" => %{"type" => "string"},
+            "tageswechsel" => %{"type" => "boolean"},
             "zweifel" => %{"type" => "string", "minLength" => 0}
           },
           "required" => ~w(zeilen wert welt beleg)
         },
-        optional: ["zweifel"],
+        optional: ~w(tageswechsel zweifel),
         wiederholung: :zaehlt,
         ausfuehren: &w_spanne/2
       },
@@ -429,6 +436,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         welt: to_string(f["welt"]),
         beleg: to_string(f["beleg"]),
         halbtag: to_string(f["halbtag"] || ""),
+        tageswechsel: f["tageswechsel"] == true,
         zweifel: to_string(f["zweifel"] || "")
       }
 

@@ -366,13 +366,46 @@ defmodule Worker.Timeline.Linie do
 
   defp minute_an(i, reihe, feste, spannen) do
     case {letzter_fest(i, feste), naechster_fest(i, reihe, feste)} do
-      # Vor dem ersten Anker gibt es nichts: rückwärts zu rechnen hiesse, eine
-      # Zeit zu erfinden, für die nichts spricht.
-      {nil, _} -> {nil, :ohne}
-      {{vi, vm}, nil} -> nach_dem_letzten(vm, gelaufen(vi, i, spannen), i, spannen)
+      {nil, nil} -> {nil, :ohne}
+      {nil, {ni, nm}} -> vor_dem_ersten(nm, rueckwaerts(i, ni, spannen))
+      {{vi, vm}, nil} -> nach_dem_letzten(vm, gelaufen(vi, i, spannen, vm), i, spannen)
       {{vi, vm}, {ni, nm}} -> {zwischen(vi, vm, ni, nm, i, spannen), :interpoliert}
     end
   end
+
+  # **Vor dem ersten Anker wird ZURÜCKGERECHNET, soweit Spannen tragen.**
+  #
+  # Der Fall (Maintainer, 19.09.2026): „gut, dass heute Montag ist" … „die
+  # Nacht vergeht" … „ihr müsst drei Tage warten" … „Schlagzeile vom
+  # 12.12.2024". Das Datum fällt am Ende, und die Spannen dazwischen sagen,
+  # wie weit der Montag davor lag. Daraus FOLGT der Tag — am Tisch ist das
+  # der Normalfall, weil ein Datum oft erst spät genannt wird.
+  #
+  # Ohne Spannen dazwischen wird nichts gerechnet: Dann ist nur bekannt,
+  # dass die Stelle VOR dem Anker liegt, und das trägt die Reihe selbst.
+  # Rückwärts zu raten hiesse, eine Zeit zu erfinden, für die nichts spricht.
+  # Ohne Spanne dazwischen ist nur bekannt, dass die Stelle VOR dem Anker
+  # liegt — die Zeit wird zurückgeschrieben und heisst entsprechend.
+  defp vor_dem_ersten(nm, 0), do: {nm, :fortgeschrieben}
+  defp vor_dem_ersten(nm, minuten), do: {nm - minuten, :interpoliert}
+
+  # **Rückwärts zählt nur, was sich rückwärts rechnen lässt.** Ein Mass
+  # schon: zwei Stunden vorwärts sind zwei Stunden rückwärts. Ein
+  # Tageswechsel nicht: „auf den Morgen danach" ist vorwärts gedacht, und
+  # rückwärts käme Unsinn heraus (im Beispiel zwei Tage statt einem). Er
+  # zählt deshalb als EIN Tag — grob, aber in der Grössenordnung richtig,
+  # und die Auflösung der Spanne sagt es ohnehin.
+  defp rueckwaerts(von, bis, spannen) when bis > von do
+    (von + 1)..bis
+    |> Enum.flat_map(&Map.get(spannen, &1, []))
+    |> Enum.map(fn
+      {:mass, m} -> m
+      {:morgen, _} -> @minuten_pro_tag
+    end)
+    |> Enum.sum()
+  end
+
+  defp rueckwaerts(_, _, _), do: 0
 
   defp nach_dem_letzten(vm, minuten, i, spannen) do
     # Spannen sind gesagt worden: Solange sie tragen, ist die Strecke
@@ -438,10 +471,28 @@ defmodule Worker.Timeline.Linie do
 
   def gewissheit_an(i, reihe, feste, _interpoliert) do
     case {letzter_fest(i, feste), naechster_fest(i, reihe, feste)} do
-      {{_vi, vm}, {_ni, nm}} -> gewissheit(nm - vm)
-      _ -> 0
+      # Zwischen zwei Belegen: der Abstand ist das Fenster.
+      {{_vi, vm}, {_ni, nm}} ->
+        gewissheit(nm - vm)
+
+      # Rückwärts gerechnet (vor dem ersten Beleg, über Spannen): Das Fenster
+      # ist die Summe der Spannen, die dorthin führen — sie sind gesagt
+      # worden, also ist die Rechnung so gut wie sie. Ohne diesen Zweig stand
+      # eine rückwärts gerechnete Zeile auf 0 %, obwohl sie belegt gestützt
+      # ist (Maintainer-Szenario, 19.09.2026: „Montag … die Nacht vergeht …
+      # drei Tage warten … Schlagzeile vom 12.12.2024").
+      {nil, {ni, _nm}} ->
+        gewissheit(gelaufen_bis(i, ni, feste))
+
+      _ ->
+        0
     end
   end
+
+  # Die Spannen zwischen zwei Stellen stehen nicht in `feste`; für die
+  # Gewissheit genügt ihr Abstand in der Reihe als grobes Mass — je weiter
+  # zurück gerechnet wird, desto weniger trägt es.
+  defp gelaufen_bis(i, ni, _feste), do: (ni - i) * @minuten_pro_tag
 
   @doc "Prozent aus einem Abstand in Minuten. Die Schwellen sind gegriffen."
   @spec gewissheit(integer() | nil) :: 0..100
@@ -459,20 +510,38 @@ defmodule Worker.Timeline.Linie do
   # verteilt — der Widerspruch ist dann ein BEFUND (s. `pruefen/3`) und wird
   # nicht durch eine stille Stauchung versteckt.
   defp zwischen(vi, vm, ni, nm, i, spannen) do
-    summe = gelaufen(vi, ni, spannen)
+    summe = gelaufen(vi, ni, spannen, vm)
     abstand = nm - vm
 
     if summe > 0 and summe <= abstand do
-      vm + gelaufen(vi, i, spannen)
+      vm + gelaufen(vi, i, spannen, vm)
     else
       vm + div(abstand * (i - vi), max(ni - vi, 1))
     end
   end
 
-  defp gelaufen(von, bis, spannen) when bis > von,
-    do: Enum.sum(for j <- (von + 1)..bis, do: Map.get(spannen, j, 0))
+  # Wie viel Zeit zwischen zwei Stellen vergeht, **gerechnet ab `start`** —
+  # ein Tageswechsel braucht den Stand, ein Mass nicht.
+  defp gelaufen(von, bis, spannen, start \\ 0)
 
-  defp gelaufen(_, _, _), do: 0
+  defp gelaufen(von, bis, spannen, start) when bis > von do
+    (von + 1)..bis
+    |> Enum.flat_map(&Map.get(spannen, &1, []))
+    |> Enum.reduce(start, &weiter/2)
+    |> Kernel.-(start)
+  end
+
+  defp gelaufen(_, _, _, _), do: 0
+
+  defp weiter({:mass, m}, jetzt), do: jetzt + m
+
+  # Der nächste Morgen NACH dem aktuellen Stand: Tag hoch, dann die Stunde.
+  # Ist es noch vor dieser Stunde desselben Tages, reicht derselbe Tag nicht —
+  # „es vergeht eine Nacht" heisst immer der FOLGENDE Tag.
+  defp weiter({:morgen, stunde}, jetzt) do
+    tag = Integer.floor_div(jetzt, @minuten_pro_tag)
+    (tag + 1) * @minuten_pro_tag + stunde * 60
+  end
 
   defp letzter_fest(i, feste) do
     feste
@@ -785,17 +854,36 @@ defmodule Worker.Timeline.Linie do
   # Eine Spanne gilt ab der SPÄTESTEN Stelle ihrer Menge: „wir sind zwei
   # Stunden marschiert" wird am Ende des Marsches gesagt, die Zeit ist
   # vergangen, bevor der Satz fällt.
+  # Eine Spanne ist entweder ein **Mass** („zwei Stunden") oder ein
+  # **Tageswechsel** („es vergeht eine Nacht"). Das zweite lässt sich nicht
+  # als Minutenzahl ablegen: Wie lang die Nacht war, hängt davon ab, wann sie
+  # begann — was feststeht, ist der Morgen danach. Deshalb liegt im Index
+  # `{:mass, minuten}` oder `{:morgen, stunde}`, und `gelaufen/4` rechnet den
+  # zweiten Fall aus dem Vorgänger.
   defp spannen_je_stelle(reihe, anker) do
     index = index_nach_utterance(reihe)
 
     for a <- anker,
         art(a) == :spanne,
-        m = Map.get(a, :minuten),
-        is_integer(m) and m > 0,
+        eintrag = spannen_eintrag(a),
+        not is_nil(eintrag),
         i = spaeteste(a, index),
         not is_nil(i),
         reduce: %{} do
-      acc -> Map.update(acc, i, m, &(&1 + m))
+      acc -> Map.update(acc, i, [eintrag], &(&1 ++ [eintrag]))
+    end
+  end
+
+  defp spannen_eintrag(a) do
+    cond do
+      is_integer(Map.get(a, :minuten)) and Map.get(a, :minuten) > 0 ->
+        {:mass, Map.get(a, :minuten)}
+
+      is_integer(Map.get(a, :morgen_stunde)) ->
+        {:morgen, Map.get(a, :morgen_stunde)}
+
+      true ->
+        nil
     end
   end
 
