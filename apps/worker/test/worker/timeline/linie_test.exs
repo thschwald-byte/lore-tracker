@@ -221,6 +221,36 @@ defmodule Worker.Timeline.LinieTest do
       refute Enum.any?(liste, &Map.has_key?(&1, :von))
     end
 
+    test "MEHRERE Anker an EINER Äußerung kommen alle" do
+      # Der reale Fall (seattleV5 S3, Block 1106, eine Utterance): „also ist
+      # jetzt so grob eine Stunde vergangen, dann wird es jetzt so kurz nach
+      # zwölf sein" — eine Spanne und ein Zeitpunkt in einem Satz.
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 600}),
+        anker(:spanne, ["u12"], %{minuten: 60, wert: "eine Stunde"}),
+        Map.put(
+          anker(:zeitpunkt, ["u12"], %{minute: 660, wert: "kurz nach zwölf"}),
+          :anker_id,
+          "z_punkt_u12"
+        )
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+      liste = Linie.anker_fuer(linie, ["u12"])
+
+      assert length(liste) == 2, "beide Anker derselben Äußerung müssen kommen"
+      assert Enum.sort(Enum.map(liste, & &1.art)) == [:spanne, :zeitpunkt]
+      assert Enum.any?(liste, &(&1.wert == "eine Stunde"))
+      assert Enum.any?(liste, &(&1.wert == "kurz nach zwölf"))
+    end
+
+    test "eine Äußerung ohne eigenen Anker liefert genau einen Eintrag mit gerechneter Zeit" do
+      a = [anker(:zeitpunkt, ["u11"], %{minute: 100})]
+      linie = Linie.bauen(stellen(), a)
+
+      assert [%{herkunft: :interpoliert, minute: 100}] = Linie.anker_fuer(linie, ["u13"])
+    end
+
     test "unbekannte Utterances erzeugen keinen Eintrag statt eines leeren" do
       linie = Linie.bauen(stellen(), [])
       assert Linie.anker_fuer(linie, ["fremd"]) == []
@@ -253,6 +283,32 @@ defmodule Worker.Timeline.LinieTest do
       nach = linie.nach_utterance
       assert nach["u12"].minute >= nach["u11"].minute
       assert nach["u12"].minute <= nach["u13"].minute
+    end
+
+    test "zwei widersprüchliche Zeitpunkte an derselben Stelle sind ein Befund" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 600}),
+        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 900}), :anker_id, "z_zweiter")
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+
+      befund = Enum.find(linie.befunde, &(&1.art == :zeitpunkte_uneinig))
+      assert befund, "der Widerspruch darf nicht still nach Listenreihenfolge entschieden werden"
+
+      # Gerechnet wird mit dem früheren — deterministisch, nicht nach
+      # Zustellreihenfolge.
+      assert linie.nach_utterance["u11"].minute == 600
+    end
+
+    test "zwei GLEICHE Zeitpunkte an derselben Stelle sind kein Befund" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 600}),
+        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 600}), :anker_id, "z_gleich")
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+      refute Enum.any?(linie.befunde, &(&1.art == :zeitpunkte_uneinig))
     end
 
     test "ein Zweifel reist als Befund UND steht an der Stelle" do

@@ -112,7 +112,15 @@ defmodule Worker.Timeline.Linie do
   Baut die Linie aus Grundordnung und Ankern.
 
   Liefert `%{reihe: [eintrag], nach_utterance: %{id => eintrag},
-  geloest: MapSet, befunde: [befund]}`.
+  anker_an: %{id => [anker()]}, geloest: MapSet, befunde: [befund]}`.
+
+  **`nach_utterance` und `anker_an` sind zweierlei**, und sie zu vermengen war
+  der erste Entwurf: Eine Äußerung hat genau **eine** Position auf der Linie —
+  sie kann nicht an zwei Stellen liegen —, aber an ihr können **mehrere
+  Anker** hängen. „Also ist jetzt so grob eine Stunde vergangen, dann wird es
+  jetzt so kurz nach zwölf sein" ist eine Utterance mit einer Spanne und einem
+  Zeitpunkt. Mit einem Eintrag je Utterance wäre die Liste, die die transiente
+  Methode liefern soll, gar nicht darstellbar gewesen.
   """
   @spec bauen([stelle()], [anker()]) :: map()
   def bauen(stellen, anker) when is_list(stellen) and is_list(anker) do
@@ -129,24 +137,75 @@ defmodule Worker.Timeline.Linie do
     %{
       reihe: eintraege,
       nach_utterance: Map.new(eintraege, &{&1.utterance_id, &1}),
+      anker_an: anker_an(anker, geloest),
       geloest: geloest,
       befunde: pruefen(eintraege, reihe, anker)
     }
   end
 
-  @doc """
-  **Die transiente Methode.** Liefert zu einer Utterance-Menge die Anker-
-  Einträge — als LISTE, in der Reihenfolge der Linie, ohne Doppelte.
+  # Alle Anker je Utterance — mehrere sind der Normalfall, nicht die Ausnahme.
+  # Ein gelöster Anker erscheint hier nicht: er liegt nicht auf der Linie.
+  defp anker_an(anker, geloest) do
+    for a <- anker,
+        art(a) != :geloest,
+        u <- Map.get(a, :utterance_ids, []),
+        not MapSet.member?(geloest, u),
+        reduce: %{} do
+      acc -> Map.update(acc, u, [a], &(&1 ++ [a]))
+    end
+  end
 
-  Eine leere Liste heisst „keine Zeit erreichbar". Das ist eine Aussage und
-  kein Fehler: lieber keine Angabe als eine erfundene.
+  @doc """
+  **Die transiente Methode.** Liefert zu einer Utterance-Menge die Zeitanker —
+  als LISTE, in der Reihenfolge der Linie.
+
+  Die Liste ist verschieden lang von der Zahl der Utterances, in beide
+  Richtungen: Eine Äußerung kann **mehrere** Anker tragen (eine Dauer und den
+  daraus folgenden Zeitpunkt in einem Satz), und sie kann **keinen** tragen —
+  dann steht sie interpoliert oder ganz ohne Zeit da.
+
+  Jeder Eintrag trägt seine Herkunft: `:belegt` (an dieser Stelle gesagt),
+  `:interpoliert` (gerechnet zwischen zwei Ankern) oder `:ohne` (kein Anker in
+  Reichweite). Ohne die Herkunft wäre eine falsche Einordnung nicht
+  auffindbar.
+
+  **Es wird nichts gebaut** — kein Mittelwert, keine Spanne, kein
+  „frühester". Wer daraus einen Wert braucht, rechnet ihn selbst und sichtbar.
+  Eine leere Liste heißt „keine Zeit erreichbar"; das ist eine Aussage und
+  kein Fehler.
   """
-  @spec anker_fuer(map(), [String.t()]) :: [eintrag()]
-  def anker_fuer(%{nach_utterance: nach}, utterance_ids) when is_list(utterance_ids) do
+  @spec anker_fuer(map(), [String.t()]) :: [map()]
+  def anker_fuer(%{nach_utterance: nach} = linie, utterance_ids)
+      when is_list(utterance_ids) do
+    an = Map.get(linie, :anker_an, %{})
+
     utterance_ids
     |> Enum.uniq()
-    |> Enum.flat_map(fn id -> List.wrap(Map.get(nach, id)) end)
-    |> Enum.sort_by(&{&1.minute || 0, &1.utterance_id})
+    |> Enum.flat_map(fn id ->
+      case {Map.get(nach, id), Map.get(an, id, [])} do
+        # Gelöst oder unbekannt: kein Eintrag. Ein leerer Platzhalter wäre
+        # eine Aussage über eine Zeit, die es nicht gibt.
+        {nil, _} ->
+          []
+
+        # Keine eigenen Anker: die Stelle selbst, mit ihrer gerechneten Zeit.
+        {stelle, []} ->
+          [stelle]
+
+        # Mehrere Anker an einer Äußerung: jeder einzeln, mit der Zeit der
+        # Stelle und seinem eigenen Ausdruck.
+        {stelle, anker} ->
+          Enum.map(anker, fn a ->
+            stelle
+            |> Map.put(:anker_id, Map.get(a, :anker_id))
+            |> Map.put(:art, art(a))
+            |> Map.put(:wert, Map.get(a, :wert))
+            |> Map.put(:welt, Map.get(a, :welt))
+            |> Map.put(:zweifel, Map.get(a, :zweifel) || stelle.zweifel)
+          end)
+      end
+    end)
+    |> Enum.sort_by(&{&1.minute || 0, &1.utterance_id, to_string(&1[:art] || "")})
   end
 
   def anker_fuer(_, _), do: []
@@ -308,6 +367,12 @@ defmodule Worker.Timeline.Linie do
 
   # Ein Zeitpunkt-Anker gilt an der FRÜHESTEN Stelle seiner Menge: er wird
   # dort gesagt, und alles danach liegt danach.
+  #
+  # Zwei Zeitpunkte an derselben Stelle sind möglich (an einer Äußerung dürfen
+  # mehrere Anker hängen). Für die Rechnung muss einer gelten; genommen wird
+  # der FRÜHERE, und der Widerspruch ist ein Befund (`zeitpunkte_uneinig`) —
+  # nicht ein stilles Gewinnen nach Listenreihenfolge, das je nach
+  # Zustellreihenfolge anders ausfiele.
   defp feste_punkte(reihe, anker) do
     index = index_nach_utterance(reihe)
 
@@ -317,8 +382,43 @@ defmodule Worker.Timeline.Linie do
         is_integer(minute),
         i = frueheste(a, index),
         not is_nil(i),
-        into: %{},
-        do: {i, %{minute: minute, anker_id: Map.get(a, :anker_id)}}
+        reduce: %{} do
+      acc ->
+        neu = %{minute: minute, anker_id: Map.get(a, :anker_id)}
+
+        case acc[i] do
+          nil -> Map.put(acc, i, neu)
+          %{minute: alt} when alt <= minute -> acc
+          _ -> Map.put(acc, i, neu)
+        end
+    end
+  end
+
+  # Die Stellen, an denen sich zwei Zeitpunkt-Anker widersprechen.
+  defp uneinige_zeitpunkte(reihe, anker) do
+    index = index_nach_utterance(reihe)
+
+    anker
+    |> Enum.filter(&(art(&1) == :zeitpunkt and is_integer(Map.get(&1, :minute))))
+    |> Enum.group_by(&frueheste(&1, index))
+    |> Enum.reject(fn {i, gruppe} -> is_nil(i) or length(gruppe) < 2 end)
+    |> Enum.flat_map(fn {_i, gruppe} ->
+      minuten = gruppe |> Enum.map(&Map.get(&1, :minute)) |> Enum.uniq()
+
+      if length(minuten) > 1 do
+        [
+          %{
+            art: :zeitpunkte_uneinig,
+            anker_id: gruppe |> Enum.map(&Map.get(&1, :anker_id)) |> Enum.join(", "),
+            text:
+              "An derselben Stelle stehen zwei verschiedene Zeitpunkte " <>
+                "(#{Enum.join(minuten, " und ")} Minuten). Gerechnet wird mit dem früheren."
+          }
+        ]
+      else
+        []
+      end
+    end)
   end
 
   # Eine Spanne gilt ab der SPÄTESTEN Stelle ihrer Menge: „wir sind zwei
@@ -379,7 +479,10 @@ defmodule Worker.Timeline.Linie do
   """
   @spec pruefen([eintrag()], [stelle()], [anker()]) :: [map()]
   def pruefen(eintraege, reihe, anker) do
-    ohne_ziel(anker, reihe) ++ spannen_ueberlauf(eintraege, reihe, anker) ++ zweifel(anker)
+    ohne_ziel(anker, reihe) ++
+      spannen_ueberlauf(eintraege, reihe, anker) ++
+      uneinige_zeitpunkte(reihe, anker) ++
+      zweifel(anker)
   end
 
   defp ohne_ziel(anker, reihe) do
