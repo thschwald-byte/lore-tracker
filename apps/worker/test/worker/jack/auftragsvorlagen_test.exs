@@ -531,5 +531,38 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
 
     # Der Halbtag gehört der Kette — ausser er steht da.
     assert text =~ "halbtag"
+
+    # Der Rückblick am Sitzungsanfang ist ein Ritual, kein Einzelfall — und
+    # der bösartige Fall steht dabei: Die neue Sitzung begänne sonst vor dem
+    # Ende der vorigen (dave, 19.09.2026).
+    assert text =~ "Rückblick"
+    assert text =~ "Ritual"
+
+    # Die Interpolation ist eine Warnung, keine Zusage: „je mehr Spannen, desto
+    # weniger muss ich raten." An einer Sitzung mit 1591 Blöcken ohne eine
+    # einzige Uhrzeit ist die lineare Verteilung nicht selten falsch, sondern
+    # sicher.
+    assert text =~ "desto weniger muss ich raten"
+  end
+
+  # Der Gedächtnis-Lauf baut aus den Fakten das Bild vom Ablauf — und der
+  # Faktenbestand enthält reichlich Tischgespräch (an einer gemessenen Sitzung
+  # 73 von 112). Ohne den Hinweis geht er mit der Tischorganisation im Bild in
+  # den Einsortier-Lauf, wo die Welt-Frage bei jedem Anker die erste ist.
+  test "der Gedächtnis-Auftrag warnt vor dem Tischgespräch in den Fakten" do
+    text = File.read!(Path.join(@dir, "zeit_gedaechtnis.md"))
+
+    assert text =~ "nicht jeder Fakt ist ein Ereignis der Spielwelt"
+    assert text =~ "73 von 112"
+  end
+
+  # Das sechste Symptom des Prüf-Laufs: läuft die Linie über eine
+  # Sitzungsgrenze rückwärts, steckt fast immer ein nicht verschobener Recap
+  # dahinter.
+  test "der Prüf-Auftrag kennt die rückwärts laufende Sitzungsgrenze" do
+    text = File.read!(Path.join(@dir, "zeit_pruefen.md"))
+
+    assert text =~ "Sitzungsgrenze rückwärts"
+    assert text =~ "Rückblick am Sitzungsanfang"
   end
 end

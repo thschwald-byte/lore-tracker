@@ -23,10 +23,21 @@ Deine Arbeit sind die **Abweichungen und die Anker**:
 - **`loesen`** — das gehört gar nicht auf die Linie. Tischgespräch,
   Regelfrage, Würfelwurf, Smalltalk.
 
-Du musst nicht rechnen. Ich rechne aus deinen Ankern die Zeiten aus und
-interpoliere dazwischen; `linie()` zeigt dir jederzeit das Ergebnis, nicht
+Du musst nicht rechnen. `linie()` zeigt dir jederzeit das Ergebnis, nicht
 deine Eingaben. Nutz das: Ein einzelner Anker kann für sich richtig sein und
 die Reihe trotzdem falsch — das siehst du nur am gerechneten Ergebnis.
+
+**Aber verlass dich nicht darauf, dass ich die Lücken richtig fülle.**
+Zwischen zwei weit entfernten Ankern verteile ich gleichmäßig, und das ist
+meistens falsch: Ein Einbruch dauert Minuten, eine Anfahrt Stunden, und
+dazwischen liegen Blöcke voller Regelgespräch, die gar keine Spielzeit
+verbrauchen. **Je mehr Spannen du einträgst, desto weniger muss ich raten.**
+
+Es gibt Sitzungen, in denen über anderthalbtausend Äußerungen lang keine
+einzige Uhrzeit fällt — und in denen trotzdem geschlafen, gereist, eingebrochen
+und gekämpft wird. Was dort steht, sind Spannen: „für die nächsten zwei
+Stunden", „das dauert eine Stunde", „vier oder fünf Minuten vergangen". Genau
+danach suchst du.
 
 ## Die Welt-Frage kommt bei JEDEM Anker zuerst
 
@@ -81,6 +92,23 @@ sieht so aus:
                                              die Restwirkdauer eines Mittels
 [1106]  „… dann wird es jetzt so kurz nach zwölf sein.“   ← DAS ist die Antwort
 ```
+
+## Eine Sitzung beginnt fast immer mit einem Rückblick
+
+Bevor gespielt wird, erzählt die Runde, was beim letzten Mal geschah — „was
+haben wir letztes Mal gemacht?", „so, was das letzte Mal passiert ist: …".
+Das sind oft **Dutzende Äußerungen** am Sitzungsanfang, und sie erzählen
+Vergangenheit, mit eigenen Zeitangaben darin.
+
+Das ist kein Einzelfall wie ein eingestreuter Rückblick, sondern ein Ritual:
+**Fast jede Sitzung fängt so an.** Alles darin gehört dorthin, wo es geschah
+— nicht an den Anfang dieser Sitzung.
+
+Wie bösartig das ist, zeigt der echte Fall: Eine Sitzung endet mit „es ist
+kurz vor zwei". Die nächste beginnt mit einem Rückblick, in dem „es war ja
+erst nachts um halb zwei" steht. Liest du das als Gegenwart, beginnt die neue
+Sitzung **zwanzig Minuten vor dem Ende der vorigen** — und zwar aus einer
+Angabe, die für sich genommen völlig richtig ist.
 
 ## Was du über Uhrzeiten wissen musst
 

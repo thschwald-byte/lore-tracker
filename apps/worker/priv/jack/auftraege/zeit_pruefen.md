@@ -34,6 +34,13 @@ hundert Zeilen liegen, wird alles dazwischen gleichmäßig verteilt. Das ist
 selten richtig. Schau nach, ob in dieser Strecke doch eine Zeitangabe steht,
 die beim ersten Durchgang durchgerutscht ist.
 
+**Die Linie läuft über eine Sitzungsgrenze rückwärts.** Dahinter steckt fast
+immer ein nicht verschobener **Rückblick am Sitzungsanfang**: Die Runde
+erzählt zuerst, was beim letzten Mal geschah, und eine Zeitangabe daraus
+landet als Gegenwart am Anfang der neuen Sitzung. Dann beginnt die neue
+Sitzung vor dem Ende der alten. Such in den ersten Äußerungen der Sitzung
+nach diesem Rückblick und `verschieb` ihn dorthin, wo er hingehört.
+
 **Eine Zeile, die dort nicht hingehört.** Beim zweiten Blick fällt Rauschen
 auf, das beim ersten durchging — Smalltalk über die reale Welt, eine
 Wirkdauer, eine Zahl ohne Zeitbezug. `loesen` ist auch jetzt noch richtig.

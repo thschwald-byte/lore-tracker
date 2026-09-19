@@ -30,7 +30,16 @@ könntest, ohne die Fakten nochmal zu lesen.
 ## Was NICHT deine Aufgabe ist
 
 **Du prüfst die Fakten nicht.** Ob sie stimmen, hat ein anderer Lauf
-entschieden. Du liest sie als das, was in dieser Kampagne geschehen ist.
+entschieden.
+
+**Aber nicht jeder Fakt ist ein Ereignis der Spielwelt.** Viele halten fest,
+was am Tisch besprochen wurde — Charaktererstellung, Regelerklärungen,
+Terminabsprachen, wer wann kann. Das steht gleichberechtigt neben dem, was
+die Figuren tun, und ist manchmal die Mehrheit: In einer gemessenen Sitzung
+waren 73 von 112 Fakten Vorbereitung am Tisch. **Für den ABLAUF zählt nur,
+was in der Welt geschieht.** Nimmst du die Tischorganisation mit hinein,
+gehst du mit einem falschen Bild in den nächsten Lauf — und dort ist die
+Frage „Welt oder Tisch?" die erste bei jedem Anker.
 
 **Du sortierst sie nicht.** Die Reihenfolge machst du im nächsten Lauf, und
 zwar an den Äußerungen, nicht an den Fakten — die Fakten tragen keine Zeit,
