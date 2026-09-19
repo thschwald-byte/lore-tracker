@@ -13,6 +13,7 @@ defmodule Worker.Timeline.Linie do
 
           zeitpunkt   ein genannter Zeitpunkt („am 15. November")
           spanne      eine genannte Dauer („zwei Stunden marschiert")
+          frist       eine Dauer, die NACH VORN zeigt („noch eine Woche")
           ordnung     eine Verschiebung gegen die Erzählreihenfolge
                       (ein Rückblick liegt in der Vergangenheit)
           geloest     gehört nicht auf die Linie (Tischgespräch, Regelfrage)
@@ -37,6 +38,22 @@ defmodule Worker.Timeline.Linie do
   Scheingenauigkeit (niemand am Tisch sagt „siebzehn Sekunden später"),
   Stunden zu grob für „eine halbe Stunde später". Kippt das, ist es eine
   Konstante an einer Stelle.
+
+  ## Die Frist bewegt nichts — noch nicht
+
+  Eine `frist` („die Verhandlungen dauern noch eine Woche", „ihr habt bis
+  Freitag") ist eine Aussage über einen Zeitpunkt, der noch nicht da ist. Für
+  die **Reihenfolge** der Äußerungen trägt sie nichts bei: Die Linie ordnet,
+  was gesagt wurde, und eine Frist bewegt keine Äußerung. Sie steht deshalb
+  in `anker_an` und in `anker_fuer/2`, aber weder in den festen Punkten noch
+  in den Spannen.
+
+  **Sie wird trotzdem gespeichert** (Maintainer, 19.09.2026), weil ihr Leser
+  absehbar kommt: Der Chronik-Jack kann aus „noch eine Woche" und einem
+  späteren „die Verhandlungen sind vorbei" eine Spanne rechnen — das ist eine
+  Aussage über zwei Ereignisse, also seine Arbeit und nicht die der Linie.
+  Ihre Dauer wird deshalb aufgelöst (`:minuten` wie bei der Spanne), damit er
+  sie vorfindet und nicht neu parsen muss.
 
   ## Was die Linie NICHT tut
 
@@ -283,6 +300,7 @@ defmodule Worker.Timeline.Linie do
   # aufgeräumt) — nur die vier bekannten Formen.
   defp safe_atom("zeitpunkt"), do: :zeitpunkt
   defp safe_atom("spanne"), do: :spanne
+  defp safe_atom("frist"), do: :frist
   defp safe_atom("ordnung"), do: :ordnung
   defp safe_atom("geloest"), do: :geloest
   defp safe_atom(_), do: :unbekannt

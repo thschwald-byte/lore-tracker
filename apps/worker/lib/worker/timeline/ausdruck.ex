@@ -184,7 +184,9 @@ defmodule Worker.Timeline.Ausdruck do
     end
   end
 
-  def aufloesen(%{art: art} = a, cal) when art in [:spanne, "spanne"] do
+  # Eine Frist trägt dieselbe Rechnung wie eine Spanne — nur zeigt sie nach
+  # vorn. Die Linie nutzt die Zahl nicht; der Chronik-Jack wird sie nutzen.
+  def aufloesen(%{art: art} = a, cal) when art in [:spanne, "spanne", :frist, "frist"] do
     case Parser.parse(cal, to_string(Map.get(a, :wert, ""))) do
       {:ok, %{laenge: {menge, einheit}}} when is_integer(menge) ->
         Map.put(a, :minuten, minuten(menge, einheit))

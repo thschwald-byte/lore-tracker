@@ -532,6 +532,19 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     # Der Halbtag gehört der Kette — ausser er steht da.
     assert text =~ "halbtag"
 
+    # Weltgeschichte ist Spielwelt und bekommt einen Anker — samt der Folge,
+    # dass die Zeile dorthin verschoben gehört (Maintainer, 19.09.2026).
+    assert text =~ "Erzählte Weltgeschichte gehört auf die Linie"
+    assert text =~ "verschieb"
+
+    # Die Frist zeigt nach vorn und verschiebt nichts.
+    assert text =~ "`frist`"
+
+    # Wie viel Tischgespräch gelöst werden MUSS — die Regellücke, an der das
+    # Modell im dritten Lauf rang („do I need to explicitly loesen every line
+    # of table talk? … that's a huge number of lines").
+    assert text =~ "Du musst nicht jede Zeile Tischgespräch lösen"
+
     # Der Rückblick am Sitzungsanfang ist ein Ritual, kein Einzelfall — und
     # der bösartige Fall steht dabei: Die neue Sitzung begänne sonst vor dem
     # Ende der vorigen (dave, 19.09.2026).

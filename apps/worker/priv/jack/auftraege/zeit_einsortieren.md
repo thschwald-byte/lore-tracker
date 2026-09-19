@@ -17,6 +17,10 @@ Deine Arbeit sind die **Abweichungen und die Anker**:
   marschiert“, „eine halbe Stunde später“. Ohne Spannen steht die Linie
   still: Zwischen zwei genannten Uhrzeiten liegen oft Stunden Spielzeit, die
   niemand als Uhrzeit ausspricht.
+- **`frist`** — hier ist Zeit *angekündigt*. „Die Verhandlungen dauern noch
+  eine Woche“, „in zwei Stunden kommt der Kurier“. Sie verschiebt nichts: Die
+  Zeit steht noch bevor. Festgehalten wird sie trotzdem — sagt später jemand
+  „die Verhandlungen sind vorbei“, ergibt sich aus beidem eine Spanne.
 - **`verschieben`** — hier steht etwas an der falschen Stelle. Ein Rückblick
   liegt in der **Vergangenheit**, auch wenn er mitten in der Sitzung erzählt
   wird; eine Ankündigung in der Zukunft.
@@ -73,6 +77,26 @@ benutzen“ sagt, wie lange etwas *dauert*, nicht, wann es *geschieht*. Die
 Restzeit einer bestimmten Figur an einer bestimmten Stelle dagegen schon
 („mir bleiben noch fünf Minuten“).
 
+## Erzählte Weltgeschichte gehört auf die Linie
+
+Wenn die Spielleitung erzählt, dass im Jahr 2011 die Drachen erwachten oder
+die Seuche 2010 ausbrach, ist das **Spielwelt** — und es bekommt einen Anker.
+Das ist kein Tischgespräch: Es sind Ereignisse der erzählten Welt, nur eben
+lange vor der Handlung.
+
+**Und weil sie lange davor liegen, gehört die Zeile auch dorthin.** Setz den
+Anker und **verschieb** die Äußerung an ihren Platz in der Vergangenheit —
+genauso wie einen Rückblick der Gruppe. Sonst behauptet die Linie, im Jahr
+2011 sei mitten in der Sitzung gewesen.
+
+Die Grenze zum Rauschen ist die Welt, nicht das Alter: „Die Rams sind vor
+vier Jahren hingegangen“ ist **unsere** Welt und fliegt raus; „die
+Konzernkriege 2070“ ist die Spielwelt und bleibt.
+
+Ein reiner Zeitraum ohne Ereignis („zwischen 2055 und 2065 haben wir die
+Charaktere gespielt“) ist dagegen keiner: Er nennt keinen Punkt, an dem etwas
+geschieht.
+
 ## Die Antwort steht selten neben der Frage
 
 Eine Zeitangabe ist oft die Antwort auf eine Frage, und die Frage steht
@@ -92,6 +116,20 @@ sieht so aus:
                                              die Restwirkdauer eines Mittels
 [1106]  „… dann wird es jetzt so kurz nach zwölf sein.“   ← DAS ist die Antwort
 ```
+
+## Wie viel Tischgespräch du lösen musst
+
+**Du musst nicht jede Zeile Tischgespräch lösen.** `fertig()` verlangt, dass
+du jede Zeile **gelesen** hast — nicht, dass du jede entschieden hast. Eine
+ungelöste Zeile steht an ihrer Erzählposition, und das ist für Tischgespräch
+zwischen zwei Szenen völlig richtig: Es wurde ja dort gesprochen.
+
+`loesen` lohnt sich, wo eine Zeile die Rechnung **stören** würde — wo eine
+Zahl wie eine Zeit aussieht, wo Smalltalk über unsere Welt eine Jahreszahl
+nennt, wo eine Wirkdauer nach einer Spanne aussieht. Dafür ist es da.
+
+Und es nimmt eine **Liste**: Ein zusammenhängender Abschnitt Regelgespräch ist
+ein Aufruf, nicht dreißig.
 
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 

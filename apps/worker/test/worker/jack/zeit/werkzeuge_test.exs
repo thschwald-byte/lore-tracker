@@ -80,7 +80,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   defp beispiel("linie"), do: %{}
   defp beispiel(n) when n in ~w(offen zahlen fertig hilfe), do: %{}
 
-  defp beispiel(n) when n in ~w(zeitpunkt spanne),
+  defp beispiel(n) when n in ~w(zeitpunkt spanne frist),
     do: %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"}
 
   defp beispiel(n) when n in ~w(dazu ersetzen),
@@ -341,6 +341,51 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
       assert antwort =~ "Spanne"
       assert Stand.zahlen(stand(h)).anker == 2
+    end
+  end
+
+  describe "die Frist zeigt nach vorn" do
+    test "sie wird gesetzt und sagt, dass sie nichts verschiebt" do
+      h = halter()
+
+      antwort =
+        ruf(h, "frist", %{
+          "zeilen" => [3],
+          "wert" => "noch eine Woche",
+          "welt" => "spielwelt",
+          "beleg" => "die Verhandlungen dauern noch eine Woche"
+        })
+
+      assert antwort =~ "Frist"
+      assert antwort =~ "verschiebt nichts"
+      assert Stand.zahlen(stand(h)).fristen == 1
+    end
+
+    test "sie bewegt die Linie nicht" do
+      # Der Unterschied zur Spanne: Bei der ist die Zeit vergangen, hier steht
+      # sie noch bevor. Eine Frist, die interpolierte, verschöbe alles
+      # Folgende um eine Woche.
+      h = halter()
+      ruf(h, "zeitpunkt", %{"zeilen" => [1], "wert" => "22:00", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "zeitpunkt", %{"zeilen" => [5], "wert" => "23:00", "welt" => "spielwelt", "beleg" => "b"})
+      ohne = ruf(h, "linie", %{})
+
+      ruf(h, "frist", %{"zeilen" => [3], "wert" => "noch eine Woche", "welt" => "spielwelt", "beleg" => "b"})
+      mit = ruf(h, "linie", %{})
+
+      assert ohne == mit, "eine Frist darf die gerechnete Linie nicht verändern"
+    end
+
+    test "eine Frist neben einer Spanne an derselben Zeile ist kein Konflikt" do
+      h = halter()
+      ruf(h, "spanne", %{"zeilen" => [3], "wert" => "zwei Stunden", "welt" => "spielwelt", "beleg" => "b"})
+
+      assert art(h, "frist", %{
+               "zeilen" => [3],
+               "wert" => "noch eine Woche",
+               "welt" => "spielwelt",
+               "beleg" => "b"
+             }) == :ok
     end
   end
 

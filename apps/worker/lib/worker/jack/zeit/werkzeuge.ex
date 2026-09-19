@@ -40,7 +40,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # echten Laufs, 19.09.2026). Die beiden anderen Läufe legen ihr Ergebnis in
   # Ankern ab.
   @notierend ~w(notiz notizen_lesen)
-  @setzend ~w(zeitpunkt spanne verschieben loesen dazu ersetzen konflikt zweifel)
+  @setzend ~w(zeitpunkt spanne frist verschieben loesen dazu ersetzen konflikt zweifel)
 
   @doc """
   Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Liste.
@@ -244,6 +244,33 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         ausfuehren: &w_spanne/2
       },
       %{
+        name: "frist",
+        beschreibung:
+          "Hält eine Dauer fest, die NACH VORN zeigt: „die Verhandlungen dauern " <>
+            "noch eine Woche“, „ihr habt bis Freitag“, „in zwei Stunden kommt der " <>
+            "Kurier“. Das ist keine `spanne` — bei der ist die Zeit schon " <>
+            "vergangen, hier steht sie noch bevor. Sie verschiebt deshalb nichts " <>
+            "auf der Linie; sie wird festgehalten, weil sie später gebraucht " <>
+            "wird: Wenn jemand sagt „die Verhandlungen sind vorbei“, ergibt sich " <>
+            "aus beidem eine Spanne. Eine generische Wirkdauer ist auch hier " <>
+            "KEINE Frist („eine Stunde hat man Zeit, das zu benutzen“ sagt, wie " <>
+            "lange etwas wirkt, nicht wie lange es noch dauert).",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1},
+            "wert" => %{"type" => "string"},
+            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch)},
+            "beleg" => %{"type" => "string"},
+            "zweifel" => %{"type" => "string", "minLength" => 0}
+          },
+          "required" => ~w(zeilen wert welt beleg)
+        },
+        optional: ["zweifel"],
+        wiederholung: :zaehlt,
+        ausfuehren: &w_frist/2
+      },
+      %{
         name: "verschieben",
         beschreibung:
           "Holt Zeilen aus der Erzählreihenfolge heraus und setzt sie vor oder " <>
@@ -425,6 +452,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   defp w_zeitpunkt(s, f), do: anker_setzen(s, f, :zeitpunkt, nil)
   defp w_spanne(s, f), do: anker_setzen(s, f, :spanne, nil)
+  defp w_frist(s, f), do: anker_setzen(s, f, :frist, nil)
 
   defp w_dazu(s, f), do: anker_setzen(s, f, art_von(f), {:dazu, f["kennung"]})
   defp w_ersetzen(s, f), do: anker_setzen(s, f, art_von(f), {:ersetzen, f["kennung"]})
@@ -635,6 +663,16 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
     end
   end
 
+  defp gelesen_hinweis(%{art: :frist} = a, _s) do
+    dauer =
+      case a[:minuten] do
+        m when is_integer(m) -> "Das sind #{m} Minuten. "
+        _ -> ""
+      end
+
+    dauer <> "Sie verschiebt nichts auf der Linie — sie wartet auf ihr Ende. "
+  end
+
   defp gelesen_hinweis(_a, _s), do: ""
 
   defp uhr(m) do
@@ -651,6 +689,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   defp art_wort(:zeitpunkt), do: "Zeitpunkt"
   defp art_wort(:spanne), do: "Spanne"
+  defp art_wort(:frist), do: "Frist"
   defp art_wort(x), do: to_string(x)
 
   # Jede Antwort eines setzenden Werkzeugs nennt den Reststand — sonst muss

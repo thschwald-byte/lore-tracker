@@ -275,6 +275,7 @@ defmodule Worker.Jack.Zeit.Stand do
       anker: length(aktiv),
       zeitpunkte: zaehle(aktiv, "zeitpunkt"),
       spannen: zaehle(aktiv, "spanne"),
+      fristen: zaehle(aktiv, "frist"),
       verschiebungen: zaehle(aktiv, "ordnung"),
       geloest: map_size(s.anker) - length(aktiv),
       konflikte: length(s.konflikte)
@@ -303,6 +304,7 @@ defmodule Worker.Jack.Zeit.Stand do
       "anker" => z.anker,
       "zeitpunkte" => z.zeitpunkte,
       "spannen" => z.spannen,
+      "fristen" => z.fristen,
       "verschiebungen" => z.verschiebungen,
       "geloest" => z.geloest,
       "konflikte" => z.konflikte,
