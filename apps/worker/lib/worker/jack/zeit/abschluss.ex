@@ -71,7 +71,7 @@ defmodule Worker.Jack.Zeit.Abschluss do
     offen =
       s
       |> befunde()
-      |> Enum.reject(&MapSet.member?(s.gesehen, &1.anker_id))
+      |> Enum.reject(&MapSet.member?(s.gesehen, &1.id))
 
     case offen do
       [] ->

@@ -22,7 +22,7 @@ defmodule Worker.Jack.Zeit.Lesen do
   @fenster 80
 
   @doc false
-  def werkzeuge(%Stand{}) do
+  def werkzeuge(%Stand{} = s) do
     [
       %{
         name: "mitschnitt",
@@ -61,7 +61,9 @@ defmodule Worker.Jack.Zeit.Lesen do
             "zu zweifeln. Und welche " <>
             "Widersprüche die Rechnung findet. Nutz das, um dein Ergebnis zu " <>
             "prüfen: Ein einzelner Anker kann für sich richtig sein und die Reihe " <>
-            "trotzdem falsch.",
+            "trotzdem falsch. Die Befunde kommen in Portionen: Du siehst die, " <>
+            "die du noch nicht angesehen hast — ruf linie() erneut, bis keine " <>
+            "weiteren mehr gemeldet werden.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -74,16 +76,12 @@ defmodule Worker.Jack.Zeit.Lesen do
         },
         optional: ["ab", "anzahl"],
         wiederholung: :bis_aenderung,
+        wiederholung_merkmal: fn %Stand{} = st, _args -> gesehene_befunde(st) end,
         ausfuehren: &w_linie/2
       },
       %{
         name: "offen",
-        beschreibung:
-          "Nennt, was fertig() noch im Weg steht: ungelesene Zeilen, Zeilen ohne " <>
-            "Einordnung, Tischgespräch das noch auf der Linie liegt, " <>
-            "Verschiebungen ohne auflösbares Ziel — jeweils als Bereiche " <>
-            "(„1–60, 501–899“). Frag das, statt zu raten — es ist billiger als " <>
-            "ein abgelehntes fertig().",
+        beschreibung: offen_text(s.lauf),
         parameter: %{"type" => "object", "properties" => %{}, "required" => []},
         wiederholung: :bis_aenderung,
         ausfuehren: &w_offen/2
@@ -101,6 +99,31 @@ defmodule Worker.Jack.Zeit.Lesen do
       }
     ]
   end
+
+  # **`offen()` nennt, wogegen DIESER Lauf geprüft wird** — die Antwort tut
+  # es ohnehin (`Abschluss.hindernisse/1` hat eine eigene Klausel je Lauf),
+  # aber wer die Beschreibung liest, soll nicht erst einen Aufruf brauchen,
+  # um das zu erfahren.
+  defp offen_text(:pruefen),
+    do:
+      "Nennt, was fertig() noch im Weg steht — in diesem Lauf sind das die " <>
+        "BEFUNDE der Rechnung, die du noch nicht angesehen hast, dazu " <>
+        "Tischgespräch auf der Linie und Verschiebungen ohne auflösbares Ziel. " <>
+        "Lesen und Einordnen stehen schon; danach wird hier nicht mehr gefragt. " <>
+        "Frag das, statt zu raten — es ist billiger als ein abgelehntes fertig()."
+
+  defp offen_text(:gedaechtnis),
+    do:
+      "Nennt, was fertig() noch im Weg steht — in diesem Lauf die ungelesenen " <>
+        "Zeilen, als Bereiche („1–60, 501–899“). Frag das, statt zu raten."
+
+  defp offen_text(_lauf),
+    do:
+      "Nennt, was fertig() noch im Weg steht: ungelesene Zeilen, Zeilen ohne " <>
+        "Einordnung, Tischgespräch das noch auf der Linie liegt, " <>
+        "Verschiebungen ohne auflösbares Ziel — jeweils als Bereiche " <>
+        "(„1–60, 501–899“). Frag das, statt zu raten — es ist billiger als " <>
+        "ein abgelehntes fertig()."
 
   defp w_mitschnitt(%Stand{} = s, f) do
     ab = max(f["ab"] || 1, 1)
@@ -152,14 +175,34 @@ defmodule Worker.Jack.Zeit.Lesen do
     anzahl = min(f["anzahl"] || 40, 40)
     ausschnitt = linie.reihe |> Enum.drop(ab - 1) |> Enum.take(anzahl)
 
-    # **Wer die Linie samt Befunden liest, hat sie gesehen** — das ist die
-    # Schranke des Prüf-Laufs (#1247). Die Befunde stehen unter dem
-    # Ausschnitt, also gelten sie mit diesem Aufruf als angesehen; was er
-    # daraus macht, ist seine Entscheidung und nicht Gegenstand der Schranke.
-    s = Stand.gesehen(s, Enum.map(linie.befunde, & &1.anker_id))
+    # **Gezeigt werden die NOCH NICHT angesehenen Befunde zuerst, und nur
+    # die gezeigten gelten als angesehen** (#1247). Der erste Wurf hakte mit
+    # einem einzigen Aufruf alle ab — dann wäre die Schranke des Prüf-Laufs
+    # erfüllt, ohne dass er einen einzigen Befund gelesen hätte, sobald ihre
+    # Zahl über das hinausgeht, was in eine Antwort passt. Andersherum wäre
+    # eine ungedeckelte Liste bei Dutzenden Befunden keine Auskunft mehr.
+    #
+    # Dass eine Wiederholung dabei nicht in die Sperre läuft, trägt
+    # `wiederholung_merkmal` (Muster der Suchen, #1210): Solange ein
+    # weiterer Aufruf neue Befunde zeigt, ist es kein „gleicher Aufruf".
+    zeigen = befunde_zum_zeigen(s, linie)
+    s = Stand.gesehen(s, Enum.map(zeigen, & &1.id))
 
-    {s, {:ok, linien_text(s, linie, ausschnitt, ab)}}
+    {s, {:ok, linien_text(s, linie, ausschnitt, ab, zeigen, length(linie.befunde))}}
   end
+
+  @befund_deckel 15
+
+  @doc false
+  def befunde_zum_zeigen(%Stand{} = s, linie) do
+    case Enum.reject(linie.befunde, &MapSet.member?(s.gesehen, &1.id)) do
+      [] -> Enum.take(linie.befunde, @befund_deckel)
+      offen -> Enum.take(offen, @befund_deckel)
+    end
+  end
+
+  @doc false
+  def gesehene_befunde(%Stand{} = s), do: MapSet.size(s.gesehen)
 
   defp w_offen(%Stand{} = s, _f) do
     case Abschluss.hindernisse(s) do
@@ -186,7 +229,7 @@ defmodule Worker.Jack.Zeit.Lesen do
     Enum.map(m, &%{utterance_id: &1.utterance_id, session_nr: 1, pos: &1.nr})
   end
 
-  defp linien_text(s, linie, ausschnitt, ab) do
+  defp linien_text(s, linie, ausschnitt, ab, zeigen, gesamt) do
     nach_id = Map.new(s.mitschnitt, &{&1.utterance_id, &1})
 
     zeilen =
@@ -197,10 +240,22 @@ defmodule Worker.Jack.Zeit.Lesen do
         "#{nr}  #{zeit(e, s.kalender)}  #{text}"
       end)
 
+    offen_danach = gesamt - MapSet.size(s.gesehen)
+
     befunde =
-      case linie.befunde do
-        [] -> ""
-        b -> "\n\nBefunde:\n" <> Enum.map_join(b, "\n", &("- " <> &1.text))
+      case zeigen do
+        [] ->
+          ""
+
+        b ->
+          rest =
+            cond do
+              offen_danach > 0 -> "\n(#{offen_danach} weitere — ruf linie() noch einmal.)"
+              gesamt > length(b) -> "\n(#{gesamt} Befunde insgesamt, alle angesehen.)"
+              true -> ""
+            end
+
+          "\n\nBefunde:\n" <> Enum.map_join(b, "\n", &("- " <> &1.text)) <> rest
       end
 
     geloest =

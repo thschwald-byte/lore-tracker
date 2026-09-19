@@ -928,11 +928,33 @@ defmodule Worker.Timeline.Linie do
   """
   @spec pruefen([eintrag()], [stelle()], [anker()]) :: [map()]
   def pruefen(eintraege, reihe, anker) do
-    ohne_ziel(anker, reihe) ++
-      spannen_ueberlauf(eintraege, reihe, anker) ++
-      uneinige_zeitpunkte(reihe, anker) ++
-      grosse_spruenge(reihe, anker) ++
-      zweifel(anker)
+    (ohne_ziel(anker, reihe) ++
+       spannen_ueberlauf(eintraege, reihe, anker) ++
+       uneinige_zeitpunkte(reihe, anker) ++
+       grosse_spruenge(reihe, anker) ++
+       zweifel(anker))
+    |> Enum.map(&Map.put(&1, :id, kennung(&1)))
+  end
+
+  @doc """
+  Die Kennung eines Befundes — **jeder hat eine, auch der ohne Anker**.
+
+  Ein Befund hängt nicht immer an einem Anker: Der Spannen-Überlauf gilt der
+  Strecke *zwischen* zweien und trägt `anker_id: nil`. Wer solche Befunde
+  über die Anker-ID abhakt, hakt sie nie ab — und eine Schranke, die sie
+  verlangt (die des Prüf-Laufs, #1247), wäre unter keinen Umständen zu
+  erfüllen. Genau diese Klasse hat beim Chronik-Jack 28 von 51 Runden
+  gekostet (#1211).
+
+  Deshalb entsteht die Kennung **hier**, an der einen Stelle, an der Befunde
+  gebaut werden, und nicht bei jedem Leser neu.
+  """
+  @spec kennung(map()) :: String.t()
+  def kennung(%{anker_id: id}) when is_binary(id) and id != "", do: id
+
+  def kennung(befund) do
+    roh = "#{Map.get(befund, :art)}|#{Map.get(befund, :text)}"
+    "b_" <> (:crypto.hash(:sha, roh) |> Base.encode16(case: :lower) |> String.slice(0, 16))
   end
 
   # s. `sprung?/3` — jeder grosse Vorwärtssprung ist eine Annahme und steht

@@ -4,6 +4,17 @@ Die Äußerungen sind eingeordnet. Dieser Lauf hat **dieselben Werkzeuge**, aber
 einen anderen Gegenstand: nicht mehr den Mitschnitt, sondern die **Linie**, die
 daraus entstanden ist.
 
+## Die Reihenfolge, in der es zählt
+
+Wenn zwei Regeln sich zu widersprechen scheinen, gilt die weiter oben.
+
+1. **Nichts erfinden.** Auch hier gilt: kein Anker ohne Beleg im Text.
+2. **Was ein Mensch festgelegt hat, bleibt.** Dagegen hilft nur `konflikt`.
+3. **Jeden Befund ansehen** — das ist die Arbeit dieses Laufs.
+4. **Nur ändern, was falsch ist.** Was stimmt, bleibt unangetastet.
+5. **Im Zweifel `zweifel`**, nie raten.
+6. **`fertig()` erst, wenn `offen()` nichts mehr nennt.**
+
 ## Warum es diesen Lauf gibt
 
 Beim Einordnen siehst du eine Äußerung nach der anderen. Jede einzelne
@@ -65,6 +76,17 @@ sie gesagt wurden. Abgesegnete Stellen, die niemand überschreibt. Und
 
 ## Der Abschluss
 
-`fertig()` verlangt dieselbe Leseabdeckung wie der vorige Lauf. Was fehlt,
-sagt dir `offen()`; den Stand nennt `zahlen()`. `hilfe()` erklärt jedes
-Werkzeug.
+**Dieser Lauf verlangt keine neue Leseabdeckung.** Was der vorige Lauf
+gelesen und eingeordnet hat, steht — du erbst es. `fertig()` verlangt
+dreierlei:
+
+1. **Jeden Befund einmal angesehen.** Angesehen heisst: die Stelle
+   angefasst, mit `linie()`, `mitschnitt()` oder einem setzenden Werkzeug.
+   Bestätigen musst du nichts; ein Befund, den du dir ansiehst und für
+   richtig hältst, ist damit erledigt.
+2. **Kein Tischgespräch auf der Linie.**
+3. **Keine Verschiebung ohne auflösbares Ziel.**
+
+Was noch fehlt, sagt dir `offen()` — hier sind das die ungesehenen Befunde,
+nicht mehr die Zeilen. Den Stand nennt `zahlen()`, und `hilfe()` erklärt
+jedes Werkzeug samt seinen Feldern.
