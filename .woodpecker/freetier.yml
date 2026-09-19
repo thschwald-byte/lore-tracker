@@ -21,3 +21,13 @@ steps:
     commands:
       - apk add --no-cache curl git
       - sh tools/ci/freetier_check.sh
+
+  # Issue #1224: läuft in Prod wirklich der master-Stand? Eigener Schritt statt
+  # einer Erweiterung von freetier_check.sh — die beiden prüfen verschiedene
+  # Dinge (Free-Tier-Frische gegen Deploy-Drift) und sollen getrennt rot
+  # werden, damit die Meldung sagt, was fehlt.
+  deploy_drift:
+    image: alpine:3.20
+    commands:
+      - apk add --no-cache curl git
+      - sh tools/ci/deploy_drift_check.sh

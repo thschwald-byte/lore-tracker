@@ -78,6 +78,9 @@ defmodule HubWeb.Router do
   scope "/", HubWeb do
     pipe_through(:public_api)
     get("/health/recording", HealthController, :recording)
+    # Issue #1224: die deployte Commit-SHA, damit ein Cron-Lauf ohne Secrets
+    # sehen kann, ob Prod dem master hinterherhinkt.
+    get("/health/version", HealthController, :version)
   end
 
   if Mix.env() in [:dev, :test] do

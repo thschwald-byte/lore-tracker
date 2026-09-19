@@ -200,7 +200,19 @@ steps:
       # Truth). Bei Divergenz (alter/manueller Deploy-Stand) würde ein normaler
       # Push mit "rejected (fetch first)" scheitern — Standard bei PaaS-Deploys.
       - git push --force gigalixir HEAD:refs/heads/master
-    depends_on: [compile, test]
+    # Issue #1224: „wenn rot, dann stop" (Tom, 17.09.2026). Vorher hingen hier
+    # nur [compile, test] — credo, dialyzer und coverage konnten rot sein,
+    # während deployt wurde, und `deploy_verify` wurde danach übersprungen
+    # (Woodpecker überspringt nach einem Fehlschlag alle noch nicht
+    # gestarteten Schritte, unabhängig von `depends_on`). Der Schutz griff
+    # damit genau dann nicht, wenn er gebraucht wurde: real am 17.09. in Lauf
+    # 1053, der bei rotem `coverage` deployte und die Verifikation übersprang.
+    #
+    # Der Preis ist benannt und bewusst bezahlt: der Deploy wartet jetzt auf
+    # die langsameren Gates, die Latenz steigt entsprechend. Die frühere
+    # Begründung am `dialyzer`-Schritt („gatet den deploy NICHT → Deploy-
+    # Latenz unberührt") ist damit überholt.
+    depends_on: [compile, test, credo, dialyzer, coverage]
 
   # Issue #876: Post-Deploy-Verify (Free-Tier-Guard). Der deploy-Step endet mit
   # dem git-push — Buildpack-Build + Pod-Start passieren DANACH, unbeobachtet.

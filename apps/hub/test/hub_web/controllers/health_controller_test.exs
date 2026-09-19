@@ -46,4 +46,41 @@ defmodule HubWeb.HealthControllerTest do
     conn = get(conn, "/health/recording")
     assert json_response(conn, 200) == %{"active_recording" => true}
   end
+
+  describe "GET /health/version (Issue #1224)" do
+    test "nennt die Commit-SHA des laufenden Stands", %{conn: conn} do
+      antwort = conn |> get("/health/version") |> json_response(200)
+
+      assert %{"sha" => sha, "vsn" => vsn, "dirty" => dirty} = antwort
+      assert is_binary(sha) and sha != ""
+      assert is_binary(vsn) and vsn != ""
+      assert is_boolean(dirty)
+
+      # Der Cron-Check vergleicht per Präfix gegen `git rev-parse HEAD` — eine
+      # SHA, die dort nicht passt, macht den Wächter wertlos, ohne dass etwas
+      # rot wird. Deshalb hier gegen dieselbe Quelle geprüft.
+      assert sha == Hub.Version.current().sha
+    end
+
+    test "liefert NUR diese drei Felder", %{conn: conn} do
+      # Der Endpunkt ist unauthentifiziert und öffentlich erreichbar. Eine SHA
+      # eines offenen AGPL-Repos verrät nichts; alles Weitere (Umgebung,
+      # Pfade, Zählwerte) hätte dort nichts zu suchen — dieselbe Zurückhaltung
+      # wie bei `/health/recording`, das bewusst nur ein Boolean liefert.
+      antwort = conn |> get("/health/version") |> json_response(200)
+      assert Map.keys(antwort) |> Enum.sort() == ["dirty", "sha", "vsn"]
+    end
+
+    test "braucht keine Anmeldung" do
+      # Ohne die `:public_api`-Pipeline liefe der Aufruf in den Login-Redirect,
+      # und der Cron-Lauf sähe HTML statt JSON — genau die Falle, die beim
+      # Woodpecker-Log-Endpunkt einen halben Tag gekostet hat (CLAUDE.md).
+      antwort =
+        Phoenix.ConnTest.build_conn()
+        |> get("/health/version")
+        |> json_response(200)
+
+      assert is_binary(antwort["sha"])
+    end
+  end
 end
