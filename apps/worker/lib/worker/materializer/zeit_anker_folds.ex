@@ -20,6 +20,20 @@ defmodule Worker.Materializer.ZeitAnkerFolds do
   `art: "geloest"`; ein Delete würde bei vertauschter Zustellreihenfolge
   zwischen zwei Workern divergieren (#698-Klasse: Delete gegen Wiederkehr).
 
+  **Geschützt ist die ADRESSE, nicht die Stelle.** Das ist der Punkt, an dem
+  die Zusage unten leicht stärker gelesen wird, als sie ist: Die `anker_id`
+  geht über `utterance_ids` **und Art und Wert**, eine Korrektur ist deshalb
+  ein **zweites Objekt** und keine Überschreibung. „22:45" (von Hand) und
+  „4:11" (von Jack) an derselben Utterance haben verschiedene Adressen, dieser
+  Fold sieht sie nie gegeneinander, und beide Zeilen stehen zu Recht
+  nebeneinander — keine überschreibt die andere.
+
+  Welcher von beiden an dieser **Stelle** gilt, entscheidet der Leser:
+  `Worker.Timeline.Linie.feste_punkte/2` wählt zweistufig, erst abgesegnet,
+  dann früher. Ohne diese zweite Stufe gewänne dort der frühere Wert — und
+  damit im Ticket-Fall die ASR-Verstümmelung gegen die menschliche
+  Festlegung. (Review-Fund, 19.09.2026.)
+
   **Die menschliche Absegnung ist hart.** Trägt die bestehende Row ein
   `abgesegnet_am`, gewinnt sie gegen jeden Schreiber **ohne** Absegnung —
   unabhängig von der `event_id`. Ein späterer Jack-Lauf kann eine kuratierte

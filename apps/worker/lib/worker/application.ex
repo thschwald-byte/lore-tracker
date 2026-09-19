@@ -73,6 +73,20 @@ defmodule Worker.Application do
             id: Worker.Jack.Sicht,
             start: {Worker.Jack.Sicht, :betrieb, [Application.get_env(:worker, :jack_sicht_port)]}
           },
+          # #1247: die Laufsicht des Zeit-Jack, eine Stelle über der von Jack
+          # (Maintainer, 19.09.2026). Eigener Prozess, eigener Port, eigener
+          # Name — zwei Läufe teilen sich sonst eine Seite, und wer den einen
+          # beobachtet, verliert den anderen. Dieselbe Zurückhaltung beim
+          # Start: ohne Port kein Prozess, ein belegter Port ist eine Warnung.
+          %{
+            id: Worker.Jack.Zeit.Sicht,
+            start:
+              {Worker.Jack.Sicht, :betrieb,
+               [
+                 Application.get_env(:worker, :zeit_sicht_port),
+                 [name: Worker.Jack.Zeit.Sicht, titel: "Zeit-Laufsicht"]
+               ]}
+          },
           # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
           # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
           # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse

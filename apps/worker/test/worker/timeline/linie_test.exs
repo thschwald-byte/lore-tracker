@@ -321,6 +321,52 @@ defmodule Worker.Timeline.LinieTest do
   end
 
   describe "Absegnung" do
+    test "der abgesegnete Zeitpunkt gewinnt gegen den FRÜHEREN maschinellen" do
+      # Der Fall aus dem Ticket, und der Grund, warum die Auswahl zweistufig
+      # ist: Die Spracherkennung verstand „4:11", gesagt war „22:45". Ein
+      # Mensch segnet 22:45 ab, ein späterer Lauf trägt 4:11 ein.
+      #
+      # Beide haben VERSCHIEDENE Adressen (der Wert geht in die anker_id ein),
+      # der Fold sieht sie also nie gegeneinander — entschieden wird hier. Nach
+      # reiner Minutenwahl gewänne 4:11, weil es früher ist: die Verstümmelung
+      # gegen die Festlegung, deterministisch.
+      a = [
+        Map.put(
+          anker(:zeitpunkt, ["u11"], %{minute: 22 * 60 + 45, wert: "22:45",
+                                        abgesegnet_am: "2026-09-19"}),
+          :anker_id,
+          "z_mensch"
+        ),
+        Map.put(
+          anker(:zeitpunkt, ["u11"], %{minute: 4 * 60 + 11, wert: "4:11"}),
+          :anker_id,
+          "z_jack"
+        )
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+
+      assert linie.nach_utterance["u11"].minute == 22 * 60 + 45,
+             "die menschliche Festlegung muss gewinnen, auch gegen den früheren Wert"
+
+      # Und der Widerspruch bleibt sichtbar — die Kuration ist eine
+      # Entscheidung, kein Verschweigen.
+      befund = Enum.find(linie.befunde, &(&1.art == :zeitpunkte_uneinig))
+      assert befund
+      assert befund.text =~ "abgesegnete"
+    end
+
+    test "zwei abgesegnete untereinander: wieder der frühere" do
+      a = [
+        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 600, abgesegnet_am: "2026-09-18"}),
+                :anker_id, "z_a"),
+        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 900, abgesegnet_am: "2026-09-19"}),
+                :anker_id, "z_b")
+      ]
+
+      assert Linie.bauen(stellen(), a).nach_utterance["u11"].minute == 600
+    end
+
     test "eine abgesegnete Stelle ist als solche erkennbar" do
       a = [
         anker(:zeitpunkt, ["u11"], %{minute: 0, abgesegnet_am: "2026-09-19T10:00:00Z"}),

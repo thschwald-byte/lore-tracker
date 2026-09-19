@@ -368,11 +368,27 @@ defmodule Worker.Timeline.Linie do
   # Ein Zeitpunkt-Anker gilt an der FRÜHESTEN Stelle seiner Menge: er wird
   # dort gesagt, und alles danach liegt danach.
   #
-  # Zwei Zeitpunkte an derselben Stelle sind möglich (an einer Äußerung dürfen
-  # mehrere Anker hängen). Für die Rechnung muss einer gelten; genommen wird
-  # der FRÜHERE, und der Widerspruch ist ein Befund (`zeitpunkte_uneinig`) —
-  # nicht ein stilles Gewinnen nach Listenreihenfolge, das je nach
-  # Zustellreihenfolge anders ausfiele.
+  # Zwei Zeitpunkte an derselben Stelle sind möglich (an einer Utterance dürfen
+  # mehrere Anker hängen). Für die Rechnung muss einer gelten; gewählt wird
+  # **zweistufig: erst abgesegnet, dann früher**, und der Widerspruch ist ein
+  # Befund (`zeitpunkte_uneinig`) — nicht ein stilles Gewinnen nach
+  # Listenreihenfolge, das je nach Zustellreihenfolge anders ausfiele.
+  #
+  # **Warum die Absegnung HIER entschieden wird und nicht im Fold.** Der Fold
+  # schützt eine **Adresse**, und die ist `hash(utterance_ids + art + wert)` —
+  # der Wert geht ein. Eine Korrektur ist damit ein **zweites Objekt**, keine
+  # Überschreibung: „22:45" (von Hand) und „4:11" (von Jack) an derselben
+  # Stelle haben verschiedene Adressen, der Fold sieht sie nie gegeneinander,
+  # und beide Zeilen stehen zu Recht nebeneinander. Entschieden wird die
+  # **Stelle** erst hier.
+  #
+  # Ohne diese Stufe verlöre der Mensch, und zwar deterministisch: Der Fall
+  # aus dem Ticket ist eine Spracherkennung, die „4:11" verstand, wo „22:45"
+  # gesagt war. 4:11 ist früher — nach reiner Minutenwahl gewönne die
+  # Verstümmelung gegen die Festlegung. Gefunden im Review (19.09.2026), nicht
+  # von einem Test: der Fold-Test fuhr beide Ereignisse auf derselben Adresse
+  # und prüfte damit den Fall, in dem die Regel greift, nicht den, in dem sie
+  # umgangen wird.
   defp feste_punkte(reihe, anker) do
     index = index_nach_utterance(reihe)
 
@@ -384,15 +400,21 @@ defmodule Worker.Timeline.Linie do
         not is_nil(i),
         reduce: %{} do
       acc ->
-        neu = %{minute: minute, anker_id: Map.get(a, :anker_id)}
+        neu = %{minute: minute, anker_id: Map.get(a, :anker_id), abgesegnet?: abgesegnet?(a)}
 
         case acc[i] do
           nil -> Map.put(acc, i, neu)
-          %{minute: alt} when alt <= minute -> acc
-          _ -> Map.put(acc, i, neu)
+          alt -> if gewinnt?(neu, alt), do: Map.put(acc, i, neu), else: acc
         end
     end
   end
+
+  # Erst die menschliche Festlegung, dann der frühere Wert. Zwei abgesegnete
+  # untereinander entscheidet wieder die Minute — beide sind gleich viel wert,
+  # und der Widerspruch steht ohnehin als Befund da.
+  defp gewinnt?(%{abgesegnet?: true}, %{abgesegnet?: false}), do: true
+  defp gewinnt?(%{abgesegnet?: false}, %{abgesegnet?: true}), do: false
+  defp gewinnt?(%{minute: neu}, %{minute: alt}), do: neu < alt
 
   # Die Stellen, an denen sich zwei Zeitpunkt-Anker widersprechen.
   defp uneinige_zeitpunkte(reihe, anker) do
@@ -406,13 +428,15 @@ defmodule Worker.Timeline.Linie do
       minuten = gruppe |> Enum.map(&Map.get(&1, :minute)) |> Enum.uniq()
 
       if length(minuten) > 1 do
+        wer = if Enum.any?(gruppe, &abgesegnet?/1), do: "der abgesegnete", else: "der frühere"
+
         [
           %{
             art: :zeitpunkte_uneinig,
             anker_id: gruppe |> Enum.map(&Map.get(&1, :anker_id)) |> Enum.join(", "),
             text:
               "An derselben Stelle stehen zwei verschiedene Zeitpunkte " <>
-                "(#{Enum.join(minuten, " und ")} Minuten). Gerechnet wird mit dem früheren."
+                "(#{Enum.join(minuten, " und ")} Minuten). Gerechnet wird mit #{wer}."
           }
         ]
       else
