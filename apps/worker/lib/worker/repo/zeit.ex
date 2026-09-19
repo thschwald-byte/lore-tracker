@@ -32,9 +32,12 @@ defmodule Worker.Repo.Zeit do
   ## Wo der Ausdruck zur Minute wird
 
   Ein Anker speichert den **Ausdruck**, wie er gesprochen wurde („am 15.
-  November", „zwei Stunden"). Die Minute daraus rechnet dieses Modul über
-  `Worker.Timeline.Parser` und den Kampagnen-Kalender — nicht die Linie, und
-  nicht das Modell. Der Parser hat seit #1213 keinen Leser mehr und bekommt
+  November", „zwei Stunden"). Die Minute daraus rechnet `Worker.Timeline.Ausdruck`
+  über `Worker.Timeline.Parser` und den Kampagnen-Kalender — nicht die Linie,
+  und nicht das Modell; dieses Modul reicht nur den Kalender der Kampagne
+  hinein. Die Rechnung liegt dort und nicht hier, weil der Zeit-Jack sie
+  **während** seines Laufs braucht: seine `linie()` zeigte sonst eine Reihe
+  ohne eine einzige belegte Zeit. Der Parser hat seit #1213 keinen Leser mehr und bekommt
   hier wieder einen; er typisiert den Ausdruck (`:date` gegen `:duration`),
   und genau diese Unterscheidung verhindert, dass aus „Trolle werden 50 Jahre
   alt" das Jahr 50 auf dem Zeitstrahl wird.
@@ -48,7 +51,7 @@ defmodule Worker.Repo.Zeit do
 
   alias Worker.Repo.Artifacts
   alias Worker.Schema.Mnesia, as: S
-  alias Worker.Timeline.{Linie, Parser}
+  alias Worker.Timeline.{Ausdruck, Linie}
 
   import Worker.Repo, only: [transaction: 1]
 
@@ -106,7 +109,7 @@ defmodule Worker.Repo.Zeit do
         daten
         |> Map.new(fn {k, v} -> {schluessel(k), v} end)
         |> Map.put(:anker_id, elem(row, 1))
-        |> aufloesen(cal)
+        |> Ausdruck.aufloesen(cal)
       ]
     else
       _ ->
@@ -123,50 +126,6 @@ defmodule Worker.Repo.Zeit do
               abgesegnet_am ziel richtung)
   defp schluessel(k) when k in @bekannt, do: String.to_existing_atom(k)
   defp schluessel(k), do: k
-
-  # ─── Ausdruck → Minute ──────────────────────────────────────────────
-
-  # Ein Zeitpunkt bekommt seine Minute aus dem Tageszähler des Kalenders; eine
-  # Spanne ihre Dauer aus der gemessenen Länge des Parsers. Was der Parser
-  # nicht auflöst, bleibt ohne Minute — der Anker gilt trotzdem für die
-  # Ordnung.
-  defp aufloesen(%{art: art} = a, cal) when art in [:zeitpunkt, "zeitpunkt"] do
-    case Parser.parse(cal, to_string(Map.get(a, :wert, ""))) do
-      {:ok, %{typ: :date, von: von}} when is_integer(von) ->
-        Map.put(a, :minute, von * Linie.minuten_pro_tag())
-
-      {:ok, %{typ: typ}} ->
-        Logger.debug(fn ->
-          "Zeit: Anker #{a[:anker_id]} ist als Zeitpunkt gesetzt, gelesen als #{typ} — ohne Datum"
-        end)
-
-        a
-
-      _ ->
-        a
-    end
-  end
-
-  defp aufloesen(%{art: art} = a, cal) when art in [:spanne, "spanne"] do
-    case Parser.parse(cal, to_string(Map.get(a, :wert, ""))) do
-      {:ok, %{laenge: {menge, einheit}}} when is_integer(menge) ->
-        Map.put(a, :minuten, minuten(menge, einheit))
-
-      _ ->
-        a
-    end
-  end
-
-  defp aufloesen(a, _cal), do: a
-
-  defp minuten(menge, :second), do: max(div(menge, 60), 0)
-  defp minuten(menge, :minute), do: menge
-  defp minuten(menge, :hour), do: menge * 60
-  defp minuten(menge, :day), do: menge * Linie.minuten_pro_tag()
-  defp minuten(menge, :week), do: menge * 7 * Linie.minuten_pro_tag()
-  defp minuten(menge, :month), do: menge * 30 * Linie.minuten_pro_tag()
-  defp minuten(menge, :year), do: menge * 365 * Linie.minuten_pro_tag()
-  defp minuten(_, _), do: 0
 
   # ─── Die menschlich gesetzten Anker ─────────────────────────────────
 

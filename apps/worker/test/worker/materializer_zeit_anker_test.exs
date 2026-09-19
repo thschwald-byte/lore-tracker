@@ -31,7 +31,7 @@ defmodule Worker.MaterializerZeitAnkerTest do
     :ok
   end
 
-  defp daten(extra \\ %{}) do
+  defp daten(extra) do
     Map.merge(
       %{
         "utterance_ids" => ["u1", "u2"],

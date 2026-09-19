@@ -59,10 +59,12 @@ defmodule Worker.Jack.Zeit.Stand do
   """
 
   alias Worker.Jack.Zeit.Mitschnitt
+  alias Worker.Timeline.Calendar
 
   defstruct lauf: :gedaechtnis,
             session_id: nil,
             campaign_id: nil,
+            kalender: nil,
             mitschnitt: [],
             gelesen: MapSet.new(),
             anker: %{},
@@ -82,6 +84,7 @@ defmodule Worker.Jack.Zeit.Stand do
       mitschnitt: mitschnitt,
       session_id: opts[:session_id],
       campaign_id: opts[:campaign_id],
+      kalender: opts[:kalender] || Calendar.default(),
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{}
     }

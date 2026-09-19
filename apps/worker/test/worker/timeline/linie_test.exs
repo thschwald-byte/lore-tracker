@@ -264,6 +264,95 @@ defmodule Worker.Timeline.LinieTest do
     end
   end
 
+  describe "Uhrzeiten bekommen ihren Tag aus der Reihe" do
+    test "ohne Datum beginnt die Linie auf Tag 0 — die Abstände stimmen trotzdem" do
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 23 * 60})
+        ])
+
+      assert linie.nach_utterance["u11"].minute == 22 * 60
+      assert linie.nach_utterance["u13"].minute == 23 * 60
+      assert linie.nach_utterance["u12"].herkunft == :interpoliert
+    end
+
+    test "eine Uhrzeit erbt den Tag des Datums davor" do
+      tag = 734_372
+
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{minute: tag * 1440}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 22 * 60 + 45})
+        ])
+
+      assert linie.nach_utterance["u13"].minute == tag * 1440 + 22 * 60 + 45
+      assert Linie.tag(linie.nach_utterance["u13"]) == tag
+    end
+
+    test "Datum und Uhrzeit an DERSELBEN Stelle ergänzen sich" do
+      # „Am 15. November, so gegen 22:45" — zwei Anker an einer Äusserung.
+      # Ohne die Genauigkeitsstufe gewänne das Datum nach der Minutenregel
+      # (Mitternacht ist früher), und die einzige wirklich gesagte Uhrzeit
+      # fiele aus der Rechnung.
+      tag = 734_372
+
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{minute: tag * 1440, anker_id: "z_datum"}),
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60 + 45, anker_id: "z_uhr"})
+        ])
+
+      eintrag = linie.nach_utterance["u11"]
+      assert eintrag.minute == tag * 1440 + 22 * 60 + 45
+      assert eintrag.anker_id == "z_uhr"
+    end
+
+    test "eine zurückspringende Uhrzeit ist Mitternacht, kein Sprung rückwärts" do
+      # 23:40 → 00:20 geht eine halbe Stunde vorwärts, nicht 23 Stunden
+      # zurück.
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 23 * 60 + 40}),
+          anker(:zeitpunkt, ["u13"], %{tagesminute: 20})
+        ])
+
+      a = linie.nach_utterance["u11"].minute
+      b = linie.nach_utterance["u13"].minute
+
+      assert b > a
+      assert b - a == 40
+    end
+
+    test "eine abgesegnete Uhrzeit schlägt eine gerechnete an derselben Stelle" do
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 4 * 60 + 11, anker_id: "z_jack"}),
+          anker(:zeitpunkt, ["u11"], %{
+            tagesminute: 22 * 60 + 45,
+            anker_id: "z_mensch",
+            abgesegnet_am: "2026-09-19"
+          })
+        ])
+
+      # Der Fall aus dem Ticket: die Spracherkennung verstand „4:11", gesagt
+      # war „22:45". Nach reiner Minutenwahl gewönne die Verstümmelung.
+      assert linie.nach_utterance["u11"].anker_id == "z_mensch"
+    end
+
+    test "zwei widersprechende Uhrzeiten an einer Stelle sind ein Befund" do
+      # Nur auf `:minute` zu prüfen liesse den häufigsten Fall am Spieltisch
+      # still durchgehen.
+      linie =
+        Linie.bauen(stellen(), [
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 4 * 60 + 11, anker_id: "z_a"}),
+          anker(:zeitpunkt, ["u11"], %{tagesminute: 22 * 60 + 45, anker_id: "z_b"})
+        ])
+
+      assert Enum.any?(linie.befunde, &(&1.art == :zeitpunkte_uneinig))
+    end
+  end
+
   describe "Befunde" do
     test "Spannen, die nicht zwischen zwei Anker passen, werden gemeldet statt gestaucht" do
       a = [

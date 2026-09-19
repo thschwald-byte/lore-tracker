@@ -392,6 +392,13 @@ defmodule Worker.Timeline.Linie do
   defp feste_punkte(reihe, anker) do
     index = index_nach_utterance(reihe)
 
+    anker
+    |> datierte_punkte(index)
+    |> verankern(uhrzeit_punkte(anker, index))
+  end
+
+  # Die Punkte, die eine absolute Minute mitbringen — aus einem Datum.
+  defp datierte_punkte(anker, index) do
     for a <- anker,
         art(a) == :zeitpunkt,
         minute = Map.get(a, :minute),
@@ -399,21 +406,89 @@ defmodule Worker.Timeline.Linie do
         i = frueheste(a, index),
         not is_nil(i),
         reduce: %{} do
-      acc ->
-        neu = %{minute: minute, anker_id: Map.get(a, :anker_id), abgesegnet?: abgesegnet?(a)}
-
-        case acc[i] do
-          nil -> Map.put(acc, i, neu)
-          alt -> if gewinnt?(neu, alt), do: Map.put(acc, i, neu), else: acc
-        end
+      acc -> eintragen(acc, i, punkt(a, minute, false))
     end
   end
 
-  # Erst die menschliche Festlegung, dann der frühere Wert. Zwei abgesegnete
-  # untereinander entscheidet wieder die Minute — beide sind gleich viel wert,
-  # und der Widerspruch steht ohnehin als Befund da.
+  # Die Uhrzeiten: eine TAGESMINUTE, noch ohne Tag.
+  defp uhrzeit_punkte(anker, index) do
+    for a <- anker,
+        art(a) == :zeitpunkt,
+        tm = Map.get(a, :tagesminute),
+        is_integer(tm),
+        i = frueheste(a, index),
+        not is_nil(i),
+        into: %{},
+        do: {i, {tm, a}}
+  end
+
+  # **Eine Uhrzeit bekommt ihren Tag aus ihrer Stelle in der Reihe.** „Drei
+  # viertel elf" sagt nicht, welcher Tag; das steht im Verlauf. Genommen wird
+  # der Tag des letzten festen Punktes davor ODER AN DERSELBEN STELLE — das
+  # zweite ist der Fall „am 15. November, um 22:45": Datum und Uhrzeit sind
+  # dann zwei Anker an einer Äußerung, und die Uhrzeit erbt den Tag.
+  #
+  # **Springt die Tagesminute zurück, ist Mitternacht überschritten.** Von
+  # 23:40 auf 00:20 geht es vorwärts, nicht 23 Stunden zurück. Die Regel gilt
+  # auf der bereits VERSCHOBENEN Reihe — ein Rückblick, den Jack mit
+  # `verschieben` an seinen Platz gesetzt hat, steht dort schon richtig und
+  # erzeugt keinen falschen Tageswechsel.
+  #
+  # **Ehrliche Grenze:** Liegt vor der ersten Uhrzeit kein datierter Punkt,
+  # beginnt die Linie auf Tag 0. Sie ist dann relativ — was sie ohne Datum
+  # ohnehin ist; die Abstände stimmen, das Kalenderdatum gibt es schlicht
+  # nicht.
+  defp verankern(datierte, uhrzeiten) do
+    uhrzeiten
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.reduce(datierte, fn {i, {tm, a}}, acc ->
+      eintragen(acc, i, punkt(a, absolute_minute(tm, vorlauf(acc, i)), true))
+    end)
+  end
+
+  defp punkt(a, minute, genau?),
+    do: %{minute: minute, anker_id: Map.get(a, :anker_id), abgesegnet?: abgesegnet?(a), genau?: genau?}
+
+  defp eintragen(acc, i, neu) do
+    case acc[i] do
+      nil -> Map.put(acc, i, neu)
+      alt -> if gewinnt?(neu, alt), do: Map.put(acc, i, neu), else: acc
+    end
+  end
+
+  defp vorlauf(feste, i) do
+    feste
+    |> Enum.filter(fn {j, _} -> j <= i end)
+    |> Enum.max_by(fn {j, _} -> j end, fn -> nil end)
+    |> case do
+      {_, %{minute: m}} -> m
+      _ -> nil
+    end
+  end
+
+  defp absolute_minute(tagesminute, nil), do: tagesminute
+
+  defp absolute_minute(tagesminute, vorher) do
+    tag = Integer.floor_div(vorher, @minuten_pro_tag)
+    kandidat = tag * @minuten_pro_tag + tagesminute
+
+    if kandidat < vorher, do: kandidat + @minuten_pro_tag, else: kandidat
+  end
+
+  # Erst die menschliche Festlegung, dann die genauere Angabe, dann der
+  # frühere Wert. Zwei abgesegnete untereinander entscheidet wieder die
+  # Minute — beide sind gleich viel wert, und der Widerspruch steht ohnehin
+  # als Befund da.
+  #
+  # **Die Genauigkeit steht zwischen beiden, weil Datum und Uhrzeit sich nicht
+  # widersprechen, sondern ergänzen.** „Am 15. November" ergibt Mitternacht,
+  # „22:45" denselben Tag um 22:45 — ohne diese Stufe gewönne das Datum nach
+  # der Minutenregel (Mitternacht ist früher), und die einzige wirklich
+  # gesagte Uhrzeit fiele aus der Rechnung.
   defp gewinnt?(%{abgesegnet?: true}, %{abgesegnet?: false}), do: true
   defp gewinnt?(%{abgesegnet?: false}, %{abgesegnet?: true}), do: false
+  defp gewinnt?(%{genau?: true}, %{genau?: false}), do: true
+  defp gewinnt?(%{genau?: false}, %{genau?: true}), do: false
   defp gewinnt?(%{minute: neu}, %{minute: alt}), do: neu < alt
 
   # Die Stellen, an denen sich zwei Zeitpunkt-Anker widersprechen.
@@ -421,11 +496,11 @@ defmodule Worker.Timeline.Linie do
     index = index_nach_utterance(reihe)
 
     anker
-    |> Enum.filter(&(art(&1) == :zeitpunkt and is_integer(Map.get(&1, :minute))))
+    |> Enum.filter(&(art(&1) == :zeitpunkt and zahl_traegt?(&1)))
     |> Enum.group_by(&frueheste(&1, index))
     |> Enum.reject(fn {i, gruppe} -> is_nil(i) or length(gruppe) < 2 end)
     |> Enum.flat_map(fn {_i, gruppe} ->
-      minuten = gruppe |> Enum.map(&Map.get(&1, :minute)) |> Enum.uniq()
+      minuten = gruppe |> Enum.map(&(Map.get(&1, :minute) || Map.get(&1, :tagesminute))) |> Enum.uniq()
 
       if length(minuten) > 1 do
         wer = if Enum.any?(gruppe, &abgesegnet?/1), do: "der abgesegnete", else: "der frühere"
@@ -444,6 +519,13 @@ defmodule Worker.Timeline.Linie do
       end
     end)
   end
+
+  # Ein Zeitpunkt trägt eine Zahl, wenn er ein Datum ODER eine Uhrzeit
+  # hergegeben hat. Nur auf `:minute` zu prüfen liesse den häufigsten Fall am
+  # Spieltisch aus dem Befund fallen: zwei widersprechende Uhrzeiten an einer
+  # Stelle wären still.
+  defp zahl_traegt?(a),
+    do: is_integer(Map.get(a, :minute)) or is_integer(Map.get(a, :tagesminute))
 
   # Eine Spanne gilt ab der SPÄTESTEN Stelle ihrer Menge: „wir sind zwei
   # Stunden marschiert" wird am Ende des Marsches gesagt, die Zeit ist
