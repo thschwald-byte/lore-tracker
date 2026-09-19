@@ -648,15 +648,36 @@ defmodule Worker.Timeline.Linie do
     end
   end
 
+  # **Einen TAG kann nur vererben, wer selbst tagesgenau ist.**
+  #
+  # Der Fall, der das erzwingt (Maintainer, 19.09.2026): Die Spielleitung
+  # erzählt Vergangenheit — „seit dem Beben 2044", „wir waren doch vor zwei
+  # Jahren in Namibia" —, und gleich danach fällt eine Uhrzeit der
+  # Gegenwart: „es ist kurz nach acht". Die Uhrzeit nahm bis hierhin den Tag
+  # des letzten festen Punktes, und das war die Jahreszahl: Die Sitzung
+  # spielte plötzlich am 1. Januar 2044.
+  #
+  # Ein Anker auf ein Jahr genau NENNT keinen Tag. Er ist deshalb kein
+  # gültiger Vorlauf für eine Uhrzeit — die bleibt dann relativ, und das ist
+  # die ehrliche Auskunft: „acht Uhr an einem unbekannten Tag".
+  #
+  # Der Riegel sitzt hier und nicht an einer Markierung des Ankers: Ob
+  # erzählte Weltgeschichte oder eigener Rückblick, ob verschoben oder
+  # nicht — entscheidend ist allein, wie fein die Angabe war.
   defp vorlauf(feste, i) do
     feste
-    |> Enum.filter(fn {j, _} -> j <= i end)
+    |> Enum.filter(fn {j, p} -> j <= i and taggenau?(p) end)
     |> Enum.max_by(fn {j, _} -> j end, fn -> nil end)
     |> case do
       {_, %{minute: m}} -> m
       _ -> nil
     end
   end
+
+  # Tagesgenau heisst: Die Unschärfe des Ausdrucks liegt nicht über einem
+  # Tag. „15.11.2080" und „22:45" vererben, „November 2080" und „2044" nicht.
+  defp taggenau?(%{unschaerfe: u}) when is_integer(u), do: u <= @minuten_pro_tag
+  defp taggenau?(_), do: true
 
   # **Ohne Vorlauf gibt es nichts, woran sich der Halbtag entscheiden könnte.**
   # Die erste Wortform einer Linie liegt deshalb im Vormittagsraum — „halb

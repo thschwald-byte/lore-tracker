@@ -534,7 +534,8 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
 
     # Weltgeschichte ist Spielwelt und bekommt einen Anker — samt der Folge,
     # dass die Zeile dorthin verschoben gehört (Maintainer, 19.09.2026).
-    assert text =~ "Erzählte Weltgeschichte gehört auf die Linie"
+    assert text =~ "Vergangenheit gehört auf die Linie"
+    assert text =~ "Namibia", "auch die Vergangenheit der GRUPPE, nicht nur Weltgeschichte"
     assert text =~ "verschieb"
 
     # Die Frist zeigt nach vorn und verschiebt nichts.

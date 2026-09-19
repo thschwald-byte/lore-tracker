@@ -77,12 +77,18 @@ benutzen“ sagt, wie lange etwas *dauert*, nicht, wann es *geschieht*. Die
 Restzeit einer bestimmten Figur an einer bestimmten Stelle dagegen schon
 („mir bleiben noch fünf Minuten“).
 
-## Erzählte Weltgeschichte gehört auf die Linie
+## Vergangenheit gehört auf die Linie
 
-Wenn die Spielleitung erzählt, dass im Jahr 2011 die Drachen erwachten oder
-die Seuche 2010 ausbrach, ist das **Spielwelt** — und es bekommt einen Anker.
-Das ist kein Tischgespräch: Es sind Ereignisse der erzählten Welt, nur eben
-lange vor der Handlung.
+Alles, was in der Spielwelt **früher** geschah und wovon jetzt erzählt wird,
+bekommt einen Anker und seinen Platz. Es ist gleich, wie weit zurück und wie
+groß:
+
+- „Im Jahr 2011 erwachten die Drachen“ — Weltgeschichte.
+- „Wir waren doch vor zwei Jahren in Namibia“ — die Gruppe selbst.
+- „Damals beim Überfall“, „letzten Winter“ — irgendwo dazwischen.
+
+Das ist alles dasselbe: **Vergangenheit.** Kein Tischgespräch, sondern
+erzählte Welt — nur eben nicht jetzt.
 
 **Und weil sie lange davor liegen, gehört die Zeile auch dorthin.** Drei
 Schritte, und alle drei gehören zusammen:
@@ -95,9 +101,16 @@ Schritte, und alle drei gehören zusammen:
 Ohne den dritten Schritt behauptet die Linie, das Jahr 2011 sei mitten in der
 Sitzung gewesen — und alles, was danach kommt, hängt daran.
 
-Die Grenze zum Rauschen ist die Welt, nicht das Alter: „Die Rams sind vor
+Die Grenze zum Rauschen ist die **Welt**, nicht das Alter: „Die Rams sind vor
 vier Jahren hingegangen“ ist **unsere** Welt und fliegt raus; „die
-Konzernkriege 2070“ ist die Spielwelt und bleibt.
+Konzernkriege 2070“ und „vor zwei Jahren in Namibia“ sind die Spielwelt und
+bleiben.
+
+**Was du dabei NICHT tun musst:** dir Sorgen machen, dass eine grobe
+Jahreszahl die Uhrzeiten der Sitzung kaputtmacht. Ein Anker, der nur ein
+Jahr nennt, nennt keinen Tag — ich vererbe von ihm auch keinen. „Es ist kurz
+nach acht“ bleibt dann eine Uhrzeit an einem unbekannten Tag, und das ist
+richtig so.
 
 Ein reiner Zeitraum ohne Ereignis („zwischen 2055 und 2065 haben wir die
 Charaktere gespielt“) ist dagegen keiner: Er nennt keinen Punkt, an dem etwas

@@ -636,6 +636,37 @@ defmodule Worker.Timeline.LinieTest do
     end
   end
 
+  describe "einen Tag vererbt nur, wer tagesgenau ist" do
+    # Der Fall (Maintainer, 19.09.2026): Die Spielleitung erzählt
+    # Vergangenheit — „seit dem Beben 2044", „vor zwei Jahren in Namibia" —,
+    # und gleich danach fällt eine Uhrzeit der Gegenwart. Die nahm bis dahin
+    # den Tag des letzten festen Punktes, und das war die Jahreszahl: Die
+    # Sitzung spielte plötzlich am 1. Januar 2044.
+    test "eine Jahreszahl datiert die folgende Uhrzeit NICHT" do
+      jahr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "im Jahr 2044"}, cal())
+      uhr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "kurz nach acht"}, cal())
+
+      nach = Linie.bauen(stellen(), [jahr, uhr]).nach_utterance
+
+      # Die Jahreszahl steht mit ihrem Datum da.
+      assert Linie.tag(nach["u11"]) > 700_000
+
+      # Die Uhrzeit bleibt relativ — acht Uhr an einem unbekannten Tag.
+      assert nach["u13"].minute < 1440
+      assert nach["u13"].herkunft == :belegt
+    end
+
+    test "ein TAGESgenaues Datum vererbt seinen Tag sehr wohl" do
+      datum = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "15.11.2080"}, cal())
+      uhr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "22:45"}, cal())
+
+      nach = Linie.bauen(stellen(), [datum, uhr]).nach_utterance
+
+      assert Linie.tag(nach["u13"]) == Linie.tag(nach["u11"])
+      assert nach["u13"].minute == Linie.tag(nach["u11"]) * 1440 + 22 * 60 + 45
+    end
+  end
+
   describe "Gewissheit und Auflösung sind zweierlei" do
     # Maintainer, 19.09.2026: „die gezeigten beispiele sind gewiss → 100%,
     # aber die unschärfe gilt für die fakten dazwischen". Der erste Wurf
