@@ -351,6 +351,28 @@ defmodule Shared.Events do
   # `JackStandAbgelegt`. KEINE Dirty-Kante.
   def jack_epos_stand_abgelegt, do: "JackEposStandAbgelegt"
 
+  # #1247 (Z1): ein Zeit-Anker an einer MENGE von Utterances — die Zeit hängt
+  # seitdem nicht mehr am Fakt (der entsteht bei jeder Extraktion neu), sondern
+  # an der stabilsten Schicht des Systems: Utterances werden nie neu erstellt.
+  # Payload: `%{anker_id, campaign_id, session_id, daten: %{utterance_ids, art,
+  # wert, welt, zweifel, beleg, quelle, abgesegnet_von, abgesegnet_am}}`.
+  #
+  # `anker_id` ist content-adressiert über die sortierten `utterance_ids`
+  # (`z_<hash>`, Muster `Parsing.fact_content_id/2`) — dieselbe Menge ergibt
+  # denselben Anker, egal welcher Worker ihn schreibt. 1 Row/Anker,
+  # LWW-by-event_id. NIE ein Delete: ein zurückgenommener Anker schreibt eine
+  # reguläre Row mit `art: "geloest"` (#698-Klasse — ein vertauschtes
+  # Setzen/Zurücknehmen darf zwischen zwei Workern nicht divergieren).
+  #
+  # `abgesegnet_am` gesetzt heisst: ein Mensch hat entschieden. Die Stelle ist
+  # dann unveränderlich, auch für einen Jack-Lauf.
+  def zeit_anker_set, do: "ZeitAnkerSet"
+
+  # #1247 (Z2): der Stand des Zeit-Jack einer Sitzung nach seinem letzten Lauf.
+  # Payload wie die drei Geschwister: `%{session_id, campaign_id, stand: %{...}}`.
+  # 1 Row/Session, LWW-by-event_id. KEINE Dirty-Kante.
+  def jack_zeit_stand_abgelegt, do: "JackZeitStandAbgelegt"
+
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
   # block_id (Content-ID), status, bestaetigter_text | nil,

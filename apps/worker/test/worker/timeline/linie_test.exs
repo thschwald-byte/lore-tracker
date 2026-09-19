@@ -1,0 +1,264 @@
+defmodule Worker.Timeline.LinieTest do
+  @moduledoc """
+  #1247 (Z1): die Linie rechnet aus Ankern — pur, ohne Mnesia und ohne Modell.
+
+  Geprüft wird das, was die Linie **zusagt**, und ausdrücklich auch das, was
+  sie NICHT tut: kein Mittelwert, kein gebautes Konstrukt, keine erfundene
+  Zeit, wo kein Anker in Reichweite ist.
+  """
+  use ExUnit.Case, async: true
+
+  alias Worker.Timeline.Linie
+
+  # Drei Sitzungen à drei Äußerungen, in Erzählreihenfolge.
+  defp stellen do
+    for s <- 1..3, p <- 1..3 do
+      %{utterance_id: "u#{s}#{p}", session_nr: s, pos: p}
+    end
+  end
+
+  defp anker(art, ids, extra \\ %{}) do
+    Map.merge(%{art: art, utterance_ids: ids, anker_id: "z_#{Enum.join(ids, "_")}"}, extra)
+  end
+
+  describe "Grundordnung" do
+    test "ohne Anker steht alles in Erzählreihenfolge, und niemand bekommt eine Zeit" do
+      linie = Linie.bauen(stellen(), [])
+
+      assert Enum.map(linie.reihe, & &1.utterance_id) == [
+               "u11",
+               "u12",
+               "u13",
+               "u21",
+               "u22",
+               "u23",
+               "u31",
+               "u32",
+               "u33"
+             ]
+
+      # Kein Anker heisst keine Zeit — nicht Minute 0.
+      assert Enum.all?(linie.reihe, &(&1.minute == nil))
+      assert Enum.all?(linie.reihe, &(&1.herkunft == :ohne))
+    end
+
+    test "eine Sitzung ohne Nummer sortiert ans Ende statt irgendwohin" do
+      ohne = [%{utterance_id: "x1", session_nr: nil, pos: 1}]
+      linie = Linie.bauen(stellen() ++ ohne, [])
+
+      assert List.last(linie.reihe).utterance_id == "x1"
+    end
+  end
+
+  describe "Zeitpunkte und Interpolation" do
+    test "zwischen zwei Ankern wird interpoliert, ausserhalb nicht rückwärts erfunden" do
+      a = [
+        anker(:zeitpunkt, ["u12"], %{minute: 1000}),
+        anker(:zeitpunkt, ["u22"], %{minute: 1400})
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+      nach = linie.nach_utterance
+
+      assert nach["u12"].minute == 1000
+      assert nach["u12"].herkunft == :belegt
+      assert nach["u22"].minute == 1400
+
+      # Dazwischen: interpoliert, monoton, innerhalb der Grenzen.
+      for id <- ["u13", "u21"] do
+        assert nach[id].herkunft == :interpoliert
+        assert nach[id].minute > 1000 and nach[id].minute < 1400
+      end
+
+      assert nach["u13"].minute <= nach["u21"].minute
+
+      # VOR dem ersten Anker gibt es keine Zeit: rückwärts zu rechnen hiesse,
+      # eine Zeit zu erfinden, für die nichts spricht.
+      assert nach["u11"].minute == nil
+      assert nach["u11"].herkunft == :ohne
+
+      # Nach dem letzten Anker gilt er weiter (ohne Spanne vergeht nichts).
+      assert nach["u33"].minute == 1400
+      assert nach["u33"].herkunft == :interpoliert
+    end
+
+    test "ein Zeitpunkt gilt an der frühesten Stelle seiner Menge" do
+      a = [anker(:zeitpunkt, ["u21", "u22", "u23"], %{minute: 500})]
+      nach = Linie.bauen(stellen(), a).nach_utterance
+
+      assert nach["u21"].minute == 500
+      assert nach["u21"].herkunft == :belegt
+      # Die übrigen der Menge liegen danach, nicht gleichauf.
+      assert nach["u22"].herkunft == :interpoliert
+    end
+  end
+
+  describe "Spannen" do
+    test "eine genannte Dauer schiebt die Zeit weiter, statt im Tag zu verschwinden" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 600}),
+        anker(:spanne, ["u12", "u13"], %{minuten: 120})
+      ]
+
+      nach = Linie.bauen(stellen(), a).nach_utterance
+
+      # Die Spanne gilt ab der SPÄTESTEN Stelle ihrer Menge (u13): gesagt wird
+      # „wir sind zwei Stunden marschiert", wenn der Marsch vorbei ist.
+      assert nach["u12"].minute == 600
+      assert nach["u13"].minute == 720
+      assert nach["u21"].minute == 720
+    end
+
+    test "zwei Stunden sind auf einem Tageszähler nicht darstellbar — hier schon" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 0}),
+        anker(:spanne, ["u12"], %{minuten: 120})
+      ]
+
+      nach = Linie.bauen(stellen(), a).nach_utterance
+
+      assert nach["u12"].minute == 120
+      # Derselbe Tag, aber die Zeit ist vergangen.
+      assert Linie.tag(nach["u12"]) == 0
+    end
+
+    test "genug Spannen ergeben einen Tageswechsel" do
+      a =
+        [anker(:zeitpunkt, ["u11"], %{minute: 0})] ++
+          for id <- ["u12", "u13", "u21", "u22", "u23"] do
+            anker(:spanne, [id], %{minuten: 300})
+          end
+
+      nach = Linie.bauen(stellen(), a).nach_utterance
+
+      assert nach["u23"].minute == 1500
+      assert Linie.tag(nach["u23"]) == 1
+    end
+  end
+
+  describe "Verschiebung gegen die Erzählreihenfolge" do
+    test "ein Rückblick wandert nach vorn" do
+      a = [anker(:ordnung, ["u31"], %{ziel: "u12", richtung: :vor})]
+      linie = Linie.bauen(stellen(), a)
+
+      reihe = Enum.map(linie.reihe, & &1.utterance_id)
+      assert Enum.find_index(reihe, &(&1 == "u31")) < Enum.find_index(reihe, &(&1 == "u12"))
+      assert length(reihe) == 9
+    end
+
+    test "eine Verschiebung ohne auflösbares Ziel bleibt wirkungslos UND wird gemeldet" do
+      a = [anker(:ordnung, ["u31"], %{ziel: "gibt-es-nicht", richtung: :vor})]
+      linie = Linie.bauen(stellen(), a)
+
+      assert Enum.map(linie.reihe, & &1.utterance_id) |> List.last() == "u33"
+      assert Enum.any?(linie.befunde, &(&1.art == :verschiebung_ohne_ziel))
+    end
+  end
+
+  describe "aus der Kette gelöst" do
+    test "Gelöstes liegt nicht auf der Linie und wird nie interpoliert" do
+      a = [
+        anker(:geloest, ["u22"], %{}),
+        anker(:zeitpunkt, ["u11"], %{minute: 100})
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+
+      refute Enum.any?(linie.reihe, &(&1.utterance_id == "u22"))
+      assert MapSet.member?(linie.geloest, "u22")
+      assert Linie.anker_fuer(linie, ["u22"]) == []
+    end
+  end
+
+  describe "anker_fuer/2 — die transiente Methode" do
+    test "liefert eine LISTE, auch wenn die Einträge verschieden sind" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 100}),
+        anker(:zeitpunkt, ["u31"], %{minute: 900})
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+      liste = Linie.anker_fuer(linie, ["u11", "u31"])
+
+      assert length(liste) == 2
+      assert Enum.map(liste, & &1.minute) == [100, 900]
+
+      # Kein Mittelwert, keine gebaute Spanne: die Liste IST die Antwort.
+      refute Enum.any?(liste, &Map.has_key?(&1, :von))
+    end
+
+    test "unbekannte Utterances erzeugen keinen Eintrag statt eines leeren" do
+      linie = Linie.bauen(stellen(), [])
+      assert Linie.anker_fuer(linie, ["fremd"]) == []
+    end
+
+    test "Doppelte zählen einmal" do
+      a = [anker(:zeitpunkt, ["u11"], %{minute: 100})]
+      linie = Linie.bauen(stellen(), a)
+
+      assert length(Linie.anker_fuer(linie, ["u11", "u11"])) == 1
+    end
+  end
+
+  describe "Befunde" do
+    test "Spannen, die nicht zwischen zwei Anker passen, werden gemeldet statt gestaucht" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 0}),
+        anker(:zeitpunkt, ["u13"], %{minute: 60}),
+        anker(:spanne, ["u12"], %{minuten: 300})
+      ]
+
+      linie = Linie.bauen(stellen(), a)
+
+      befund = Enum.find(linie.befunde, &(&1.art == :spannen_ueberlauf))
+      assert befund, "der Widerspruch muss ein Befund sein"
+      assert befund.text =~ "300"
+      assert befund.text =~ "60"
+
+      # Die Linie bleibt trotzdem benutzbar und monoton — best effort.
+      nach = linie.nach_utterance
+      assert nach["u12"].minute >= nach["u11"].minute
+      assert nach["u12"].minute <= nach["u13"].minute
+    end
+
+    test "ein Zweifel reist als Befund UND steht an der Stelle" do
+      a = [anker(:zeitpunkt, ["u11"], %{minute: 0, zweifel: "Tisch oder Welt unklar"})]
+      linie = Linie.bauen(stellen(), a)
+
+      assert Enum.any?(linie.befunde, &(&1.art == :zweifel and &1.text =~ "Tisch"))
+      assert linie.nach_utterance["u11"].zweifel =~ "Tisch"
+    end
+  end
+
+  describe "Absegnung" do
+    test "eine abgesegnete Stelle ist als solche erkennbar" do
+      a = [
+        anker(:zeitpunkt, ["u11"], %{minute: 0, abgesegnet_am: "2026-09-19T10:00:00Z"}),
+        anker(:zeitpunkt, ["u31"], %{minute: 900})
+      ]
+
+      nach = Linie.bauen(stellen(), a).nach_utterance
+
+      assert nach["u11"].abgesegnet?
+      refute nach["u31"].abgesegnet?
+    end
+  end
+
+  describe "Fremddaten" do
+    test "eine unbekannte art wird ignoriert statt zu einem Atom zu werden" do
+      vorher = :erlang.system_info(:atom_count)
+      a = [anker("voellig-unbekannt-#{System.unique_integer([:positive])}", ["u11"])]
+
+      linie = Linie.bauen(stellen(), a)
+
+      assert length(linie.reihe) == 9
+      # Kein String.to_atom auf Fremddaten: die Atom-Tabelle wächst nicht.
+      assert :erlang.system_info(:atom_count) - vorher < 5
+    end
+
+    test "art als String verhält sich wie das Atom" do
+      a = [anker("zeitpunkt", ["u11"], %{minute: 42})]
+      assert Linie.bauen(stellen(), a).nach_utterance["u11"].minute == 42
+    end
+  end
+end

@@ -402,6 +402,11 @@ defmodule Worker.TestHelper do
       S.jack_resuemee_staende(),
       # J6 (#1210, E4): der Stand des Epos-Jack — #801-Klasse.
       S.jack_epos_staende(),
+      # #1247 (Z1/Z2): der Stand des Zeit-Jack und die Anker der Linie —
+      # #801-Klasse. Ein geleakter Anker verschöbe in einem anderen Test die
+      # ganze Zeitlinie, ohne dass dort jemand mit Zeit rechnet.
+      S.jack_zeit_staende(),
+      S.zeit_anker(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

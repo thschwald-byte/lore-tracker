@@ -50,6 +50,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     JackEposStandAbgelegt
     JackResuemeeStandAbgelegt
     JackStandAbgelegt
+    JackZeitStandAbgelegt
     LLMCallBilled
     LeitfrageSet
     LiveUtterancesCleared
@@ -89,6 +90,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     UtteranceDeleted
     UtteranceEdited
     UtterancesTranscribed
+    ZeitAnkerSet
   )
 
   describe "all/0 — kanonische Wire-Kind-Liste" do
