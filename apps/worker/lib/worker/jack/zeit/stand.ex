@@ -28,6 +28,26 @@ defmodule Worker.Jack.Zeit.Stand do
   quittieren wäre ein Lauf, der nichts anderes mehr tut), sondern die
   Buchführung darüber, was Jack überhaupt gesehen hat.
 
+  **Diese Buchführung ist hier tragend, nicht Diagnostik** — anders als bei
+  der Extraktion, und der Unterschied ist der Grund (Review, 19.09.2026):
+  Dort heißt „kein Fakt“ nur *nichts gefunden*, eine Aussage über Jacks
+  Ausbeute. Hier heißt „nicht angefasst“ *die Grundordnung stimmt für diese
+  Zeile* — eine Aussage über die Welt, die er stillschweigend trifft, ohne
+  sie getroffen zu haben. Ohne die Schranke hieße `fertig` bloß „Jack hat
+  aufgehört“: Er könnte nach 10 von 3.679 Zeilen abschließen, und die
+  übrigen 3.669 gälten als richtig eingeordnet. Das ist die schlechteste
+  Sorte Fehler, weil sie wie ein Ergebnis aussieht.
+
+  Das Vorbild steht im Repo: `Worker.Jack.Abschluss.nie_gelesen/1` verlangt
+  von der Extraktion, dass sie jeden Block **ansieht** — nicht, dass jeder
+  einen Fakt liefert.
+
+  **Ehrliche Grenze:** „gelesen“ heißt *ausgegeben bekommen*, nicht
+  *angesehen*. Ein Modell, das die Zeilen anfordert und überfliegt, erfüllt
+  die Schranke. Sie ist die untere Grenze, keine Zusicherung, dass jede Zeile
+  geprüft wurde — dieselbe Grenze, die die Extraktion seit J4 hat (#1236
+  führt sie dort als offene Frage).
+
   ## Die GUIDs
 
   Eine Rückfrage beim Setzen (`Worker.Jack.Zeit.Setzen`) gibt eine Kennung
