@@ -24,9 +24,17 @@ defmodule Worker.Jack.Resuemee.Halter do
 
   alias Worker.Jack.Resuemee.Stand
 
-  @doc "Startet den Halter mit einem Stand. Optionen: `:beobachter`, `:abbild`."
-  @spec start_link(Stand.t(), keyword()) :: Agent.on_start()
-  def start_link(%Stand{} = s, opts \\ []) do
+  @doc """
+  Startet den Halter mit einem Stand. Optionen: `:beobachter`, `:abbild`.
+
+  **Der Stand muss kein `Resuemee.Stand` sein** (#1247): Der Halter macht
+  nichts, was diesen Typ kennt — er hält, ruft auf und meldet. Der Zeit-Jack
+  bringt seinen eigenen Stand mit und gibt sein Abbild über `:abbild` mit,
+  wie der Epos-Jack es seit #1210 tut. Ein zweiter Halter wäre eine Kopie von
+  sechzig Zeilen, die beim nächsten Umbau auseinanderliefe.
+  """
+  @spec start_link(struct(), keyword()) :: Agent.on_start()
+  def start_link(s, opts \\ []) when is_struct(s) do
     Agent.start_link(fn ->
       z = %{stand: s, beobachter: opts[:beobachter], abbild: opts[:abbild] || (&Stand.abbild/1)}
       melden(z)
