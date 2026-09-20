@@ -17,14 +17,15 @@ defmodule Worker.Jack.Zeit.Anker do
   geraten.
   """
 
-  alias Worker.Jack.Zeit.{Setzen, Stand}
+  alias Worker.Jack.Zeit.{Kettenwerkzeuge, Mitschnitt, Setzen, Stand}
+  alias Worker.Timeline.Kette
   alias Worker.Timeline.Ausdruck
 
   @doc "Die setzenden Werkzeuge — Definitionen für `Worker.Jack.Zeit.Werkzeuge`."
   def werkzeuge do
     [
       %{
-        name: "zeitpunkt",
+        name: "setz_zeitpunkt",
         beschreibung:
           "Hängt einen ZEITPUNKT an eine oder mehrere Zeilen: etwas, das im Spiel " <>
             "als Zeit GESAGT wurde — „drei viertel elf“, „am 15. November“, „kurz " <>
@@ -69,22 +70,22 @@ defmodule Worker.Jack.Zeit.Anker do
             "wert" => %{"type" => "string",
               "description" => "Der Ausdruck, WIE er gesagt wurde: „drei viertel elf“, „am 15. November“, „kurz nach zwölf“. Wortformen bleiben Wortformen — nicht in Ziffern umschreiben, nicht umrechnen."},
             "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "„spielwelt“, wenn die Zeit in der erzählten Welt gilt; „tisch“, wenn sie den Abend meint (Pause, Restzeit, wann wir aufhören). Steht es nicht da: nicht raten, sondern zweifel() nehmen."},
+              "description" => "„spielwelt“, wenn die Zeit in der erzählten Welt gilt; „tisch“, wenn sie den Abend meint (Pause, Restzeit, wann wir aufhören). Steht es nicht da: nicht raten, sondern kettenplatz_unklar() nehmen."},
             "beleg" => %{"type" => "string",
               "description" => "Das wörtliche Zitat aus der Zeile, in dem die Zeit vorkommt."},
             "halbtag" => %{"type" => "string", "enum" => ~w(vormittag nachmittag unklar),
               "description" => "Nur wenn BELEGT — steht im selben Satz eine Tageszeit („nachts um halb zwei“, „morgens um zehn“). Sonst weglassen: Ich löse den Halbtag aus der Reihe der Anker auf."},
-            "zweifel" => %{"type" => "string", "minLength" => 0,
+            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
               "description" => "Optionale Notiz, wenn du den Anker setzt, aber unsicher bist. Der Anker gilt und trägt deinen Vorbehalt mit."}
           },
           "required" => ~w(zeilen wert welt beleg)
         },
-        optional: ~w(halbtag zweifel),
+        optional: ~w(halbtag kettenplatz_unklar),
         wiederholung: :zaehlt,
         ausfuehren: &w_zeitpunkt/2
       },
       %{
-        name: "spanne",
+        name: "setz_spanne",
         beschreibung:
           "Hängt eine DAUER an Zeilen: „zwei Stunden marschiert“, „eine halbe " <>
             "Stunde später“. Das ist der Mechanismus, mit dem am Tisch Spielzeit " <>
@@ -112,17 +113,17 @@ defmodule Worker.Jack.Zeit.Anker do
               "description" => "Das wörtliche Zitat, in dem die Dauer genannt wird."},
             "tageswechsel" => %{"type" => "boolean",
               "description" => "true, wenn die Spanne über eine NACHT führt („es vergeht eine Nacht“, „am nächsten Morgen“). Dann zählt nicht die Stundenzahl, sondern der Morgen danach — den rechne ich."},
-            "zweifel" => %{"type" => "string", "minLength" => 0,
+            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
               "description" => "Optionale Notiz, wenn die Spanne gilt, du aber unsicher bist."}
           },
           "required" => ~w(zeilen wert welt beleg)
         },
-        optional: ~w(tageswechsel zweifel),
+        optional: ~w(tageswechsel kettenplatz_unklar),
         wiederholung: :zaehlt,
         ausfuehren: &w_spanne/2
       },
       %{
-        name: "frist",
+        name: "setz_frist",
         beschreibung:
           "EINE FRIST BEWEGT DIE LINIE NIE — sie wird nur festgehalten. " <>
             "Hält eine Dauer fest, die NACH VORN zeigt: „die Verhandlungen dauern " <>
@@ -145,100 +146,17 @@ defmodule Worker.Jack.Zeit.Anker do
               "description" => "Wie bei zeitpunkt: Gilt die Frist in der erzählten Welt oder am Tisch?"},
             "beleg" => %{"type" => "string",
               "description" => "Das wörtliche Zitat, in dem die Frist genannt wird."},
-            "zweifel" => %{"type" => "string", "minLength" => 0,
+            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
               "description" => "Optionale Notiz, wenn du unsicher bist."}
           },
           "required" => ~w(zeilen wert welt beleg)
         },
-        optional: ["zweifel"],
+        optional: ["kettenplatz_unklar"],
         wiederholung: :zaehlt,
         ausfuehren: &w_frist/2
       },
       %{
-        name: "verschieben",
-        beschreibung:
-          "Holt Zeilen aus der Erzählreihenfolge heraus und setzt sie vor oder " <>
-            "hinter eine andere Zeile. Dafür ist dieses Werkzeug da: Ein Rückblick " <>
-            "liegt in der VERGANGENHEIT, auch wenn er mitten in der Sitzung erzählt " <>
-            "wird; eine Ankündigung liegt in der Zukunft. Alles, was du NICHT " <>
-            "verschiebst, steht an seiner Erzählposition — das ist der Normalfall " <>
-            "und kostet dich nichts. VERSCHIEBEN BRAUCHT EINEN BELEG im Text " <>
-            "(„letztes Mal“, „damals“, „das war, bevor“); ohne einen bleibt die " <>
-            "Zeile, wo sie ist. Der häufigste Fall ist der SITZUNGSANFANG: Fast " <>
-            "jede Sitzung beginnt damit, dass die Runde erzählt, was beim letzten " <>
-            "Mal geschah — Dutzende Zeilen, die dorthin gehören, wo sie geschahen.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Die Zeilen, die an eine andere Stelle gehören — der Rückblick, die Ankündigung."},
-            "richtung" => %{"type" => "string", "enum" => ~w(vor nach),
-              "description" => "„vor“ = die Zeilen liegen zeitlich VOR der Zielzeile (Rückblick), „nach“ = danach (Ankündigung)."},
-            "ziel" => %{"type" => "integer",
-              "description" => "Die Zeilennummer, vor oder hinter die es gehört."},
-            "beleg" => %{"type" => "string",
-              "description" => "Das wörtliche Zitat, aus dem hervorgeht, dass die Stelle zeitlich nicht hierher gehört („letztes Mal“, „damals“, „das war, bevor“). Ohne Beleg im Text bleibt die Zeile stehen — die Erzählreihenfolge ist der Normalfall."}
-          },
-          "required" => ~w(zeilen richtung ziel beleg)
-        },
-        wiederholung: :zaehlt,
-        ausfuehren: &w_verschieben/2
-      },
-      %{
-        name: "loesen",
-        beschreibung:
-          "Nimmt Zeilen aus der Kette: Sie liegen dann nicht mehr auf der Linie und " <>
-            "werden nie interpoliert. **Das ist zugleich die Einordnung " <>
-            "„Tischgespräch“** — du brauchst kein zweites Werkzeug dafür. " <>
-            "Dafür: Tischgespräch, Regelfrage, " <>
-            "Würfelergebnis, Pausenabsprache — und generische Wirkdauern („eine " <>
-            "Stunde hat man Zeit“), die sagen, wie lange etwas dauert, aber nicht, " <>
-            "wann es geschieht. Das ist eine " <>
-            "vollwertige Entscheidung, kein Notausgang — was nicht auf die Linie " <>
-            "gehört, dort zu lassen wäre schlechter.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."},
-            "von" => %{"type" => "integer", "description" => "Erste Zeile des Abschnitts (mit bis)."},
-            "bis" => %{"type" => "integer", "description" => "Letzte Zeile des Abschnitts (mit von)."},
-            "grund" => %{"type" => "string",
-              "description" => "In deinen Worten, kurz: warum das nicht auf die Linie gehört („Regelfrage“, „Pausenabsprache“, „Smalltalk über Fußball“)."}
-          },
-          "required" => ["grund"]
-        },
-        optional: ~w(zeilen von bis),
-        wiederholung: :zaehlt,
-        ausfuehren: &w_loesen/2
-      },
-      %{
-        name: "ingame",
-        beschreibung:
-          "Sagt: Diese Zeilen gehören zur erzählten Welt — sie bleiben auf der " <>
-            "Linie. Das ist keine Zeitangabe und kein Anker, sondern die Antwort " <>
-            "auf die Frage, ob hier gespielt oder am Tisch geredet wird. " <>
-            "JEDE Zeile braucht eine solche Antwort, bevor du fertig bist: " <>
-            "entweder ingame(), oder loesen() für Tischgespräch, oder zweifel(), " <>
-            "wenn du es nicht entscheiden kannst. Was niemand einordnet, wird " <>
-            "trotzdem interpoliert und bekommt eine Spielzeit, die es nicht gibt. " <>
-            "Nimm grosse Abschnitte auf einmal — von/bis ist dafür da.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."},
-            "von" => %{"type" => "integer", "description" => "Erste Zeile des Abschnitts (mit bis)."},
-            "bis" => %{"type" => "integer", "description" => "Letzte Zeile des Abschnitts (mit von)."}
-          },
-          "required" => []
-        },
-        optional: ~w(zeilen von bis),
-        wiederholung: :zaehlt,
-        ausfuehren: &w_ingame/2
-      },
-      %{
-        name: "dazu",
+        name: "anker_dazu",
         beschreibung:
           "Antwort auf eine Rückfrage: Dein Anker kommt NEBEN den bestehenden. An " <>
             "einer Zeile dürfen mehrere Anker hängen — „eine Stunde vergangen, dann " <>
@@ -250,7 +168,7 @@ defmodule Worker.Jack.Zeit.Anker do
               "description" => "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."},
             "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
               "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."},
-            "art" => %{"type" => "string", "enum" => ~w(zeitpunkt spanne),
+            "art" => %{"type" => "string", "enum" => ~w(setz_zeitpunkt setz_spanne),
               "description" => "Die Art des Ankers, den du setzen wolltest."},
             "wert" => %{"type" => "string", "description" => "Der Ausdruck, wie gesagt."},
             "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
@@ -263,7 +181,7 @@ defmodule Worker.Jack.Zeit.Anker do
         ausfuehren: &w_dazu/2
       },
       %{
-        name: "ersetzen",
+        name: "anker_ersetzen",
         beschreibung:
           "Antwort auf eine Rückfrage: Der bestehende Anker wird aus der Kette " <>
             "gelöst, deiner tritt an seine Stelle. Nimm das, wenn der alte falsch " <>
@@ -275,7 +193,7 @@ defmodule Worker.Jack.Zeit.Anker do
               "description" => "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."},
             "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
               "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."},
-            "art" => %{"type" => "string", "enum" => ~w(zeitpunkt spanne),
+            "art" => %{"type" => "string", "enum" => ~w(setz_zeitpunkt setz_spanne),
               "description" => "Die Art des Ankers, den du setzen wolltest."},
             "wert" => %{"type" => "string", "description" => "Der Ausdruck, wie gesagt."},
             "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
@@ -288,7 +206,7 @@ defmodule Worker.Jack.Zeit.Anker do
         ausfuehren: &w_ersetzen/2
       },
       %{
-        name: "konflikt",
+        name: "melde_konflikt",
         beschreibung:
           "Trägt einen Widerspruch zu einer abgesegneten Stelle ein. Eine " <>
             "Festlegung, die ein Mensch getroffen hat, überschreibt niemand — auch " <>
@@ -312,7 +230,7 @@ defmodule Worker.Jack.Zeit.Anker do
         ausfuehren: &w_konflikt/2
       },
       %{
-        name: "zweifel",
+        name: "kettenplatz_unklar",
         beschreibung:
           "Hält fest, dass du dich an einer Stelle NICHT entscheiden kannst — und " <>
             "setzt nichts. **Das ist zugleich die Einordnung „unklar“**: Die Zeile " <>
@@ -352,11 +270,34 @@ defmodule Worker.Jack.Zeit.Anker do
   defp w_dazu(s, f), do: anker_setzen(s, f, art_von(f), {:dazu, f["kennung"]})
   defp w_ersetzen(s, f), do: anker_setzen(s, f, art_von(f), {:ersetzen, f["kennung"]})
 
-  defp art_von(%{"art" => "spanne"}), do: :spanne
+  defp art_von(%{"art" => "setz_spanne"}), do: :spanne
   defp art_von(_), do: :zeitpunkt
 
+  # **Ein Anker braucht ein Kettenglied** (#1247, 20.09.2026). Seit die Kette
+  # leer beginnt, kann eine Zeile eine Uhrzeit tragen, ohne irgendwo zu
+  # liegen — der Anker wäre gesetzt, in `lies_kette()` aber unsichtbar, und
+  # die Rechnung hätte nichts, worauf sie ihn legen könnte. Das ist die
+  # Klasse „gesetzt, aber wirkungslos", die dieses Ticket bei den
+  # Verschiebungen schon einmal erzeugt hat. Die Ablehnung nennt den Ausweg,
+  # statt nur Nein zu sagen: erst einreihen, dann datieren.
+  defp in_der_kette?(s, ids) do
+    fehlend = Enum.reject(ids, &Kette.glied_von(s.kette, &1))
+
+    if fehlend == [] do
+      :ok
+    else
+      nrs = for u <- fehlend, z = Enum.find(s.mitschnitt, &(&1.utterance_id == u)), do: z.nr
+
+      {:fehler,
+       "#{length(fehlend)} dieser Zeilen liegen in keinem Kettenglied " <>
+         "(#{Enum.join(Enum.sort(nrs), ", ")}) — ein Anker dort wäre gesetzt und " <>
+         "unsichtbar. Reih sie erst ein (haenge_an_kette), dann setz die Zeit."}
+    end
+  end
+
   defp anker_setzen(s, f, art, entscheidung) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f["zeilen"]) do
+    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f["zeilen"]),
+         :ok <- in_der_kette?(s, ids) do
       wunsch = %{
         utterance_ids: ids,
         art: art,
@@ -365,7 +306,7 @@ defmodule Worker.Jack.Zeit.Anker do
         beleg: to_string(f["beleg"]),
         halbtag: to_string(f["halbtag"] || ""),
         tageswechsel: f["tageswechsel"] == true,
-        zweifel: to_string(f["zweifel"] || "")
+        zweifel: to_string(f["kettenplatz_unklar"] || "")
       }
 
       s = Stand.gelesen(s, zeilen)
@@ -397,70 +338,22 @@ defmodule Worker.Jack.Zeit.Anker do
   defp entscheidung_verbrauchen(s, {_art, guid}), do: Stand.verbrauchen(s, guid)
   defp entscheidung_verbrauchen(s, _), do: s
 
-  defp w_verschieben(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f["zeilen"]),
-         {:ok, [ziel], _} <- aufloesen(s, [f["ziel"]]) do
-      anker =
-        Setzen.bauen(%{
-          utterance_ids: ids,
-          art: :ordnung,
-          wert: to_string(f["richtung"]),
-          welt: "spielwelt",
-          beleg: to_string(f["beleg"])
-        })
-        |> Map.put(:ziel, ziel)
-        |> Map.put(:richtung, if(f["richtung"] == "nach", do: :nach, else: :vor))
-
-      s = Stand.gelesen(s, zeilen) |> Stand.setzen(anker)
-
-      {s,
-       {:ok,
-        "Verschoben: #{length(ids)} Zeile(n) #{f["richtung"]} Zeile #{f["ziel"]}. " <>
-          reststand(s)}}
-    else
-      {:fehler, text} -> {s, {:error, text}}
-      _ -> {s, {:error, "Das Ziel gibt es nicht. Nenn eine Zeilennummer aus dem Mitschnitt."}}
-    end
-  end
-
-  defp w_loesen(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f) do
-      anker =
-        Setzen.bauen(%{
-          utterance_ids: ids,
-          art: :geloest,
-          wert: to_string(f["grund"]),
-          welt: "tisch",
-          beleg: ""
-        })
-
-      s = s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :tisch) |> Stand.setzen(anker)
-
-      {s,
-       {:ok,
-        "#{length(ids)} Zeile(n) aus der Kette gelöst: #{f["grund"]}. Sie liegen nicht " <>
-          "mehr auf der Linie und werden nie interpoliert. " <> reststand(s)}}
-    else
-      {:fehler, text} -> {s, {:error, text}}
-    end
-  end
-
-  defp w_ingame(s, f) do
-    with {:ok, _ids, zeilen} <- aufloesen(s, f) do
-      s = s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :ingame)
-      z = Stand.zahlen(s)
-
-      {s,
-       {:ok,
-        "#{length(zeilen)} Zeile(n) als Spielwelt eingeordnet — sie bleiben auf der " <>
-          "Linie. Eingeordnet #{z.eingeordnet}/#{z.utterances}."}}
-    else
-      {:fehler, text} -> {s, {:error, text}}
-    end
-  end
+  # **Das Ziel ist optional** (#1247, nach dem Lauf vom 20.09.2026). Bis
+  # dahin verlangte `verschieben` eine Zielzeile — und genau daran blieb das
+  # Modell hängen: Für Weltgeschichte („Ende 2011 erwachten die Drachen")
+  # gibt es keine Zielzeile, das Geschehen liegt vor der ganzen Sitzung. Im
+  # Denkstrom stand es wörtlich: „verschieben requires a ziel (target line)
+  # … but there's no specific past scene that should be referenced." Es hat
+  # daraufhin die Anker gesetzt und die Zeilen stehen lassen — womit die
+  # Kette rückwärts lief.
+  #
+  # Drei Wege stehen jetzt offen, und `Worker.Timeline.Linie.stelle_fuer/3`
+  # wählt in dieser Reihenfolge: „anfang" (vor alles), eine Zielzeile, oder
+  # die eigene Zeit des Abschnitts.
+  defp offene_ids(s, ids), do: Enum.reject(ids, &Kette.glied_von(s.kette, &1))
 
   defp w_konflikt(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f["zeilen"]) do
+    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f["zeilen"]) do
       eintrag = %{
         utterance_ids: ids,
         befund: to_string(f["befund"]),
@@ -477,7 +370,7 @@ defmodule Worker.Jack.Zeit.Anker do
   end
 
   defp w_zweifel(s, f) do
-    with {:ok, ids, zeilen} <- aufloesen(s, f) do
+    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f) do
       anker =
         Setzen.bauen(%{
           utterance_ids: ids,
@@ -488,62 +381,33 @@ defmodule Worker.Jack.Zeit.Anker do
           zweifel: to_string(f["text"])
         })
 
-      s =
-        s |> Stand.gelesen(zeilen) |> Stand.einordnen(zeilen, :unklar) |> Stand.setzen(anker)
+      # **Unklar heisst: in der Kette, aber vermerkt** (#1247, 20.09.2026).
+      # Der Zweifel setzte bis dahin nur einen Anker und liess die Zeilen
+      # unentschieden — sie blieben offen, und `fertig()` fragte weiter nach
+      # ihnen. Für eine Stelle, an der Jack sich NICHT entscheiden kann, ist
+      # das ein Widerspruch: Er hat entschieden, dass er es nicht
+      # entscheiden kann. Die Zeilen gehören also in die Kette, an ihrer
+      # Stelle, mit dem Zweifel daran.
+      s = Stand.gelesen(s, zeilen)
 
-      {s, {:ok, "Zweifel festgehalten — nichts gesetzt, #{length(ids)} Zeile(n) als " <>
-                  "unklar vermerkt. " <> reststand(s)}}
+      s =
+        case Stand.kette(s, &Kette.anhaengen(&1, offene_ids(s, ids))) do
+          {:ok, s, _} -> s
+          {:fehler, _} -> s
+        end
+
+      s = s |> Stand.einordnen(zeilen, :unklar) |> Stand.setzen(anker)
+
+      {s,
+       {:ok,
+        "Zweifel festgehalten — keine Zeit gesetzt, #{length(ids)} Zeile(n) in der " <>
+          "Kette und als unklar vermerkt. " <> Kettenwerkzeuge.kettenstand(s)}}
     else
       {:fehler, text} -> {s, {:error, text}}
     end
   end
 
   # ─── Helfer ─────────────────────────────────────────────────────────
-
-  # Zeilennummern → Utterance-IDs. Eine unbekannte Nummer ist ein Fehler mit
-  # Grund, kein stilles Weglassen: Sonst hinge der Anker an weniger Zeilen,
-  # als Jack meinte, und niemand merkte es.
-  # **Ein Bereich statt einer Liste** (#1247): Bei 2168 Zeilen, die alle
-  # eingeordnet werden müssen, wäre `zeilen: [1, 2, …, 80]` je Aufruf eine
-  # Zumutung — und die Wiederholungssperre zählte jeden mit. `von`/`bis`
-  # nimmt denselben Abschnitt in zwei Zahlen.
-  defp aufloesen(%Stand{} = s, %{} = f) do
-    aufloesen(s, nummern_aus(f))
-  end
-
-  defp aufloesen(%Stand{mitschnitt: m}, nummern) do
-    gewaehlt = for nr <- List.wrap(nummern), z = Enum.find(m, &(&1.nr == nr)), do: z
-
-    fehlend = List.wrap(nummern) -- Enum.map(gewaehlt, & &1.nr)
-
-    cond do
-      gewaehlt == [] ->
-        {:fehler, "Keine dieser Zeilennummern gibt es. Der Mitschnitt hat #{length(m)} Zeilen."}
-
-      fehlend != [] ->
-        {:fehler,
-         "Diese Zeilennummern gibt es nicht: #{Enum.join(fehlend, ", ")}. Nichts " <>
-           "eingetragen — nenn nur Nummern aus dem Mitschnitt."}
-
-      true ->
-        {:ok, Enum.map(gewaehlt, & &1.utterance_id), gewaehlt}
-    end
-  end
-
-  # `zeilen` und `von`/`bis` ergänzen sich; beides leer ist ein Fehler, den
-  # `aufloesen/2` mit seiner eigenen Meldung abfängt.
-  defp nummern_aus(f) do
-    aus_liste = List.wrap(f["zeilen"])
-
-    aus_bereich =
-      case {f["von"], f["bis"]} do
-        {von, bis} when is_integer(von) and is_integer(bis) and von <= bis -> Enum.to_list(von..bis)
-        {von, nil} when is_integer(von) -> [von]
-        _ -> []
-      end
-
-    (aus_liste ++ aus_bereich) |> Enum.uniq() |> Enum.sort()
-  end
 
   defp gesetzt_text(anker, zeilen, s) do
     nummern = zeilen |> Enum.map(& &1.nr) |> Enum.join(", ")
@@ -555,7 +419,7 @@ defmodule Worker.Jack.Zeit.Anker do
   # **Was aus dem Ausdruck wurde, steht in der Antwort.** Der Anker gilt so
   # oder so — aber ob er die Linie bewegt, hängt daran, ob der Parser eine
   # Zahl daraus macht. Ohne diesen Satz setzt Jack eine Uhrzeit, bekommt
-  # „gesetzt", und sieht erst in `linie()` (wenn überhaupt), dass dort ein
+  # „gesetzt", und sieht erst in `lies_kette()` (wenn überhaupt), dass dort ein
   # Strich steht. Die Prüfung liest das Ergebnis der Auflösung, nicht ein
   # zweites Mal den Parser: Was hier steht, ist genau das, womit gerechnet
   # wird.

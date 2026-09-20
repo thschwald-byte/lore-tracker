@@ -57,10 +57,10 @@ defmodule Worker.Jack.Zeit.Abschluss do
   # auf jeden Befund — und dass das Ergebnis trägt (kein Tischgespräch auf
   # der Linie, keine Verschiebung ins Leere).
   def hindernisse(%Stand{lauf: :pruefen} = s),
-    do: ungesehene_befunde(s) ++ tisch_auf_der_linie(s) ++ ohne_ziel(s)
+    do: ungesehene_befunde(s)
 
   def hindernisse(%Stand{} = s),
-    do: ungelesen(s) ++ nicht_eingeordnet(s) ++ tisch_auf_der_linie(s) ++ ohne_ziel(s)
+    do: ungelesen(s) ++ unentschieden(s)
 
   @doc """
   Die Befunde, die Jack noch nicht angesehen hat — leer heisst: alle
@@ -94,45 +94,35 @@ defmodule Worker.Jack.Zeit.Abschluss do
     stellen =
       Enum.map(s.mitschnitt, &%{utterance_id: &1.utterance_id, session_nr: 1, pos: &1.nr})
 
-    Worker.Timeline.Linie.bauen(stellen, Map.values(s.anker)).befunde
+    Worker.Timeline.Linie.aus_kette(s.kette, Map.values(s.anker), stellen).befunde
   end
 
-  # **Jede Zeile braucht eine Einordnung** (Maintainer, 19.09.2026): Was auf
-  # der Linie liegt, soll Spielwelt sein. Eine nicht eingeordnete Zeile wird
-  # trotzdem interpoliert und bekommt eine Spielzeit, die es nicht gibt — und
-  # sie sieht hinterher aus wie jede andere. „Gelesen" allein reicht dafür
-  # nicht: Es ist die Aussage „ich habe hingesehen", nicht „ich habe
-  # entschieden".
-  defp nicht_eingeordnet(%Stand{} = s) do
-    case Stand.ohne_einordnung(s) do
+  # **Die Kette beginnt leer, also ist „offen" eindeutig** (Maintainer,
+  # 20.09.2026: „Default beim Start: Kette ist leer — jack soll bewusst
+  # einsortieren").
+  #
+  # Vorher trug die Linie die Sprechreihenfolge als Default, und „nicht
+  # angefasst" hiess zweierlei zugleich: „die Erzählreihenfolge stimmt
+  # hier" und „ich bin noch nicht hingekommen". Die Schranke musste das über
+  # ein zweites Feld nachbilden (`einordnung`) und prüfte danach zweimal
+  # dasselbe — einmal auf die Einordnung, einmal darauf, ob Tischgespräch
+  # noch auf der Linie liegt.
+  #
+  # Mit der leeren Kette fällt beides zusammen: Eine Zeile liegt in einem
+  # Glied, ist ausdrücklich draussen, oder sie ist offen. Tischgespräch kann
+  # gar nicht mehr „auf der Linie liegen" — `nicht_in_die_kette` nimmt es
+  # heraus, das ist derselbe Aufruf.
+  defp unentschieden(%Stand{} = s) do
+    case Stand.offene_zeilen(s) do
       %{anzahl: 0} ->
         []
 
       %{anzahl: n, zeilen: zeilen} ->
         [
-          "#{n} von #{length(s.mitschnitt)} Zeilen sind noch nicht eingeordnet. Jede " <>
-            "braucht eine Antwort auf die Frage, ob hier gespielt oder am Tisch " <>
-            "geredet wird: ingame() für die Welt, loesen() für Tischgespräch, " <>
-            "zweifel() wenn du es nicht entscheiden kannst. Ohne Einordnung: " <>
-            "#{bereiche(zeilen)}."
-        ]
-    end
-  end
-
-  # **Tischgespräch gehört aus der Kette heraus, nicht bloss etikettiert.**
-  # Praktisch tritt der Fall nur ein, wenn jemand `loesen` rückgängig macht
-  # oder eine Zeile doppelt einordnet — die Regel steht trotzdem hier, weil
-  # sie die Zusage der Linie ist und nicht die Disziplin eines Werkzeugs.
-  defp tisch_auf_der_linie(%Stand{} = s) do
-    case Stand.tisch_in_der_kette(s) do
-      [] ->
-        []
-
-      zeilen ->
-        [
-          "#{length(zeilen)} Zeile(n) sind als Tischgespräch eingeordnet, liegen aber " <>
-            "noch auf der Linie — sie werden interpoliert und bekommen eine Spielzeit, " <>
-            "die es nicht gibt. Mit loesen() heraus: #{bereiche(zeilen)}."
+          "#{n} von #{length(s.mitschnitt)} Zeilen sind noch nicht entschieden. Jede " <>
+            "gehört entweder in ein Kettenglied (haenge_an_kette — nimm grosse " <>
+            "Abschnitte) oder ausdrücklich heraus (nicht_in_die_kette für " <>
+            "Tischgespräch). Offen: #{bereiche(zeilen)}."
         ]
     end
   end
@@ -158,33 +148,12 @@ defmodule Worker.Jack.Zeit.Abschluss do
     end
   end
 
-  # Eine Verschiebung ohne auflösbares Ziel lässt ihre Zeilen zwischen zwei
-  # Orten hängen: Sie stehen weder an ihrer Erzählposition noch anderswo.
-  defp ohne_ziel(s) do
-    offen =
-      s.anker
-      |> Map.values()
-      |> Enum.filter(fn a ->
-        to_string(feld(a, :art)) == "ordnung" and not erreichbar?(s, feld(a, :ziel))
-      end)
-
-    case offen do
-      [] ->
-        []
-
-      liste ->
-        [
-          "#{length(liste)} Verschiebung(en) nennen kein auflösbares Ziel und bleiben " <>
-            "wirkungslos. Betroffen: #{liste |> Enum.map(&feld(&1, :anker_id)) |> Enum.join(", ")}."
-        ]
-    end
-  end
-
-  defp erreichbar?(_s, nil), do: false
-  defp erreichbar?(_s, ""), do: false
-
-  defp erreichbar?(s, ziel),
-    do: Enum.any?(s.mitschnitt, &(&1.utterance_id == ziel))
+  # **`ohne_ziel` ist entfallen** (#1247, 20.09.2026). Es meldete
+  # Verschiebungen, deren Ziel es nicht gibt — eine Nachprüfung, die es
+  # brauchte, solange eine Verschiebung ein Anker war, der still wirkungslos
+  # blieb. Seit die Kette die Operation ausführt, lehnt sie ein fehlendes
+  # Ziel **beim Aufruf** ab und sagt warum; ein Befund hinterher wäre
+  # dieselbe Auskunft, nur Runden später.
 
   @doc """
   Die ungelesenen Zeilen als **Bereiche**, nicht als Einzelnummern.
@@ -224,6 +193,4 @@ defmodule Worker.Jack.Zeit.Abschluss do
 
     if length(gruppen) > @deckel, do: text <> " … (#{length(gruppen)} Lücken)", else: text
   end
-
-  defp feld(a, k) when is_map(a), do: Map.get(a, k) || Map.get(a, to_string(k))
 end

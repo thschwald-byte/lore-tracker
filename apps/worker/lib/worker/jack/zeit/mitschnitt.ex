@@ -163,4 +163,65 @@ defmodule Worker.Jack.Zeit.Mitschnitt do
       _ -> "Sprecher ohne Namen"
     end
   end
+
+  @doc """
+  Zeilennummern → Utterance-IDs. Liefert `{:ok, ids, zeilen}` oder
+  `{:fehler, text}`.
+
+  **Geteilt zwischen Ankern und Kettenwerkzeugen** (#1247, 20.09.2026): Die
+  Adressierung über Zeilennummern ist Sache des Mitschnitts, nicht der
+  Anker — beide Werkzeuggruppen brauchen sie, und zwei Fassungen liefen
+  auseinander.
+
+  Eine unbekannte Nummer ist ein Fehler mit Grund, kein stilles Weglassen:
+  Sonst hinge der Anker an weniger Zeilen, als Jack meinte, und niemand
+  merkte es.
+  """
+
+  # Zeilennummern → Utterance-IDs. Eine unbekannte Nummer ist ein Fehler mit
+  # Grund, kein stilles Weglassen: Sonst hinge der Anker an weniger Zeilen,
+  # als Jack meinte, und niemand merkte es.
+  # **Ein Bereich statt einer Liste** (#1247): Bei 2168 Zeilen, die alle
+  # eingeordnet werden müssen, wäre `zeilen: [1, 2, …, 80]` je Aufruf eine
+  # Zumutung — und die Wiederholungssperre zählte jeden mit. `von`/`bis`
+  # nimmt denselben Abschnitt in zwei Zahlen.
+  def aufloesen(zeilen, %{} = f) when is_list(zeilen) do
+    aufloesen(zeilen, nummern_aus(f))
+  end
+
+  def aufloesen(m, nummern) when is_list(m) do
+    gewaehlt = for nr <- List.wrap(nummern), z = Enum.find(m, &(&1.nr == nr)), do: z
+
+    fehlend = List.wrap(nummern) -- Enum.map(gewaehlt, & &1.nr)
+
+    cond do
+      gewaehlt == [] ->
+        {:fehler, "Keine dieser Zeilennummern gibt es. Der Mitschnitt hat #{length(m)} Zeilen."}
+
+      fehlend != [] ->
+        {:fehler,
+         "Diese Zeilennummern gibt es nicht: #{Enum.join(fehlend, ", ")}. Nichts " <>
+           "eingetragen — nenn nur Nummern aus dem Mitschnitt."}
+
+      true ->
+        {:ok, Enum.map(gewaehlt, & &1.utterance_id), gewaehlt}
+    end
+  end
+
+
+  # `zeilen` und `von`/`bis` ergänzen sich; beides leer ist ein Fehler, den
+  # `aufloesen/2` mit seiner eigenen Meldung abfängt.
+  def nummern_aus(f) do
+    aus_liste = List.wrap(f["zeilen"])
+
+    aus_bereich =
+      case {f["von"], f["bis"]} do
+        {von, bis} when is_integer(von) and is_integer(bis) and von <= bis -> Enum.to_list(von..bis)
+        {von, nil} when is_integer(von) -> [von]
+        _ -> []
+      end
+
+    (aus_liste ++ aus_bereich) |> Enum.uniq() |> Enum.sort()
+  end
+
 end

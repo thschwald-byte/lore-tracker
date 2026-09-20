@@ -27,7 +27,19 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     ]
   end
 
+  # **Der Halter liefert eine Kette, in der schon alles liegt.** Seit sie leer
+  # beginnt (#1247, 20.09.2026), wird ein Anker an einer nicht eingereihten
+  # Zeile abgelehnt — er wäre gesetzt und unsichtbar. Die Tests dieser Datei
+  # prüfen das Verhalten der ANKER; dass sie dafür erst einreihen müssen, ist
+  # Vorbedingung, nicht Gegenstand. Wer die leere Kette braucht, nimmt
+  # `leerer_halter/1`.
   defp halter(lauf \\ :einsortieren) do
+    h = leerer_halter(lauf)
+    if lauf != :gedaechtnis, do: ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 5})
+    h
+  end
+
+  defp leerer_halter(lauf \\ :einsortieren) do
     {:ok, h} = Halter.start_link(Stand.neu(lauf, mitschnitt()), abbild: &Stand.abbild/1)
     h
   end
@@ -63,43 +75,44 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
   defp stand(h), do: Halter.stand(h)
 
+
   # Gültige Beispielargumente je Werkzeug — für den Formtest, der jedes
   # einmal ruft.
   defp beispiel("notiz"), do: %{"abschnitt" => "ABLAUF", "schluessel" => "k", "text" => "t"}
   defp beispiel("notizen_lesen"), do: %{}
-  defp beispiel("mitschnitt"), do: %{"ab" => 1, "anzahl" => 2}
-  defp beispiel("linie"), do: %{}
+  defp beispiel("lies_sprechlinie"), do: %{"ab" => 1, "anzahl" => 2}
+  defp beispiel("lies_kette"), do: %{}
   defp beispiel(n) when n in ~w(offen zahlen fertig hilfe), do: %{}
 
-  defp beispiel(n) when n in ~w(zeitpunkt spanne frist),
+  defp beispiel(n) when n in ~w(setz_zeitpunkt setz_spanne setz_frist),
     do: %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"}
 
-  defp beispiel(n) when n in ~w(dazu ersetzen),
+  defp beispiel(n) when n in ~w(anker_dazu anker_ersetzen),
     do: %{
       "kennung" => "unbekannt",
       "zeilen" => [1],
-      "art" => "zeitpunkt",
+      "art" => "setz_zeitpunkt",
       "wert" => "22:45",
       "welt" => "spielwelt",
       "beleg" => "b"
     }
 
-  defp beispiel("verschieben"),
-    do: %{"zeilen" => [1], "richtung" => "vor", "ziel" => 3, "beleg" => "b"}
-
-  defp beispiel("loesen"), do: %{"zeilen" => [1], "grund" => "Tisch"}
-  defp beispiel("ingame"), do: %{"von" => 1, "bis" => 2}
-  defp beispiel("konflikt"), do: %{"zeilen" => [1], "befund" => "x", "beleg" => "b"}
-  defp beispiel("zweifel"), do: %{"zeilen" => [1], "text" => "unklar"}
+  defp beispiel("versetze_kettenglied"), do: %{"glied" => 1, "anfang" => true, "beleg" => "b"}
+  defp beispiel("loesche_kettenglied"), do: %{"glied" => 1}
+  defp beispiel("erweitere_kettenglied"), do: %{"glied" => 1, "zeilen" => [3]}
+  defp beispiel("nicht_in_die_kette"), do: %{"zeilen" => [1], "grund" => "Tisch"}
+  defp beispiel("haenge_an_kette"), do: %{"von" => 1, "bis" => 2}
+  defp beispiel("melde_konflikt"), do: %{"zeilen" => [1], "befund" => "x", "beleg" => "b"}
+  defp beispiel("kettenplatz_unklar"), do: %{"zeilen" => [1], "text" => "unklar"}
 
   describe "welche Werkzeuge es gibt" do
     test "der Gedächtnis-Lauf setzt nichts" do
       namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt()))
 
-      assert "mitschnitt" in namen
-      assert "linie" in namen
-      refute "zeitpunkt" in namen
-      refute "loesen" in namen
+      assert "lies_sprechlinie" in namen
+      assert "lies_kette" in namen
+      refute "setz_zeitpunkt" in namen
+      refute "loesche_kettenplatz" in namen
     end
 
     test "Einsortieren und Prüfen haben dieselben Werkzeuge" do
@@ -152,21 +165,21 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       # wäre der Lauf in den Rundendeckel gelaufen: Stunden, vollständige
       # Arbeit, kein Ergebnis.
       h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
-      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 5})
 
       assert art(h, "fertig", %{}) == :halt
     end
 
     test "eine Ablehnung ist :error, keine Auskunft" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 2})
 
       # Noch ungelesene Zeilen: fertig lehnt ab.
       assert art(h, "fertig", %{}) == :error
 
       # Eine Zeilennummer, die es nicht gibt.
-      assert art(h, "zeitpunkt", %{
+      assert art(h, "setz_zeitpunkt", %{
                "zeilen" => [99],
                "wert" => "x",
                "welt" => "spielwelt",
@@ -193,13 +206,13 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
       refute "fakten" in namen
       refute "fakt" in namen
-      assert "mitschnitt" in namen
+      assert "lies_sprechlinie" in namen
     end
 
     test "er setzt nichts — sein Ergebnis sind die Notizen" do
       namen = Werkzeuge.namen(Stand.neu(:gedaechtnis, mitschnitt()))
 
-      for w <- ~w(zeitpunkt spanne frist verschieben loesen konflikt), do: refute(w in namen, w)
+      for w <- ~w(setz_zeitpunkt setz_spanne setz_frist versetze_kettenplatz loesche_kettenplatz melde_konflikt), do: refute(w in namen, w)
       assert "notiz" in namen
       assert "notizen_lesen" in namen
     end
@@ -209,7 +222,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
       assert art(h, "fertig", %{}) == :error
 
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
       assert art(h, "fertig", %{}) == :halt
     end
 
@@ -242,16 +255,16 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       namen = Werkzeuge.namen(Stand.neu(:einsortieren, mitschnitt()))
 
       refute "notiz" in namen
-      assert "zeitpunkt" in namen
+      assert "setz_zeitpunkt" in namen
     end
   end
 
   describe "lesen zählt mit" do
     test "mitschnitt/2 gibt Zeilen aus und merkt sie als gelesen" do
-      h = halter()
+      h = leerer_halter()
       assert Stand.zahlen(stand(h)).gelesen == 0
 
-      antwort = ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 3})
+      antwort = ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 3})
 
       assert antwort =~ "Drei viertel elf"
       assert antwort =~ "gelesen 3"
@@ -259,7 +272,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
 
     test "jenseits des Endes kommt eine Auskunft, kein leerer Text" do
-      assert ruf(halter(), "mitschnitt", %{"ab" => 99}) =~ "5 Zeilen"
+      assert ruf(halter(), "lies_sprechlinie", %{"ab" => 99}) =~ "5 Zeilen"
     end
   end
 
@@ -268,7 +281,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       h = halter()
 
       antwort =
-        ruf(h, "zeitpunkt", %{
+        ruf(h, "setz_zeitpunkt", %{
           "zeilen" => [3],
           "wert" => "drei viertel elf",
           "welt" => "spielwelt",
@@ -286,7 +299,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       h = halter()
 
       antwort =
-        ruf(h, "zeitpunkt", %{
+        ruf(h, "setz_zeitpunkt", %{
           "zeilen" => [3, 99],
           "wert" => "x",
           "welt" => "spielwelt",
@@ -303,8 +316,8 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       # Dauer und Zeitpunkt in einer Äusserung ergänzen sich.
       h = halter()
 
-      ruf(h, "zeitpunkt", %{"zeilen" => [5], "wert" => "zwölf", "welt" => "spielwelt", "beleg" => "b"})
-      antwort = ruf(h, "spanne", %{"zeilen" => [5], "wert" => "eine halbe Stunde", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [5], "wert" => "zwölf", "welt" => "spielwelt", "beleg" => "b"})
+      antwort = ruf(h, "setz_spanne", %{"zeilen" => [5], "wert" => "eine halbe Stunde", "welt" => "spielwelt", "beleg" => "b"})
 
       assert antwort =~ "Spanne"
       assert Stand.zahlen(stand(h)).anker == 2
@@ -316,7 +329,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       h = halter()
 
       antwort =
-        ruf(h, "frist", %{
+        ruf(h, "setz_frist", %{
           "zeilen" => [3],
           "wert" => "noch eine Woche",
           "welt" => "spielwelt",
@@ -333,21 +346,21 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       # sie noch bevor. Eine Frist, die interpolierte, verschöbe alles
       # Folgende um eine Woche.
       h = halter()
-      ruf(h, "zeitpunkt", %{"zeilen" => [1], "wert" => "22:00", "welt" => "spielwelt", "beleg" => "b"})
-      ruf(h, "zeitpunkt", %{"zeilen" => [5], "wert" => "23:00", "welt" => "spielwelt", "beleg" => "b"})
-      ohne = ruf(h, "linie", %{})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [1], "wert" => "22:00", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [5], "wert" => "23:00", "welt" => "spielwelt", "beleg" => "b"})
+      ohne = ruf(h, "lies_kette", %{})
 
-      ruf(h, "frist", %{"zeilen" => [3], "wert" => "noch eine Woche", "welt" => "spielwelt", "beleg" => "b"})
-      mit = ruf(h, "linie", %{})
+      ruf(h, "setz_frist", %{"zeilen" => [3], "wert" => "noch eine Woche", "welt" => "spielwelt", "beleg" => "b"})
+      mit = ruf(h, "lies_kette", %{})
 
       assert ohne == mit, "eine Frist darf die gerechnete Linie nicht verändern"
     end
 
     test "eine Frist neben einer Spanne an derselben Zeile ist kein Konflikt" do
       h = halter()
-      ruf(h, "spanne", %{"zeilen" => [3], "wert" => "zwei Stunden", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_spanne", %{"zeilen" => [3], "wert" => "zwei Stunden", "welt" => "spielwelt", "beleg" => "b"})
 
-      assert art(h, "frist", %{
+      assert art(h, "setz_frist", %{
                "zeilen" => [3],
                "wert" => "noch eine Woche",
                "welt" => "spielwelt",
@@ -359,10 +372,10 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   describe "die Kette: Rückfrage → Entscheidung" do
     test "zweiter Zeitpunkt an derselben Stelle fragt zurück und trägt nichts ein" do
       h = halter()
-      ruf(h, "zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
 
       antwort =
-        ruf(h, "zeitpunkt", %{"zeilen" => [3], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
+        ruf(h, "setz_zeitpunkt", %{"zeilen" => [3], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
 
       assert antwort =~ "hängt schon"
       assert antwort =~ "4:11"
@@ -373,16 +386,16 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
     test "mit der Kennung aus der Rückfrage kommt er daneben" do
       h = halter()
-      ruf(h, "zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
-      rueck = ruf(h, "zeitpunkt", %{"zeilen" => [3], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
+      rueck = ruf(h, "setz_zeitpunkt", %{"zeilen" => [3], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
 
       [_, guid] = Regex.run(~r/dazu\("([^"]+)"/, rueck)
 
       antwort =
-        ruf(h, "dazu", %{
+        ruf(h, "anker_dazu", %{
           "kennung" => guid,
           "zeilen" => [3],
-          "art" => "zeitpunkt",
+          "art" => "setz_zeitpunkt",
           "wert" => "22:45",
           "welt" => "spielwelt",
           "beleg" => "b"
@@ -394,13 +407,13 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
     test "eine erfundene Kennung trägt nichts ein und wird benannt" do
       h = halter()
-      ruf(h, "zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [3], "wert" => "4:11", "welt" => "spielwelt", "beleg" => "b"})
 
       antwort =
-        ruf(h, "dazu", %{
+        ruf(h, "anker_dazu", %{
           "kennung" => "ausgedacht",
           "zeilen" => [3],
-          "art" => "zeitpunkt",
+          "art" => "setz_zeitpunkt",
           "wert" => "22:45",
           "welt" => "spielwelt",
           "beleg" => "b"
@@ -414,18 +427,21 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   describe "loesen und zweifel" do
     test "gelöste Zeilen liegen nicht mehr auf der Linie" do
       h = halter()
-      antwort = ruf(h, "loesen", %{"zeilen" => [4], "grund" => "Restzeit des Abends"})
+      antwort = ruf(h, "nicht_in_die_kette", %{"zeilen" => [4], "grund" => "Restzeit des Abends"})
 
-      assert antwort =~ "Restzeit des Abends"
-      assert antwort =~ "nie interpoliert"
-      assert Stand.zahlen(stand(h)).geloest == 1
+      assert antwort =~ "bleiben draussen"
+      assert antwort =~ "bleiben draussen"
+      # `geloest` zählte Anker der Art `:geloest`; die gibt es seit dem
+      # Kettenumbau nicht mehr — „draussen" ist ein Zustand der Kette, kein
+      # Anker.
+      assert Stand.zahlen(stand(h)).draussen == 1
     end
 
     test "zweifel setzt nichts, hält aber fest" do
       h = halter()
-      antwort = ruf(h, "zweifel", %{"zeilen" => [3], "text" => "Tisch oder Welt unklar"})
+      antwort = ruf(h, "kettenplatz_unklar", %{"zeilen" => [3], "text" => "Tisch oder Welt unklar"})
 
-      assert antwort =~ "nichts gesetzt"
+      assert antwort =~ "keine Zeit gesetzt"
       assert Stand.zahlen(stand(h)).zeitpunkte == 0
     end
   end
@@ -438,7 +454,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       lang = for i <- 1..2168, do: zeile(i, "u#{i}", "t")
       {:ok, h} = Halter.start_link(Stand.neu(:einsortieren, lang), abbild: &Stand.abbild/1)
 
-      ruf(h, "mitschnitt", %{"ab" => 61, "anzahl" => 80})
+      ruf(h, "lies_sprechlinie", %{"ab" => 61, "anzahl" => 80})
 
       antwort = ruf(h, "offen", %{})
 
@@ -447,8 +463,8 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     end
 
     test "lückenlos gelesen ergibt einen Bereich" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 2})
 
       assert ruf(h, "offen", %{}) =~ "3–5"
     end
@@ -461,56 +477,56 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     # Spielwelt sein. Eine nicht eingeordnete Zeile wird trotzdem
     # interpoliert und bekommt eine Spielzeit, die es nicht gibt.
     test "gelesen allein reicht nicht mehr" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
 
       antwort = ruf(h, "fertig", %{})
 
       assert art(h, "fertig", %{}) == :error
-      assert antwort =~ "nicht eingeordnet"
+      assert antwort =~ "nicht entschieden"
       assert antwort =~ "1–5"
     end
 
-    test "ingame, loesen und zweifel ordnen ein — dann geht fertig" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+    test "einreihen, draussen und unklar entscheiden — dann geht fertig" do
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
 
-      ruf(h, "ingame", %{"von" => 1, "bis" => 3})
-      ruf(h, "loesen", %{"zeilen" => [4], "grund" => "Pausenabsprache"})
-      ruf(h, "zweifel", %{"zeilen" => [5], "text" => "Tisch oder Welt unklar"})
+      ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 3})
+      ruf(h, "nicht_in_die_kette", %{"zeilen" => [4], "grund" => "Pausenabsprache"})
+      ruf(h, "kettenplatz_unklar", %{"zeilen" => [5], "text" => "Tisch oder Welt unklar"})
 
-      assert Stand.zahlen(stand(h)).eingeordnet == 5
+      assert Stand.zahlen(stand(h)).unentschieden == 0
       assert art(h, "fertig", %{}) == :halt
     end
 
-    test "ingame nimmt einen Bereich — nicht achtzig Einzelnummern" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+    test "haenge_an_kette nimmt einen Bereich — nicht achtzig Einzelnummern" do
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
 
-      antwort = ruf(h, "ingame", %{"von" => 2, "bis" => 4})
+      antwort = ruf(h, "haenge_an_kette", %{"von" => 2, "bis" => 4})
 
-      assert antwort =~ "3 Zeile(n)"
-      assert Stand.zahlen(stand(h)).eingeordnet == 3
+      assert antwort =~ "Zeilen 2–4"
+      assert Stand.zahlen(stand(h)).in_der_kette == 3
     end
 
-    test "ingame zählt die Zeilen auch als gelesen" do
+    test "haenge_an_kette zählt die Zeilen auch als gelesen" do
       # Wer eine Zeile einordnet, hat sie gesehen — sonst müsste er sie
       # zweimal anfassen.
-      h = halter()
-      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
+      h = leerer_halter()
+      ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 5})
 
       assert Stand.zahlen(stand(h)).gelesen == 5
     end
 
     test "eine Zeile ohne jede Angabe wird abgelehnt" do
-      assert art(halter(), "ingame", %{}) == :error
+      assert art(leerer_halter(), "haenge_an_kette", %{}) == :error
     end
   end
 
   describe "fertig" do
     test "lehnt ab, solange Zeilen ungelesen sind — mit Zahl und Nummern" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 2})
 
       antwort = ruf(h, "fertig", %{})
 
@@ -519,17 +535,17 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       assert antwort =~ "3–5"
     end
 
-    test "geht, wenn alles gelesen UND eingeordnet ist" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
-      ruf(h, "ingame", %{"von" => 1, "bis" => 5})
+    test "geht, wenn alles gelesen UND entschieden ist" do
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 5})
 
       assert ruf(h, "fertig", %{}) =~ "Abgeschlossen"
     end
 
     test "offen/0 nennt dasselbe, bevor fertig ablehnt" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 2})
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 2})
 
       assert ruf(h, "offen", %{}) =~ "3 von 5"
       assert ruf(h, "offen", %{}) =~ "3–5"
@@ -540,11 +556,15 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
     test "drei gesagte Uhrzeiten ergeben eine Linie mit stimmenden Abständen" do
       # Die drei echten Anker der Referenzsitzung, so wie Jack sie setzen
       # würde — in Worten, ohne Halbtag. Die Kette entscheidet ihn.
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      # **Je Uhrzeit ein Glied** — ein Glied ist eine Zeiteinheit, drei
+      # verschiedene Zeitpunkte darin wären ein Widerspruch (und werden als
+      # solcher gemeldet).
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
+      for nr <- 1..5, do: ruf(h, "haenge_an_kette", %{"zeilen" => [nr]})
 
       for {zeile, wert} <- [{1, "Drei viertel elf"}, {3, "kurz nach zwölf"}, {5, "kurz vor zwei"}] do
-        ruf(h, "zeitpunkt", %{
+        ruf(h, "setz_zeitpunkt", %{
           "zeilen" => [zeile],
           "wert" => wert,
           "welt" => "spielwelt",
@@ -552,7 +572,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
         })
       end
 
-      antwort = ruf(h, "linie", %{})
+      antwort = ruf(h, "lies_kette", %{})
 
       assert antwort =~ "10:45 belegt"
       assert antwort =~ "12:05 belegt"
@@ -563,7 +583,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       h = halter()
 
       antwort =
-        ruf(h, "zeitpunkt", %{
+        ruf(h, "setz_zeitpunkt", %{
           "zeilen" => [3],
           "wert" => "Drei viertel elf",
           "welt" => "spielwelt",
@@ -576,9 +596,9 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
     test "mit genanntem Halbtag ist die Uhrzeit sofort eindeutig" do
       h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
 
-      ruf(h, "zeitpunkt", %{
+      ruf(h, "setz_zeitpunkt", %{
         "zeilen" => [1],
         "wert" => "Drei viertel elf",
         "welt" => "spielwelt",
@@ -586,7 +606,7 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
         "halbtag" => "nachmittag"
       })
 
-      assert ruf(h, "linie", %{}) =~ "22:45 belegt"
+      assert ruf(h, "lies_kette", %{}) =~ "22:45 belegt"
     end
   end
 
@@ -597,16 +617,16 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
       # konnte die Zahl nicht deuten, riet („roughly 202 hours") und schloss
       # daraus, die Anker seien falsch gemessen.
       h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
 
-      ruf(h, "zeitpunkt", %{
+      ruf(h, "setz_zeitpunkt", %{
         "zeilen" => [1],
         "wert" => "15.11.2080",
         "welt" => "spielwelt",
         "beleg" => "am fünfzehnten November"
       })
 
-      antwort = ruf(h, "linie", %{})
+      antwort = ruf(h, "lies_kette", %{})
 
       assert antwort =~ "2080"
       refute antwort =~ "T+7", "der rohe Tageszähler ist für niemanden lesbar"
@@ -614,9 +634,9 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
     test "innerhalb des ersten Tages bleibt es bei der Uhrzeit" do
       h = halter()
-      ruf(h, "zeitpunkt", %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [1], "wert" => "22:45", "welt" => "spielwelt", "beleg" => "b"})
 
-      antwort = ruf(h, "linie", %{})
+      antwort = ruf(h, "lies_kette", %{})
 
       assert antwort =~ "22:45"
       refute antwort =~ "T+"
@@ -625,22 +645,27 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
 
   describe "linie zeigt das Ergebnis" do
     test "belegte und gerechnete Zeiten sind unterscheidbar" do
-      h = halter()
-      ruf(h, "mitschnitt", %{"ab" => 1, "anzahl" => 5})
-      ruf(h, "zeitpunkt", %{"zeilen" => [1], "wert" => "22:00", "welt" => "spielwelt", "beleg" => "b"})
-      ruf(h, "zeitpunkt", %{"zeilen" => [5], "wert" => "23:00", "welt" => "spielwelt", "beleg" => "b"})
+      # Gerechnet wird zwischen GLIEDERN — mit allem in einem Glied gäbe es
+      # nichts zu interpolieren.
+      h = leerer_halter()
+      ruf(h, "lies_sprechlinie", %{"ab" => 1, "anzahl" => 5})
+      for nr <- 1..5, do: ruf(h, "haenge_an_kette", %{"zeilen" => [nr]})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [1], "wert" => "22:00", "welt" => "spielwelt", "beleg" => "b"})
+      ruf(h, "setz_zeitpunkt", %{"zeilen" => [5], "wert" => "23:00", "welt" => "spielwelt", "beleg" => "b"})
 
-      antwort = ruf(h, "linie", %{})
+      antwort = ruf(h, "lies_kette", %{})
 
       assert antwort =~ "belegt"
       assert antwort =~ "gerechnet"
     end
 
-    test "gelöste Zeilen werden als solche ausgewiesen" do
+    test "Zeilen draussen erscheinen nicht in der Kette, aber im Stand" do
       h = halter()
-      ruf(h, "loesen", %{"zeilen" => [4], "grund" => "Tisch"})
+      ruf(h, "nicht_in_die_kette", %{"zeilen" => [4], "grund" => "Tisch"})
 
-      assert ruf(h, "linie", %{}) =~ "aus der Kette gelöst"
+      antwort = ruf(h, "lies_kette", %{})
+      assert antwort =~ "1 draussen"
+      assert antwort =~ "4 Zeilen drin"
     end
   end
 end

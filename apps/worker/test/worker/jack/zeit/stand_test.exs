@@ -76,7 +76,7 @@ defmodule Worker.Jack.Zeit.StandTest do
       s =
         Stand.neu(:einsortieren, mitschnitt(3))
         |> Stand.setzen(a)
-        |> Stand.setzen(Setzen.loesen(a, "Tischgespräch"))
+        |> Stand.setzen(Setzen.loesche_kettenplatz(a, "Tischgespräch"))
 
       assert Stand.an(s, ["u1"]) == []
       # Die Zeile steht aber noch — kein Delete.

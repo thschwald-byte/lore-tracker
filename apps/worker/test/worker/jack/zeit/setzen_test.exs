@@ -57,8 +57,8 @@ defmodule Worker.Jack.Zeit.SetzenTest do
       assert {:rueckfrage, r} = Setzen.entscheiden(s, wunsch(), nil, guid_gibt())
       assert r.text =~ "4:11"
       assert r.text =~ "noch nichts"
-      assert r.text =~ "dazu"
-      assert r.text =~ "ersetzen"
+      assert r.text =~ "anker_dazu"
+      assert r.text =~ "anker_ersetzen"
     end
 
     test "ANDERE Art an derselben Utterance → kein Konflikt, beide hängen dort" do
@@ -82,7 +82,7 @@ defmodule Worker.Jack.Zeit.SetzenTest do
 
     test "ein gelöster Anker blockiert nicht mehr" do
       a = Setzen.bauen(wunsch(:zeitpunkt, "4:11", ["u1"]))
-      s = stand() |> Stand.setzen(a) |> Stand.setzen(Setzen.loesen(a, "Tisch"))
+      s = stand() |> Stand.setzen(a) |> Stand.setzen(Setzen.loesche_kettenplatz(a, "Tisch"))
 
       assert {:gesetzt, _} = Setzen.entscheiden(s, wunsch(), nil, guid_gibt())
     end
@@ -172,7 +172,7 @@ defmodule Worker.Jack.Zeit.SetzenTest do
   describe "loesen/2" do
     test "schreibt eine reguläre Zeile mit Art geloest, auf DERSELBEN Adresse" do
       {:gesetzt, anker} = Setzen.entscheiden(stand(), wunsch(), nil, guid_gibt())
-      geloest = Setzen.loesen(anker, "Tischgespräch")
+      geloest = Setzen.loesche_kettenplatz(anker, "Tischgespräch")
 
       assert geloest.art == :geloest
       assert geloest.zweifel == "Tischgespräch"

@@ -40,10 +40,26 @@ defmodule Worker.Jack.Zeit.PruefenTest do
     ]
   end
 
+  # **Der Halter liefert eine Kette, in der alles liegt.** Seit sie leer
+  # beginnt (#1247, 20.09.2026), wird ein Anker an einer nicht eingereihten
+  # Zeile abgelehnt. Diese Datei prüft die Schranke des PRÜF-Laufs; dass
+  # vorher eingereiht sein muss, ist Vorbedingung.
   defp halter(lauf, opts \\ []) do
     {:ok, h} =
       Halter.start_link(Stand.neu(lauf, mitschnitt(), opts), abbild: &Stand.abbild/1)
 
+    ruf(h, "haenge_an_kette", %{"von" => 1, "bis" => 5})
+    h
+  end
+
+  # **Für einen Widerspruch braucht es mehrere Glieder.** Ein Glied ist eine
+  # Zeiteinheit: Liegen alle Zeilen darin, gibt es genau einen Punkt, und
+  # zwischen einem Punkt und sich selbst kann keine Spanne überlaufen. Die
+  # Fixture legt deshalb drei Glieder an — so, wie eine echte Sitzung
+  # eingereiht würde.
+  defp halter_je_glied(lauf) do
+    {:ok, h} = Halter.start_link(Stand.neu(lauf, mitschnitt()), abbild: &Stand.abbild/1)
+    for nr <- 1..5, do: ruf(h, "haenge_an_kette", %{"zeilen" => [nr]})
     h
   end
 
@@ -60,21 +76,21 @@ defmodule Worker.Jack.Zeit.PruefenTest do
   # Ein Widerspruch, den die Rechnung findet: zwischen 22:00 und 22:30 liegen
   # dreissig Minuten, die eingetragene Dauer sind zwei Stunden.
   defp mit_widerspruch(h) do
-    ruf(h, "zeitpunkt", %{
+    ruf(h, "setz_zeitpunkt", %{
       "zeilen" => [1],
       "wert" => "22:00",
       "welt" => "spielwelt",
       "beleg" => "Es ist jetzt zweiundzwanzig Uhr."
     })
 
-    ruf(h, "spanne", %{
+    ruf(h, "setz_spanne", %{
       "zeilen" => [3],
       "wert" => "zwei Stunden",
       "welt" => "spielwelt",
       "beleg" => "Ihr seid zwei Stunden unterwegs."
     })
 
-    ruf(h, "zeitpunkt", %{
+    ruf(h, "setz_zeitpunkt", %{
       "zeilen" => [5],
       "wert" => "22:30",
       "welt" => "spielwelt",
@@ -100,7 +116,7 @@ defmodule Worker.Jack.Zeit.PruefenTest do
     end
 
     test "ein Befund blockiert, bis Jack ihn angesehen hat" do
-      h = halter(:pruefen) |> mit_widerspruch()
+      h = halter_je_glied(:pruefen) |> mit_widerspruch()
 
       assert [hindernis] = Abschluss.hindernisse(stand(h))
       assert hindernis =~ "Befund"
@@ -109,8 +125,8 @@ defmodule Worker.Jack.Zeit.PruefenTest do
 
       assert art(h, "fertig") == :error
 
-      # linie() zeigt die Befunde — damit sind sie angesehen.
-      antwort = ruf(h, "linie")
+      # lies_kette() zeigt die Befunde — damit sind sie angesehen.
+      antwort = ruf(h, "lies_kette")
       assert antwort =~ "Befunde:"
 
       assert Abschluss.hindernisse(stand(h)) == []
@@ -118,12 +134,12 @@ defmodule Worker.Jack.Zeit.PruefenTest do
     end
 
     test "offen() nennt die ungesehenen Befunde, nicht die Zeilen" do
-      h = halter(:pruefen) |> mit_widerspruch()
+      h = halter_je_glied(:pruefen) |> mit_widerspruch()
 
       antwort = ruf(h, "offen")
       assert antwort =~ "Befund"
       refute antwort =~ "noch nicht gelesen"
-      refute antwort =~ "nicht eingeordnet"
+      refute antwort =~ "nicht entschieden"
     end
   end
 
@@ -133,7 +149,7 @@ defmodule Worker.Jack.Zeit.PruefenTest do
       # Umständen zu erfüllen: `gesehen` hakt über die ID ab, und `nil` ist
       # nie enthalten. Der Lauf liefe in den Rundendeckel — die Klasse, die
       # beim Chronik-Jack 28 von 51 Runden gekostet hat (#1211).
-      h = halter(:pruefen) |> mit_widerspruch()
+      h = halter_je_glied(:pruefen) |> mit_widerspruch()
 
       befunde = Abschluss.befunde(stand(h))
       ueberlauf = Enum.find(befunde, &(&1.art == :spannen_ueberlauf))
@@ -142,70 +158,64 @@ defmodule Worker.Jack.Zeit.PruefenTest do
       assert is_nil(ueberlauf.anker_id)
       assert is_binary(ueberlauf.id) and ueberlauf.id != ""
 
-      ruf(h, "linie")
+      ruf(h, "lies_kette")
       assert Abschluss.hindernisse(stand(h)) == []
     end
   end
 
-  describe "linie() zeigt die Befunde in Portionen" do
+  describe "lies_kette() zeigt die Befunde in Portionen" do
     test "gezeigt werden die ungesehenen; ein zweiter Aufruf bringt die nächsten" do
       # Sonst gilt mit einem einzigen Aufruf alles als angesehen, sobald es
       # mehr Befunde gibt, als in eine Antwort passen.
-      h = halter(:pruefen) |> mit_widerspruch()
+      h = halter_je_glied(:pruefen) |> mit_widerspruch()
       linie = Worker.Timeline.Linie.bauen(stellen(), Map.values(stand(h).anker))
 
       erste = Lesen.befunde_zum_zeigen(stand(h), linie)
       assert length(erste) >= 1
 
-      ruf(h, "linie")
+      ruf(h, "lies_kette")
       # Nach dem Ansehen sind keine ungesehenen mehr da — gezeigt wird dann
       # wieder der Bestand, aber nichts bleibt unentdeckt.
       assert Enum.reject(linie.befunde, &MapSet.member?(stand(h).gesehen, &1.id)) == []
     end
 
     test "das Merkmal der Wiederholungssperre hängt an der Zahl der gesehenen Befunde" do
-      # Ohne das zählte der zweite linie()-Aufruf als Wiederholung, obwohl er
+      # Ohne das zählte der zweite lies_kette()-Aufruf als Wiederholung, obwohl er
       # neue Befunde zeigt (Muster der Suchen, #1210).
-      w = Werkzeuge.fuer(halter(:pruefen)) |> Enum.find(&(&1.name == "linie"))
+      w = Werkzeuge.fuer(halter(:pruefen)) |> Enum.find(&(&1.name == "lies_kette"))
 
       assert is_function(w.wiederholung_merkmal, 1)
     end
   end
 
-  describe "linie() adressiert über Zeilennummern, wie mitschnitt()" do
-    # Der Defekt des Laufs vom 19.09.2026: `ab` war die Position in der
-    # Reihe, aus der die gelösten Zeilen heraus sind — angezeigt wurden aber
-    # Zeilennummern. Bei 459 gelösten Zeilen bedeutete `linie(ab: n)` etwas
-    # anderes als `mitschnitt(ab: n)`, und hinter dem Ende der Reihe kam
-    # nichts. Das Modell schloss daraus, die halbe Sitzung sei gelöst, und
-    # prüfte das fünf Runden lang nach.
-    test "eine Zeile hinter gelösten Zeilen ist unter ihrer eigenen Nummer erreichbar" do
+  describe "lies_kette() zeigt GLIEDER, adressiert über Zeilennummern" do
+    # Der Defekt vom 19.09.2026 war, dass `ab` die Position in der Reihe war
+    # statt eine Zeilennummer — bei 459 gelösten Zeilen bedeutete
+    # `lies_kette(ab: n)` etwas anderes als `lies_sprechlinie(ab: n)`. Seit
+    # dem Kettenumbau zeigt es Glieder, und `ab` filtert sie über ihre
+    # Zeilenspanne.
+    test "ein Glied erscheint unter seiner Zeilenspanne" do
       h = halter(:pruefen)
-      ruf(h, "loesen", %{"von" => 1, "bis" => 3, "grund" => "Tischgespräch"})
+      antwort = ruf(h, "lies_kette", %{"ab" => 1})
 
-      antwort = ruf(h, "linie", %{"ab" => 4})
-
-      assert antwort =~ "von Zeile 4"
-      assert antwort =~ "Ihr kommt an.", "Zeile 4 muss im Ausschnitt stehen"
+      assert antwort =~ "Glied"
+      assert antwort =~ "Zeilen 1–5"
     end
 
-    test "hinter der letzten Zeile sagt die Antwort, WO die Linie endet" do
+    test "hinter dem letzten Glied sagt die Antwort das, statt leer zu bleiben" do
       h = halter(:pruefen)
+      antwort = ruf(h, "lies_kette", %{"ab" => 99})
 
-      antwort = ruf(h, "linie", %{"ab" => 99})
-
-      assert antwort =~ "Ab Zeile 99 liegt nichts mehr auf der Linie"
-      assert antwort =~ "die letzte ist Zeile 5"
+      assert antwort =~ "Ab Zeile 99 liegt kein Glied mehr in der Kette"
     end
 
-    test "der Kopf sagt, dass Lücken in der Nummernfolge gelöste Zeilen sind" do
-      h = halter(:pruefen)
-      ruf(h, "loesen", %{"von" => 2, "bis" => 3, "grund" => "Regelfrage"})
+    test "die leere Kette sagt, was zu tun ist" do
+      {:ok, h} = Halter.start_link(Stand.neu(:einsortieren, mitschnitt()), abbild: &Stand.abbild/1)
+      antwort = ruf(h, "lies_kette", %{})
 
-      antwort = ruf(h, "linie", %{"ab" => 1})
-
-      assert antwort =~ "gelöste erscheinen hier nicht"
-      refute antwort =~ "Ihr geht los.", "Zeile 2 ist gelöst und darf nicht erscheinen"
+      assert antwort =~ "noch LEER"
+      assert antwort =~ "haenge_an_kette"
+      assert antwort =~ "5 unentschieden"
     end
   end
 

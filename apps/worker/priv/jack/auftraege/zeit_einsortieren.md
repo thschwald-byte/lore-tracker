@@ -3,89 +3,102 @@
 Du hast im vorigen Lauf gelesen, was in dieser Kampagne geschieht. Jetzt gehst
 du durch den **Mitschnitt** und bringst die Äußerungen in eine zeitliche Reihe.
 
+## Zwei Achsen — und du baust die zweite
+
+**Die Sprechlinie** ist, was wann gesagt wurde. Sie steht fest, niemand fasst
+sie an; `lies_sprechlinie(ab: n)` zeigt sie dir.
+
+**Die Kette** ist, was wann *geschah*. Sie ist am Anfang **leer**, und sie zu
+bauen ist deine Arbeit in diesem Lauf. `lies_kette()` zeigt dir, was daraus
+bisher geworden ist.
+
+Für die meisten Äußerungen fällt beides zusammen: Es geschieht in der
+Reihenfolge, in der gesprochen wird. Für einen Rückblick nicht — er wird
+jetzt erzählt und geschah früher.
+
 ## Die Reihenfolge, in der es zählt
 
 Wenn zwei Regeln sich zu widersprechen scheinen, gilt die weiter oben.
 
 1. **Nichts erfinden.** Kein Anker ohne Beleg im Text.
-2. **Was ein Mensch festgelegt hat, bleibt.** Dagegen hilft nur `konflikt`.
-3. **Jede Zeile lesen** — auch die, die du nicht anfasst.
-4. **Jede Zeile einordnen**: `ingame`, `loesen` oder `zweifel`.
-5. **Genannte Zeiten als Anker setzen** (`zeitpunkt`), vergangene Dauer als
-   `spanne`, angekündigte als `frist`.
-6. **Rückblicke und Ankündigungen an ihren Platz** (`verschieben`) — aber nur,
-   wenn der Text es belegt.
-7. **Im Zweifel `zweifel`**, nie raten.
-8. **`linie()` prüfen**, bevor du weitergehst; `fertig()` erst, wenn `offen()`
-   nichts mehr nennt.
+2. **Was ein Mensch festgelegt hat, bleibt.** Dagegen hilft nur `melde_konflikt`.
+3. **Jede Zeile lesen.**
+4. **Jede Zeile entscheiden**: in ein Kettenglied (`haenge_an_kette`) oder
+   ausdrücklich heraus (`nicht_in_die_kette`).
+5. **Erst einreihen, dann datieren.** Ein Anker an einer Zeile, die in keinem
+   Glied liegt, wird abgelehnt — er wäre gesetzt und unsichtbar.
+6. **Rückblicke an ihren Platz** (`versetze_kettenglied`) — aber nur, wenn der
+   Text es belegt.
+7. **Im Zweifel `kettenplatz_unklar`**, nie raten.
+8. **`lies_kette()` prüfen**, bevor du weitergehst; `fertig()` erst, wenn
+   `offen()` nichts mehr nennt.
 
-## So arbeitest du — abschnittsweise, nicht erst lesen und dann alles
+## Ein Glied ist eine Zeiteinheit, keine Zeile
 
-**Lies ein Stück, ordne dieses Stück ein, setz die Anker, die dir darin
+Eine Szene — Ankunft, Verhandlung, Rückzug — ist **ein** Glied, auch wenn
+vierzig Zeilen dazugehören. Alle Zeilen eines Gliedes teilen sich seine Zeit;
+gerechnet wird zwischen Gliedern.
+
+Das ist kein Detail, sondern der Grund, warum die Kette überhaupt lesbar ist:
+Eine Sitzung mit zweitausend Äußerungen hat vielleicht achtzig Glieder. Die
+kannst du überblicken, die Äußerungen nicht.
+
+**Nimm also grosse Abschnitte.** `haenge_an_kette(von: 200, bis: 640)` ist ein
+Aufruf für 441 Zeilen.
+
+## So arbeitest du — abschnittsweise
+
+**Lies ein Stück, entscheide dieses Stück, setz die Zeiten, die dir darin
 begegnet sind. Dann das nächste.**
 
-Nicht: erst zweitausend Zeilen lesen und dann einordnen. Das geht schief,
-und zwar nicht aus Bequemlichkeit — dein Gedächtnis wird zwischendurch
-zusammengefasst, und was du nur gedacht und nicht aufgerufen hast, ist dann
-weg. Was du eingeordnet hast, bleibt.
+Nicht: erst zweitausend Zeilen lesen und dann entscheiden. Dein Gedächtnis
+wird zwischendurch zusammengefasst, und was du nur gedacht und nicht
+aufgerufen hast, ist dann weg.
 
 Ein Durchgang sieht so aus:
 
-    mitschnitt(ab: 1, anzahl: 80)
-    loesen(von: 1, bis: 41, grund: "Technik-Geplänkel vor dem Spiel")
-    ingame(von: 42, bis: 80)
-    zeitpunkt(zeilen: [61], wert: "kurz vor 2080", welt: "spielwelt", beleg: "…")
-    mitschnitt(ab: 81, anzahl: 80)
+    lies_sprechlinie(ab: 1, anzahl: 80)
+    nicht_in_die_kette(von: 1, bis: 41, grund: "Technik-Geplänkel vor dem Spiel")
+    haenge_an_kette(von: 42, bis: 80, grund: "Ankunft im Hafen")
+    setz_zeitpunkt(zeilen: [61], wert: "kurz vor sieben", welt: "spielwelt", beleg: "…")
+    lies_sprechlinie(ab: 81, anzahl: 80)
     …
 
 Achtzig Zeilen sind der Richtwert, keine Vorschrift: Nimm weniger, wenn ein
-Szenenwechsel eine feinere Grenze nahelegt. Worauf es ankommt, sind drei bis
-fünf Aufrufe je Abschnitt statt dreißig — `ingame`, `loesen` und `zweifel`
-nehmen alle `von`/`bis`, und ein Mitschnitt wechselt in Abschnitten zwischen
-Tisch und Welt, nicht im Satztakt.
+Szenenwechsel eine feinere Grenze nahelegt.
 
-## Wie die Linie funktioniert — lies das zuerst
+## Die fünf Werkzeuge der Kette
 
-Jede Äußerung steht schon an einer Stelle: **in der Reihenfolge, in der
-gesprochen wurde.** Das ist die Grundordnung, und sie stimmt fast immer. Du
-musst sie nicht bestätigen. Was du nicht anfasst, bleibt stehen.
+- **`haenge_an_kette`** — bildet ein Glied und hängt es an. Ohne Angabe ans
+  Ende; mit `vor`/`nach` an eine bestimmte Stelle, mit `anfang: true` vor
+  alles.
+- **`erweitere_kettenglied`** — ein bestehendes Glied wächst und **bleibt, wo
+  es ist**. Für den Fall „ach, die Szene fing schon bei 98 an". Die Zeilen
+  eines Gliedes sind selbst eine Kette: `vor`/`nach` nennen dort eine Zeile
+  im Glied.
+- **`versetze_kettenglied`** — ein Glied wandert. Vor ein anderes, hinter ein
+  anderes, oder an den Anfang.
+- **`loesche_kettenglied`** — nimmt ein Glied heraus; seine Zeilen sind danach
+  wieder **offen**, nicht draussen. Für ein Glied, das du neu schneiden willst.
+- **`nicht_in_die_kette`** — Tischgespräch. Kommt nie hinein, wird nie datiert.
 
-Deine Arbeit sind die **Abweichungen und die Anker**:
+## Dann die Zeiten
 
-- **`zeitpunkt`** — hier wurde eine Zeit *gesagt*. „Drei viertel elf“, „am
-  fünfzehnten“, „kurz vor sieben“. Das ist ein fester Punkt auf der Linie.
-- **`spanne`** — hier ist Zeit *vergangen*. „Wir sind zwei Stunden
-  marschiert“, „eine halbe Stunde später“. Verrechnet wird sie an der
-  **höchsten** der Zeilennummern, die du nennst: Der Satz fällt, wenn die
-  Zeit schon vorbei ist. Ohne Spannen steht die Linie still — zwischen zwei
-  genannten Uhrzeiten liegen oft Stunden Spielzeit, die niemand ausspricht.
-- **`frist`** — hier ist Zeit *angekündigt*. „Die Verhandlungen dauern noch
-  eine Woche“, „in zwei Stunden kommt der Kurier“. **Eine Frist bewegt die
-  Linie nie** — die Zeit steht noch bevor. Festgehalten wird sie trotzdem:
-  sagt später jemand „die Verhandlungen sind vorbei“, ergibt sich aus beidem
-  eine Spanne.
-- **`verschieben`** — hier steht etwas an der falschen Stelle. Ein Rückblick
-  liegt in der **Vergangenheit**, auch wenn er mitten in der Sitzung erzählt
-  wird; eine Ankündigung in der Zukunft. **Verschieben braucht einen Beleg
-  im Text** — ohne einen bleibt die Zeile, wo sie ist.
-- **`loesen`** — das gehört gar nicht auf die Linie. Tischgespräch,
-  Regelfrage, Würfelwurf, Smalltalk.
+- **`setz_zeitpunkt`** — hier wurde eine Zeit *gesagt*. „Drei viertel elf“,
+  „am fünfzehnten“, „kurz vor sieben“.
+- **`setz_spanne`** — hier ist Zeit *vergangen*. „Wir sind zwei Stunden
+  marschiert“. Ohne Spannen steht die Kette still: Zwischen zwei genannten
+  Uhrzeiten liegen oft Stunden, die niemand ausspricht.
+- **`setz_frist`** — hier ist Zeit *angekündigt*. **Eine Frist bewegt die
+  Kette nie** — die Zeit steht noch bevor. Festgehalten wird sie trotzdem.
 
-Du musst nicht rechnen. `linie()` zeigt dir jederzeit das Ergebnis, nicht
-deine Eingaben. Nutz das: Ein einzelner Anker kann für sich richtig sein und
-die Reihe trotzdem falsch — das siehst du nur am gerechneten Ergebnis.
-
-**Aber verlass dich nicht darauf, dass ich die Lücken richtig fülle.**
-Zwischen zwei weit entfernten Ankern verteile ich gleichmäßig, und das ist
-meistens falsch: Ein Einbruch dauert Minuten, eine Anfahrt Stunden, und
-dazwischen liegen Blöcke voller Regelgespräch, die gar keine Spielzeit
-verbrauchen. **Je mehr Spannen du einträgst, desto weniger muss ich raten.**
+**Verlass dich nicht darauf, dass ich die Lücken richtig fülle.** Zwischen
+zwei weit entfernten Ankern verteile ich gleichmäßig, und das ist meistens
+falsch. Je mehr Spannen du einträgst, desto weniger muss ich raten.
 
 Es gibt Sitzungen, in denen über anderthalbtausend Äußerungen lang keine
-einzige Uhrzeit fällt — und in denen trotzdem geschlafen, gereist, eingebrochen
-und gekämpft wird. Was dort steht, sind Spannen: „für die nächsten zwei
-Stunden", „das dauert eine Stunde", „vier oder fünf Minuten vergangen". Genau
-danach suchst du.
+einzige Uhrzeit fällt — und in denen trotzdem geschlafen, gereist,
+eingebrochen und gekämpft wird. Was dort steht, sind Spannen.
 
 ## Die Welt-Frage kommt bei JEDEM Anker zuerst
 
@@ -179,29 +192,19 @@ sieht so aus:
 [1106]  „… dann wird es jetzt so kurz nach zwölf sein.“   ← DAS ist die Antwort
 ```
 
-## Jede Zeile braucht eine Einordnung — das ist die Hauptarbeit
+## Jede Zeile braucht eine Entscheidung — das ist die Hauptarbeit
 
 Zu **jeder** Zeile musst du sagen, ob hier gespielt oder am Tisch geredet
-wird. Drei Antworten, und sie sind zugleich die Werkzeuge:
+wird:
 
-- **`ingame`** — gehört zur erzählten Welt, bleibt auf der Linie.
-- **`loesen`** — Tischgespräch, Regelfrage, Würfelwurf, Smalltalk, Pause.
-  Raus aus der Kette.
-- **`zweifel`** — du kannst es nicht entscheiden. Die Zeile bleibt auf der
-  Linie, ist aber vermerkt, und es wird keine Zeit aus ihr abgeleitet. Das
-  gilt für **beide** Unklarheiten: „Welt oder Tisch?“ und „gespielt schon,
-  aber die Zeitangabe verstehe ich nicht“.
+- **`haenge_an_kette`** — gehört zur erzählten Welt, kommt in ein Glied.
+- **`nicht_in_die_kette`** — Tischgespräch, Regelfrage, Würfelwurf, Smalltalk.
+- **`kettenplatz_unklar`** — du kannst es nicht entscheiden. Die Zeile kommt
+  in die Kette und ist vermerkt; ich leite keine Zeit aus ihr ab.
 
-**Warum das nicht optional ist:** Was auf der Linie liegt, bekommt eine
-Spielzeit — auch wenn es keine hat. Eine Zeile Tischgespräch, die niemand
-herausgenommen hat, wird zwischen zwei Ankern interpoliert und sieht
-hinterher aus wie jede andere. Deshalb verlangt `fertig()` beides: jede
-Zeile eingeordnet, und alles Tischgespräch aus der Kette heraus.
-
-**Nimm große Abschnitte.** Alle drei Werkzeuge nehmen `von`/`bis`:
-`ingame(von: 200, bis: 640)` ist ein Aufruf für 441 Zeilen. Ein Mitschnitt
-wechselt nicht im Satztakt zwischen Tisch und Welt — er tut es in
-Abschnitten, und genau so ordnest du ihn ein.
+**Warum das nicht optional ist:** Die Kette beginnt leer. Was niemand
+entschieden hat, ist offen — nicht „steht schon richtig". `fertig()` zählt
+genau diese Zeilen, und `offen()` sagt dir vorher, wo sie liegen.
 
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 
@@ -278,13 +281,11 @@ und die Antwort sagt dir das. Zwei Wege bleiben: anders einordnen, oder
 
 ## Der Abschluss
 
-`fertig()` verlangt dreierlei:
+`fertig()` verlangt zweierlei:
 
-1. **Jede Zeile gelesen.** „Nicht angefasst“ heißt „die Erzählreihenfolge
-   stimmt hier“, und das ist eine Aussage über die Welt, die du nur treffen
-   kannst, wenn du die Zeile gesehen hast.
-2. **Jede Zeile eingeordnet** — `ingame`, `loesen` oder `zweifel`.
-3. **Kein Tischgespräch mehr auf der Linie.**
+1. **Jede Zeile gelesen.**
+2. **Jede Zeile entschieden** — in einem Kettenglied oder ausdrücklich
+   draussen.
 
 Was es **nicht** verlangt: dass jede Zeile einen Anker hat. Die meisten haben
 keinen, und das ist richtig.

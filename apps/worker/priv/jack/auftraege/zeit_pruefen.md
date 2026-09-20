@@ -19,7 +19,7 @@ Wenn zwei Regeln sich zu widersprechen scheinen, gilt die weiter oben.
 
 Beim Einordnen siehst du eine Äußerung nach der anderen. Jede einzelne
 Entscheidung kann richtig sein und die Reihe trotzdem falsch — das zeigt sich
-erst am gerechneten Ergebnis. Genau dafür ist `linie()` da: Sie zeigt, wo jede
+erst am gerechneten Ergebnis. Genau dafür ist `lies_kette()` da: Sie zeigt, wo jede
 Zeile liegt, was belegt und was zwischen zwei Ankern gerechnet ist, und welche
 Widersprüche die Rechnung findet.
 
@@ -81,7 +81,7 @@ gelesen und eingeordnet hat, steht — du erbst es. `fertig()` verlangt
 dreierlei:
 
 1. **Jeden Befund einmal angesehen.** Angesehen heisst: die Stelle
-   angefasst, mit `linie()`, `mitschnitt()` oder einem setzenden Werkzeug.
+   angefasst, mit `lies_kette()`, `lies_sprechlinie()` oder einem setzenden Werkzeug.
    Bestätigen musst du nichts; ein Befund, den du dir ansiehst und für
    richtig hältst, ist damit erledigt.
 2. **Kein Tischgespräch auf der Linie.**

@@ -27,13 +27,13 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   alias Worker.Jack.Resuemee.Halter
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
-  alias Worker.Jack.Zeit.{Abschluss, Anker, Lesen, Notizen, Stand}
+  alias Worker.Jack.Zeit.{Abschluss, Anker, Kettenwerkzeuge, Lesen, Notizen, Stand}
 
   # `hilfe` steht hier NICHT: `Gemeinsam.aus/3` stellt es jedem Lauf von
   # selbst voran (Maintainer, 18.09.2026 — die Beschreibungen tragen die
   # Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
   # der Wortlaut weg).
-  @lesend ~w(mitschnitt linie offen zahlen)
+  @lesend ~w(lies_sprechlinie lies_kette offen zahlen)
   # Nur der Gedächtnis-Lauf notiert: Er SETZT nichts, und sein Ergebnis ist
   # genau diese Notiz — ohne sie wäre er wirkungslos (Befund des zweiten
   # echten Laufs, 19.09.2026). Die beiden anderen Läufe legen ihr Ergebnis in
@@ -48,7 +48,11 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # es Jacks eigenes Muster: Phase 1 und Phase 2 lesen denselben Mitschnitt,
   # die eine versteht ihn, die andere ordnet ein.
   @notierend ~w(notiz notizen_lesen)
-  @setzend ~w(zeitpunkt spanne frist verschieben loesen ingame dazu ersetzen konflikt zweifel)
+  # **Die Kette zuerst, die Anker danach** — in dieser Reihenfolge sieht sie
+  # das Modell, und in dieser Reihenfolge ist die Arbeit gedacht: erst
+  # einreihen, dann datieren.
+  @kette ~w(haenge_an_kette erweitere_kettenglied versetze_kettenglied loesche_kettenglied nicht_in_die_kette)
+  @setzend ~w(setz_zeitpunkt setz_spanne setz_frist anker_dazu anker_ersetzen melde_konflikt kettenplatz_unklar)
 
   @doc """
   Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Liste.
@@ -60,7 +64,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   @spec namen(Stand.t()) :: [String.t()]
   def namen(%Stand{lauf: :gedaechtnis}), do: @lesend ++ @notierend ++ ["fertig"]
   def namen(%Stand{lauf: lauf}) when lauf in [:einsortieren, :pruefen],
-    do: @lesend ++ @setzend ++ ["fertig"]
+    do: @lesend ++ @kette ++ @setzend ++ ["fertig"]
 
   def namen(%Stand{lauf: lauf}) do
     raise ArgumentError,
@@ -79,7 +83,10 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   @doc false
   def definitionen(%Stand{} = s) do
-    Lesen.werkzeuge(s) ++ Notizen.werkzeuge() ++ Anker.werkzeuge() ++ abschluss_werkzeuge(s.lauf)
+    Lesen.werkzeuge(s) ++
+      Notizen.werkzeuge() ++
+      Kettenwerkzeuge.werkzeuge() ++
+      Anker.werkzeuge() ++ abschluss_werkzeuge(s.lauf)
   end
 
   # ─── Abschluss ──────────────────────────────────────────────────────
@@ -123,8 +130,8 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
           "Schliesst den Prüf-Lauf ab. Du musst NICHT noch einmal lesen und " <>
             "nicht noch einmal einordnen — beides steht schon. Was dieser Lauf " <>
             "verlangt: Jeden BEFUND der Rechnung einmal angesehen zu haben. " <>
-            "Angesehen heisst, die Stelle angefasst zu haben — mit linie(), " <>
-            "mitschnitt() oder einem setzenden Werkzeug; bestätigen musst du " <>
+            "Angesehen heisst, die Stelle angefasst zu haben — mit lies_kette(), " <>
+            "lies_sprechlinie() oder einem setzenden Werkzeug; bestätigen musst du " <>
             "nichts. Dazu darf kein Tischgespräch mehr auf der Linie liegen und " <>
             "keine Verschiebung ins Leere zeigen. Was noch fehlt, sagt dir diese " <>
             "Antwort mit Zahlen, und offen() sagt es dir vorher.",
@@ -143,7 +150,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
           "Schliesst den Lauf ab. Dafür muss JEDE Zeile zweierlei haben: eine " <>
             "EINORDNUNG (ingame / loesen / zweifel — gespielt, Tisch oder unklar) " <>
             "und einen Platz in der Reihe. Und alles, was du als Tischgespräch " <>
-            "eingeordnet hast, muss mit loesen() aus der Kette heraus sein: Was " <>
+            "eingeordnet hast, muss mit loesche_kettenplatz() aus der Kette heraus sein: Was " <>
             "auf der Linie liegt, bekommt eine Spielzeit, auch wenn es keine " <>
             "hat. Zum Platz in der Reihe: Sie " <>
             "steht in der Reihe — das tut sie durch die Erzählreihenfolge, solange " <>

@@ -539,13 +539,20 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert text =~ "verschieb"
 
     # Die Frist zeigt nach vorn und verschiebt nichts.
-    assert text =~ "`frist`"
+    assert text =~ "`setz_frist`"
 
-    # Seit #1247 braucht JEDE Zeile eine Einordnung, und Tischgespräch muss
-    # aus der Kette heraus (Maintainer, 19.09.2026).
-    assert text =~ "Jede Zeile braucht eine Einordnung"
-    assert text =~ "`ingame`"
-    assert text =~ "von`/`bis"
+    # Seit dem Kettenumbau (20.09.2026) braucht JEDE Zeile eine Entscheidung:
+    # in ein Kettenglied oder ausdrücklich heraus. Die Kette beginnt leer —
+    # „nicht angefasst" heisst nicht mehr „steht schon richtig".
+    assert text =~ "Jede Zeile braucht eine Entscheidung"
+    assert text =~ "`haenge_an_kette`"
+    assert text =~ "`nicht_in_die_kette`"
+    assert text =~ "Die Kette beginnt leer"
+
+    # Die zwei Achsen und die Reihenfolge der Arbeit.
+    assert text =~ "Zwei Achsen"
+    assert text =~ "Erst einreihen, dann datieren"
+    assert text =~ "Ein Glied ist eine Zeiteinheit"
 
     # Der Rückblick am Sitzungsanfang ist ein Ritual, kein Einzelfall — und
     # der bösartige Fall steht dabei: Die neue Sitzung begänne sonst vor dem

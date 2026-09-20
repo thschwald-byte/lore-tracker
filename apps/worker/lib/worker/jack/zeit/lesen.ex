@@ -2,14 +2,14 @@ defmodule Worker.Jack.Zeit.Lesen do
   @moduledoc """
   #1247 (Z2): die lesenden Werkzeuge des Zeit-Jack.
 
-  **`linie()` zeigt das ERGEBNIS, nicht die Eingaben** — und das ist der
+  **`lies_kette()` zeigt das ERGEBNIS, nicht die Eingaben** — und das ist der
   Gegensatz zur Extraktion, wo Jack den Bestand bewusst nicht sieht
   (`Worker.Jack.Tor`). Hier muss er ihn sehen: Ein einzelner Anker kann für
   sich richtig sein und die Reihe trotzdem falsch, und das ist nur am
   gerechneten Ergebnis zu erkennen (Maintainer, 19.09.2026: „im unterschied
   zur extraction das timejack die ergebnisse anschauen").
 
-  **`mitschnitt()` zählt mit, was es ausgibt.** Die Buchführung ist Teil des
+  **`lies_sprechlinie()` zählt mit, was es ausgibt.** Die Buchführung ist Teil des
   Lesens, nicht ein zweiter Schritt, den jemand vergessen kann — `fertig()`
   hängt daran.
   """
@@ -25,7 +25,7 @@ defmodule Worker.Jack.Zeit.Lesen do
   def werkzeuge(%Stand{} = s) do
     [
       %{
-        name: "mitschnitt",
+        name: "lies_sprechlinie",
         beschreibung:
           "Zeigt den Mitschnitt ab einer Zeile. Eine Zeile ist eine ÄUSSERUNG — " <>
             "mehrere gehören oft zu einem Block, dann steht der geglättete Text " <>
@@ -48,7 +48,7 @@ defmodule Worker.Jack.Zeit.Lesen do
         ausfuehren: &w_mitschnitt/2
       },
       %{
-        name: "linie",
+        name: "lies_kette",
         beschreibung:
           "Zeigt die LINIE, wie sie gerade gerechnet wird — nicht deine Eingaben: " <>
             "wo eine Zeile liegt, wo Spannen greifen, was gelöst wurde, und welche " <>
@@ -62,7 +62,7 @@ defmodule Worker.Jack.Zeit.Lesen do
             "Widersprüche die Rechnung findet. Nutz das, um dein Ergebnis zu " <>
             "prüfen: Ein einzelner Anker kann für sich richtig sein und die Reihe " <>
             "trotzdem falsch. Die Befunde kommen in Portionen: Du siehst die, " <>
-            "die du noch nicht angesehen hast — ruf linie() erneut, bis keine " <>
+            "die du noch nicht angesehen hast — ruf lies_kette() erneut, bis keine " <>
             "weiteren mehr gemeldet werden.",
         parameter: %{
           "type" => "object",
@@ -161,7 +161,7 @@ defmodule Worker.Jack.Zeit.Lesen do
 
   defp einordnungs_hinweis(_s, %{ohne_einordnung: n}) when n > @sammel_grenze do
     " Noch ohne Einordnung: #{n} — das ist viel. Ordne das Gelesene ein, " <>
-      "bevor du weiterliest: ingame(von,bis) für die Welt, loesen(von,bis,grund) " <>
+      "bevor du weiterliest: setz_kettenplatz(von,bis) für die Welt, loesche_kettenplatz(von,bis,grund) " <>
       "für Tischgespräch. Ein Abschnitt ist EIN Aufruf."
   end
 
@@ -169,46 +169,36 @@ defmodule Worker.Jack.Zeit.Lesen do
     do: " Noch ohne Einordnung: #{n}."
 
   defp w_linie(%Stand{} = s, f) do
-    linie = Linie.bauen(stellen(s), Map.values(s.anker))
+    linie = Linie.aus_kette(s.kette, Map.values(s.anker), stellen(s))
 
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || 40, 40)
-    ausschnitt = ab_zeile(s, linie, ab, anzahl)
 
-    # **Gezeigt werden die NOCH NICHT angesehenen Befunde zuerst, und nur
-    # die gezeigten gelten als angesehen** (#1247). Der erste Wurf hakte mit
-    # einem einzigen Aufruf alle ab — dann wäre die Schranke des Prüf-Laufs
-    # erfüllt, ohne dass er einen einzigen Befund gelesen hätte, sobald ihre
-    # Zahl über das hinausgeht, was in eine Antwort passt. Andersherum wäre
-    # eine ungedeckelte Liste bei Dutzenden Befunden keine Auskunft mehr.
-    #
-    # Dass eine Wiederholung dabei nicht in die Sperre läuft, trägt
-    # `wiederholung_merkmal` (Muster der Suchen, #1210): Solange ein
-    # weiterer Aufruf neue Befunde zeigt, ist es kein „gleicher Aufruf".
+    glieder =
+      s.kette.glieder
+      |> Enum.with_index(1)
+      |> Enum.filter(fn {g, _} -> max_nr(g, s) >= ab end)
+      |> Enum.take(anzahl)
+
     zeigen = befunde_zum_zeigen(s, linie)
     s = Stand.gesehen(s, Enum.map(zeigen, & &1.id))
 
-    {s, {:ok, linien_text(s, linie, ausschnitt, ab, zeigen, length(linie.befunde))}}
+    {s, {:ok, ketten_text(s, linie, glieder, ab, zeigen, length(linie.befunde))}}
   end
 
-  # **`ab` ist eine ZEILENNUMMER, keine Position in der Reihe** (#1247).
-  # Bis zum Lauf vom 19.09.2026 war es `Enum.drop(ab - 1)` — also der Index
-  # in der Reihe, aus der die gelösten Zeilen bereits heraus sind, während
-  # die Antwort die Zeilennummern druckt. Bei 459 gelösten Zeilen laufen
-  # beide Zählungen auseinander, und `mitschnitt(ab: n)` bedeutete etwas
-  # anderes als `linie(ab: n)`.
-  #
-  # Am Denkstrom nachzulesen, was das kostet: „ab 100 showed lines 155–194.
-  # ab 194 showed lines 249–288. So it skips …" — und weil die Reihe bei
-  # Position 1709 endet, lieferte `linie(ab: 1789)` nichts, obwohl Zeile
-  # 1789 ff. sehr wohl auf der Linie liegen. Daraus schloss das Modell, die
-  # Sitzungsszene sei gelöst worden, und prüfte das fünf Runden lang nach.
-  defp ab_zeile(%Stand{} = s, linie, ab, anzahl) do
-    nr_von = Map.new(s.mitschnitt, &{&1.utterance_id, &1.nr})
+  defp max_nr(glied, %Stand{mitschnitt: m}) do
+    nrs = for u <- glied.utts, z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
+    if nrs == [], do: 0, else: Enum.max(nrs)
+  end
 
-    linie.reihe
-    |> Enum.filter(&((Map.get(nr_von, &1.utterance_id) || 0) >= ab))
-    |> Enum.take(anzahl)
+  defp spanne_wort(glied, %Stand{mitschnitt: m}) do
+    nrs = for u <- glied.utts, z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
+
+    case Enum.sort(nrs) do
+      [] -> "—"
+      [n] -> "#{n}"
+      liste -> "#{List.first(liste)}–#{List.last(liste)}"
+    end
   end
 
   @befund_deckel 15
@@ -249,15 +239,32 @@ defmodule Worker.Jack.Zeit.Lesen do
     Enum.map(m, &%{utterance_id: &1.utterance_id, session_nr: 1, pos: &1.nr})
   end
 
-  defp linien_text(s, linie, ausschnitt, ab, zeigen, gesamt) do
-    nach_id = Map.new(s.mitschnitt, &{&1.utterance_id, &1})
-
+  # **Die Kette zeigt Refs, keinen Text** (Maintainer, 20.09.2026:
+  # „lies_kette liefert doch die ref — mit der ref kann es sich doch jack
+  # holen?"). Sie ist eine Folge von Verweisen auf Äußerungen; wer den
+  # Wortlaut braucht, holt ihn mit `lies_sprechlinie(ab: n)`. Vorher trug
+  # jede Zeile 60 Zeichen Text mit — dieselbe Auskunft wie das
+  # Nachbarwerkzeug, nur abgeschnitten, und die zwei Achsen sahen dadurch
+  # gleich aus.
+  #
+  # **Zwei Spalten, weil es zwei Achsen sind:** der PLATZ in der Kette und
+  # die ZEILE in der Sprechlinie. Erst daran ist zu sehen, ob eine
+  # Versetzung gewirkt hat — mit nur einer Spalte war die Kette bloss die
+  # Reihenfolge der Ausgabe.
+  # **Die Kette zeigt GLIEDER, nicht Zeilen** (#1247). Ein Glied ist eine
+  # Zeiteinheit aus einer oder mehreren Äußerungen; eine Sitzung mit 2168
+  # Zeilen hat vielleicht achtzig davon, und die kann ein Modell
+  # überblicken. Den Wortlaut holt es mit `lies_sprechlinie(ab: n)` —
+  # deshalb steht hier kein Text (Maintainer, 20.09.2026: „lies_kette
+  # liefert doch die ref — mit der ref kann es sich doch jack holen?").
+  defp ketten_text(s, linie, glieder, ab, zeigen, gesamt) do
     zeilen =
-      Enum.map_join(ausschnitt, "\n", fn e ->
-        z = nach_id[e.utterance_id]
-        nr = (z && z.nr) || "?"
-        text = ((z && z.text) || "") |> String.slice(0, 60)
-        "#{nr}  #{zeit(e, s.kalender)}  #{text}"
+      Enum.map_join(glieder, "\n", fn {g, platz} ->
+        zeit = zeit_des_gliedes(g, linie, s)
+        name = if g[:grund] in [nil, ""], do: "", else: "  #{g.grund}"
+
+        "Glied #{String.pad_leading(to_string(platz), 4)}  " <>
+          "Zeilen #{String.pad_trailing(spanne_wort(g, s), 12)} #{zeit}#{name}"
       end)
 
     offen_danach = gesamt - MapSet.size(s.gesehen)
@@ -270,7 +277,7 @@ defmodule Worker.Jack.Zeit.Lesen do
         b ->
           rest =
             cond do
-              offen_danach > 0 -> "\n(#{offen_danach} weitere — ruf linie() noch einmal.)"
+              offen_danach > 0 -> "\n(#{offen_danach} weitere — ruf lies_kette() noch einmal.)"
               gesamt > length(b) -> "\n(#{gesamt} Befunde insgesamt, alle angesehen.)"
               true -> ""
             end
@@ -278,56 +285,41 @@ defmodule Worker.Jack.Zeit.Lesen do
           "\n\nBefunde:\n" <> Enum.map_join(b, "\n", &("- " <> &1.text)) <> rest
       end
 
-    geloest =
-      if MapSet.size(linie.geloest) > 0,
-        do: "\n(#{MapSet.size(linie.geloest)} Zeilen sind aus der Kette gelöst.)",
-        else: ""
+    z = Stand.zahlen(s)
+
+    stand =
+      "\n(#{z.glieder} Glieder, #{z.in_der_kette} Zeilen drin, #{z.draussen} draussen, " <>
+        "#{z.unentschieden} unentschieden.)"
 
     kopf =
-      case ausschnitt do
-        [] ->
-          letzte = letzte_auf_der_linie(s, linie)
+      case glieder do
+        [] when z.glieder == 0 ->
+          "Die Kette ist noch LEER. Reih ein, was zur erzählten Welt gehört " <>
+            "(haenge_an_kette), und nimm heraus, was nicht hineingehört " <>
+            "(nicht_in_die_kette)."
 
-          "Ab Zeile #{ab} liegt nichts mehr auf der Linie" <>
-            if(letzte, do: " — die letzte ist Zeile #{letzte}.", else: ".") <>
-            " (#{length(linie.reihe)} Zeilen auf der Linie.)"
+        [] ->
+          "Ab Zeile #{ab} liegt kein Glied mehr in der Kette."
 
         _ ->
-          bis = ausschnitt |> List.last() |> zeilennummer(s)
-
-          "Die Linie von Zeile #{ab} bis #{bis} (#{length(linie.reihe)} Zeilen auf der " <>
-            "Linie; gelöste erscheinen hier nicht, Lücken in der Nummernfolge sind also " <>
-            "gelöste Zeilen):\n"
+          "Die Kette ab Zeile #{ab}. GLIED ist die Stelle in der zeitlichen " <>
+            "Reihenfolge, ZEILEN die Stelle in der Sprechlinie — laufen sie " <>
+            "auseinander, ist dort versetzt worden. Den Wortlaut holst du mit " <>
+            "lies_sprechlinie(ab: <Zeile>).\n"
       end
 
-    kopf <> zeilen <> geloest <> befunde
+    kopf <> zeilen <> stand <> befunde
   end
 
-  defp zeilennummer(eintrag, %Stand{mitschnitt: m}) do
-    case Enum.find(m, &(&1.utterance_id == eintrag.utterance_id)) do
-      nil -> "?"
-      z -> z.nr
+  # Die Zeit eines Gliedes ist die seiner ersten Äußerung — ein Glied ist
+  # eine Zeiteinheit, seine Zeilen teilen sie.
+  defp zeit_des_gliedes(glied, linie, s) do
+    case Enum.find_value(glied.utts, &linie.nach_utterance[&1]) do
+      nil -> "ohne Zeit"
+      e -> zeit(e, s.kalender)
     end
   end
 
-  defp letzte_auf_der_linie(%Stand{} = s, linie) do
-    ids = MapSet.new(linie.reihe, & &1.utterance_id)
-
-    s.mitschnitt
-    |> Enum.filter(&MapSet.member?(ids, &1.utterance_id))
-    |> List.last()
-    |> case do
-      nil -> nil
-      z -> z.nr
-    end
-  end
-
-  # **Drei Grade von Gewissheit, und sie stehen an der Zeile.** „belegt" ist
-  # gesagt worden, „gerechnet" liegt zwischen zwei Belegen und ist nach oben
-  # begrenzt, „fortgeschrieben" hat keinen oberen Beleg und wächst mit dem
-  # Abstand ins Beliebige. Der dritte Fall sah bis #1247 aus wie der zweite —
-  # das Modell hielt die Zahl für eine Messung und begann, die Anker
-  # zurückzunehmen, die sie erzeugt hatten.
   defp zeit(%{minute: nil}, _cal), do: "—        "
 
   defp zeit(%{minute: m, herkunft: :belegt} = e, cal),

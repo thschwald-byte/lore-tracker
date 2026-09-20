@@ -146,22 +146,87 @@ defmodule Worker.Timeline.Linie do
   @spec bauen([stelle()], [anker()]) :: map()
   def bauen(stellen, anker) when is_list(stellen) and is_list(anker) do
     geloest = geloeste(anker)
-    aktiv = Enum.reject(stellen, &MapSet.member?(geloest, &1.utterance_id))
+    sprechlinie = grundordnung(stellen)
+    aktiv = Enum.reject(sprechlinie, &MapSet.member?(geloest, &1.utterance_id))
 
-    reihe =
-      aktiv
-      |> grundordnung()
-      |> verschieben(anker)
-
-    eintraege = minuten_verteilen(reihe, anker)
+    kette = einreihen(aktiv, anker)
+    eintraege = minuten_verteilen(kette, anker)
 
     %{
+      sprechlinie: sprechlinie,
+      kette: eintraege,
+      bezuege: bezuege(anker),
       reihe: eintraege,
       nach_utterance: Map.new(eintraege, &{&1.utterance_id, &1}),
       anker_an: anker_an(anker, geloest),
       geloest: geloest,
-      befunde: pruefen(eintraege, reihe, anker)
+      befunde: pruefen(eintraege, kette, anker)
     }
+  end
+
+  @doc """
+  Baut die Linie **auf der Kette**: Ein Glied ist eine Zeiteinheit, kein
+  Einzelsatz.
+
+  **Warum das die richtige Einheit ist** (#1247, 20.09.2026). `bauen/2`
+  rechnet je Äußerung: Zwischen zwei Ankern bekommt jede Zeile ihre eigene
+  interpolierte Minute. Das sieht genauer aus, als es ist — fünf Zeilen
+  einer Szene bekommen fünf verschiedene Uhrzeiten, die niemand gesagt hat,
+  und die Anzeige behauptet eine Auflösung, die es nicht gibt.
+
+  Mit Gliedern ist es gröber und ehrlicher: Die Szene hat **eine** Zeit,
+  interpoliert wird zwischen Szenen. Jede Äußerung erbt die Zeit ihres
+  Gliedes; `nach_utterance` bleibt dadurch benutzbar wie zuvor.
+
+  Die Umschreibung läuft über eine Adapterschicht statt über einen zweiten
+  Rechenweg: Glieder werden zu Stellen, die Anker von Utterance-IDs auf
+  Glied-IDs umgeschrieben, und das Ergebnis am Ende zurückgeschlüsselt.
+  Damit gibt es weiterhin **eine** Stelle, an der Minuten verteilt werden —
+  zwei wären zwei Wahrheiten über dieselbe Zeit.
+  """
+  @spec aus_kette(map(), [anker()], [stelle()]) :: map()
+  def aus_kette(kette, anker, stellen) when is_list(anker) and is_list(stellen) do
+    pos_von = stellen |> Enum.with_index() |> Map.new(fn {s, i} -> {s.utterance_id, i} end)
+
+    glied_stellen =
+      kette.glieder
+      |> Enum.with_index()
+      |> Enum.map(fn {g, i} -> %{utterance_id: g.id, session_nr: 1, pos: i} end)
+
+    glied_anker = Enum.map(anker, &auf_glieder(&1, kette))
+    roh = bauen(glied_stellen, glied_anker)
+
+    # Jede Äußerung erbt den Eintrag ihres Gliedes; die Reihenfolge innerhalb
+    # eines Gliedes ist die seiner Utterance-Liste (sie ist selbst eine Kette).
+    je_utterance =
+      for g <- kette.glieder,
+          eintrag = roh.nach_utterance[g.id],
+          u <- g.utts,
+          into: %{},
+          do: {u, %{eintrag | utterance_id: u}}
+
+    %{
+      roh
+      | kette: Enum.flat_map(kette.glieder, fn g -> for u <- g.utts, do: je_utterance[u] end),
+        nach_utterance: je_utterance,
+        geloest: MapSet.new(Map.keys(kette.draussen))
+    }
+    |> Map.put(:glieder, roh.kette)
+    |> Map.put(:sprechlinie, Enum.sort_by(stellen, &Map.get(pos_von, &1.utterance_id, 0)))
+  end
+
+  # Ein Anker hängt an Utterances; für die Rechnung auf Gliedern zählt, in
+  # welchen Gliedern sie liegen. Ein Anker über zwei Glieder gilt für beide.
+  defp auf_glieder(a, kette) do
+    ids =
+      a
+      |> Map.get(:utterance_ids, [])
+      |> Enum.map(&Worker.Timeline.Kette.glied_von(kette, &1))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map(& &1.id)
+      |> Enum.uniq()
+
+    Map.put(a, :utterance_ids, ids)
   end
 
   # Alle Anker je Utterance — mehrere sind der Normalfall, nicht die Ausnahme.
@@ -252,26 +317,150 @@ defmodule Worker.Timeline.Linie do
   defp grundordnung(stellen),
     do: Enum.sort_by(stellen, &{&1.session_nr || 999_999, &1.pos, &1.utterance_id})
 
-  # ─── Verschiebungen ─────────────────────────────────────────────────
+  # ─── Die Kette ──────────────────────────────────────────────────────
 
-  # Eine `ordnung` hebt ihre Utterances aus der Erzählreihenfolge und setzt
-  # sie vor oder hinter eine Zielstelle. Ohne auflösbares Ziel bleibt sie
-  # liegen — das ist der Befund „Verschiebung ohne Ziel", nicht ein Raten.
-  defp verschieben(reihe, anker) do
-    Enum.reduce(ordnungen(anker), reihe, fn a, acc ->
+  # **Zwei Achsen, nicht eine mit Korrekturen** (Maintainer, 20.09.2026:
+  # „es gibt 2 achsen 1: die kette: in zeitlicher reihenfolge 2: die
+  # sprechlinie: was wann gesprochen wurde — 2 bleibt unverändert, 1 wird
+  # komplett neu aufgebaut").
+  #
+  # Bis dahin gab es nur eine: `bauen/2` nahm die Grundordnung und mutierte
+  # sie mit den Verschiebungen. Was gesprochen wurde und wann es geschah war
+  # dasselbe Ding — für eine Uhrzeit im Spiel fällt beides zusammen, für
+  # einen Rückblick nicht. Am echten Lauf vom 20.09.2026 sichtbar geworden:
+  # Der Weltbau-Block am Sitzungsanfang erzählt die Jahre 2000 bis 2011,
+  # steht aber in einer Sitzung, die 2080 spielt — und die eine Achse las
+  # das als Folge und rechnete rückwärts.
+  #
+  # Die **Sprechlinie** ist seitdem unveränderlich: Sitzung, dann Position.
+  # Die **Kette** ist die zeitliche Reihenfolge; in sie wird eingereiht, was
+  # kein Tischgespräch ist. Das Einreihen ist der einzige Ort, an dem eine
+  # Äußerung ihre Stelle wechselt.
+  # **Die Kette ist eine Menge von Bezügen, keine mutierte Liste**
+  # (Maintainer, 20.09.2026: „die kette ist so was wie ne hashmap
+  # <nach/vor/ref von utt>"). Jede Äußerung trägt entweder keinen Bezug —
+  # dann steht sie an ihrer Sprechposition — oder einen: „vor dieser", „nach
+  # jener", „ganz an den Anfang".
+  #
+  # Der Unterschied zur Listen-Mutation ist nicht kosmetisch. Ein `reduce`
+  # über die Anker hängt am **Eingang**: Zwei Worker mit derselben Menge
+  # Anker in anderer Reihenfolge bauten verschiedene Ketten — genau die
+  # Klasse, die #1092 in der Chronik gekostet hat (543 von 544 Einträgen auf
+  # einem Tag, weil die Reihenfolge aus einer Mnesia-Leseordnung stammte).
+  # Deshalb werden die Bezüge **nach ihrer Anker-ID sortiert** angewandt:
+  # dieselben Anker ergeben dieselbe Kette, egal wie sie ankommen.
+  #
+  # **Ehrliche Grenze:** Das ist eine deterministische Einsetzung, keine
+  # topologische Sortierung. Zwei Bezüge, die sich widersprechen („A vor B"
+  # und „B vor A"), erzeugen keinen gemeldeten Zyklus, sondern lassen den
+  # zweiten wirkungslos — der Befund dazu fehlt noch.
+  # `Worker.Jack.Chronik.Ordnung` kann das für Chronik-Einträge bereits; es
+  # hier zu übernehmen heisst, jede Äußerung zum Knoten zu machen (2168 je
+  # Sitzung) und die impliziten Sprech-Kanten mitzuführen. Eigener Schritt.
+  defp einreihen(sprechlinie, anker) do
+    anker
+    |> ordnungen()
+    |> Enum.sort_by(&to_string(Map.get(&1, :anker_id) || ""))
+    |> Enum.reduce(sprechlinie, fn a, acc ->
       menge = MapSet.new(Map.get(a, :utterance_ids, []))
-      ziel = Map.get(a, :ziel)
+      {bewegt, rest} = Enum.split_with(acc, &MapSet.member?(menge, &1.utterance_id))
 
-      if ziel && Enum.any?(acc, &(&1.utterance_id == ziel)) and not MapSet.member?(menge, ziel) do
-        {bewegt, rest} = Enum.split_with(acc, &MapSet.member?(menge, &1.utterance_id))
-        einsetzen(rest, bewegt, ziel, Map.get(a, :richtung, :vor))
-      else
-        acc
+      case {bewegt, stelle_fuer(a, rest, anker)} do
+        {[], _} -> acc
+        {_, nil} -> acc
+        {bewegt, :anfang} -> bewegt ++ rest
+        {bewegt, {ziel, richtung}} -> einsetzen(rest, bewegt, ziel, richtung)
       end
     end)
   end
 
-  defp einsetzen(rest, [], _ziel, _richtung), do: rest
+  @doc """
+  Die Kette als **Bezüge**: `%{utterance_id => %{art:, ziel:} | nil}`.
+
+  `nil` heisst „steht an ihrer Sprechposition" — das ist der Normalfall und
+  kostet nichts. Ein Eintrag heisst: Jack hat diese Äußerung aus der
+  Sprechreihenfolge gehoben, und **warum** steht am Anker.
+
+  Lesbar gemacht, weil die Kette sonst nur als Ergebnis existiert: Wer fragt,
+  warum eine Zeile weit vorn liegt, bekommt hier die Antwort statt einer
+  Vermutung.
+  """
+  @spec bezuege([anker()]) :: %{String.t() => map()}
+  def bezuege(anker) when is_list(anker) do
+    for a <- ordnungen(anker),
+        u <- Map.get(a, :utterance_ids, []),
+        into: %{} do
+      {u,
+       %{
+         art: Map.get(a, :richtung, :vor),
+         ziel: Map.get(a, :ziel),
+         anker_id: Map.get(a, :anker_id)
+       }}
+    end
+  end
+
+  # **Wohin eine herausgehobene Menge gehört** — drei Wege, und der dritte
+  # ist der, den es bis #1247 nicht gab:
+  #
+  #   1. Ein genanntes Ziel, das es gibt   → davor oder dahinter.
+  #   2. Ziel `"anfang"`                   → vor alles. In der Kette darf vor
+  #      das erste Element gesetzt werden (Maintainer, 20.09.2026); in der
+  #      Sprechlinie gäbe es diese Stelle nicht.
+  #   3. Kein Ziel, aber eine eigene ZEIT  → vor den ersten festen Punkt, der
+  #      später liegt. Das ist der Normalfall für Weltgeschichte: „Ende 2011"
+  #      braucht keine Zielzeile, seine Zeit IST das Ziel.
+  #
+  # Ohne all das bleibt die Menge liegen — der Befund „Verschiebung ohne
+  # Ziel", kein Raten.
+  defp stelle_fuer(a, rest, anker) do
+    ziel = Map.get(a, :ziel)
+    menge = MapSet.new(Map.get(a, :utterance_ids, []))
+
+    cond do
+      anfang?(ziel) ->
+        :anfang
+
+      is_binary(ziel) and Enum.any?(rest, &(&1.utterance_id == ziel)) and
+          not MapSet.member?(menge, ziel) ->
+        {ziel, Map.get(a, :richtung, :vor)}
+
+      true ->
+        nach_eigener_zeit(a, rest, anker)
+    end
+  end
+
+  defp anfang?(z) when is_binary(z), do: String.downcase(z) == "anfang"
+  defp anfang?(:anfang), do: true
+  defp anfang?(_), do: false
+
+  # Die Zeit der Menge gegen die festen Punkte der übrigen Kette: Sie gehört
+  # vor den ersten, der später liegt — liegt sie vor allen, an den Anfang.
+  defp nach_eigener_zeit(a, rest, anker) do
+    with m when is_integer(m) <- eigene_minute(a, anker),
+         feste when feste != [] <- feste_punkte(rest, anker) |> Enum.sort_by(&elem(&1, 0)) do
+      case Enum.find(feste, fn {_i, p} -> p.minute > m end) do
+        nil -> nil
+        {0, _} -> :anfang
+        {i, _} -> {Enum.at(rest, i).utterance_id, :vor}
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # Der eigene Zeitpunkt: am Verschiebe-Anker selbst oder an einer seiner
+  # Utterances. Eine Spanne zählt nicht — sie sagt, wie viel Zeit vergeht,
+  # nicht wann etwas liegt.
+  defp eigene_minute(a, anker) do
+    menge = MapSet.new(Map.get(a, :utterance_ids, []))
+
+    [a | Enum.filter(anker, &(art(&1) == :zeitpunkt))]
+    |> Enum.find_value(fn k ->
+      if art(k) == :zeitpunkt and
+           (k == a or Enum.any?(Map.get(k, :utterance_ids, []), &MapSet.member?(menge, &1))),
+         do: Map.get(k, :minute)
+    end)
+  end
 
   defp einsetzen(rest, bewegt, ziel, richtung) do
     {vorne, hinten} = Enum.split_while(rest, &(&1.utterance_id != ziel))

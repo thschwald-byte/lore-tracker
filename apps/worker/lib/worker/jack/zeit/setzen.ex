@@ -224,8 +224,8 @@ defmodule Worker.Jack.Zeit.Setzen do
   Kennung beim Lösen „korrekt" neu berechnet, erzeugt genau diese zweite Row,
   und die alte bliebe für immer gesetzt. (Benannt im Review, 19.09.2026.)
   """
-  @spec loesen(map(), String.t()) :: map()
-  def loesen(anker, grund) do
+  @spec loesche_kettenplatz(map(), String.t()) :: map()
+  def loesche_kettenplatz(anker, grund) do
     anker
     |> Map.put(:art, :geloest)
     |> Map.put(:zweifel, grund)
@@ -253,8 +253,8 @@ defmodule Worker.Jack.Zeit.Setzen do
       |> Enum.join(", ")
 
     "An dieser Stelle hängt schon: #{liste}. Eingetragen ist noch nichts. " <>
-      "Mit `dazu(\"#{guid}\", …)` kommt deiner daneben — an einer Utterance dürfen " <>
-      "mehrere Anker hängen. Mit `ersetzen(\"#{guid}\", …)` löst du den bestehenden " <>
+      "Mit `anker_dazu(\"#{guid}\", …)` kommt deiner daneben — an einer Utterance dürfen " <>
+      "mehrere Anker hängen. Mit `anker_ersetzen(\"#{guid}\", …)` löst du den bestehenden " <>
       "aus der Kette. Nennst du die Kennung nicht, verfällt sie."
   end
 

@@ -60,6 +60,7 @@ defmodule Worker.Jack.Zeit.Stand do
 
   alias Worker.Jack.Zeit.Mitschnitt
   alias Worker.Timeline.Calendar
+  alias Worker.Timeline.Kette
 
   defstruct lauf: :gedaechtnis,
             session_id: nil,
@@ -67,6 +68,7 @@ defmodule Worker.Jack.Zeit.Stand do
             kalender: nil,
             mitschnitt: [],
             gelesen: MapSet.new(),
+            kette: nil,
             einordnung: %{},
             gesehen: MapSet.new(),
             anker: %{},
@@ -90,6 +92,10 @@ defmodule Worker.Jack.Zeit.Stand do
       # Der Prüf-Lauf setzt auf der Arbeit des Einsortier-Laufs auf — er
       # liest nicht noch einmal alles, sondern prüft das Ergebnis.
       gelesen: opts[:gelesen] || MapSet.new(),
+      # **Die Kette beginnt leer** (Maintainer, 20.09.2026) — es gibt keine
+      # stillschweigende Übernahme der Sprechreihenfolge. Der Prüf-Lauf erbt
+      # sie vom Einsortier-Lauf, wie Leseabdeckung und Anker.
+      kette: opts[:kette] || Worker.Timeline.Kette.neu(),
       einordnung: opts[:einordnung] || %{},
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{}
@@ -137,6 +143,40 @@ defmodule Worker.Jack.Zeit.Stand do
   @spec einordnen(t(), [Mitschnitt.zeile()], :tisch | :ingame | :unklar) :: t()
   def einordnen(%__MODULE__{} = s, zeilen, art) when art in [:tisch, :ingame, :unklar] do
     %{s | einordnung: Enum.reduce(zeilen, s.einordnung, &Map.put(&2, &1.utterance_id, art))}
+  end
+
+  @doc """
+  Die Zeilen, über die noch **niemand entschieden** hat — weder in einem
+  Kettenglied noch ausdrücklich draussen.
+
+  **Das ist die Schranke des Einsortier-Laufs** (Maintainer, 20.09.2026:
+  „Default beim Start: Kette ist leer — jack soll bewusst einsortieren").
+  Vorher war „nicht angefasst" zweideutig: Es hiess zugleich „die
+  Erzählreihenfolge stimmt hier" und „ich bin noch nicht hingekommen". Mit
+  der leeren Kette ist es eindeutig — offen heisst offen.
+  """
+  @spec offene_zeilen(t()) :: %{anzahl: non_neg_integer(), zeilen: [Mitschnitt.zeile()]}
+  def offene_zeilen(%__MODULE__{} = s) do
+    offen = MapSet.new(Kette.offen(s.kette, Enum.map(s.mitschnitt, & &1.utterance_id)))
+    zeilen = Enum.filter(s.mitschnitt, &MapSet.member?(offen, &1.utterance_id))
+    %{anzahl: length(zeilen), zeilen: zeilen}
+  end
+
+  @doc """
+  Wendet eine Ketten-Operation an. `fun` bekommt die Kette und liefert
+  `{:ok, kette}`, `{:ok, kette, glied}` oder `{:fehler, text}`.
+
+  **Eine Stelle für alle fünf Operationen**, damit keine davon vergisst, den
+  Stand zurückzuschreiben — das ist die Klasse, die #1247 schon einmal
+  gekostet hat (der Reststand wurde auf dem alten Stand gezählt).
+  """
+  @spec kette(t(), (Kette.t() -> tuple())) :: {:ok, t(), map() | nil} | {:fehler, String.t()}
+  def kette(%__MODULE__{} = s, fun) do
+    case fun.(s.kette) do
+      {:ok, k} -> {:ok, %{s | kette: k}, nil}
+      {:ok, k, glied} -> {:ok, %{s | kette: k}, glied}
+      {:fehler, _} = f -> f
+    end
   end
 
   @doc "Die Zeilen ohne Einordnung — alle, samt Anzahl."
@@ -299,6 +339,10 @@ defmodule Worker.Jack.Zeit.Stand do
       fristen: zaehle(aktiv, "frist"),
       verschiebungen: zaehle(aktiv, "ordnung"),
       geloest: map_size(s.anker) - length(aktiv),
+      glieder: length(s.kette.glieder),
+      in_der_kette: MapSet.size(Kette.eingereiht(s.kette)),
+      draussen: map_size(s.kette.draussen),
+      unentschieden: offene_zeilen(s).anzahl,
       eingeordnet: map_size(s.einordnung),
       ohne_einordnung: length(s.mitschnitt) - map_size(s.einordnung),
       konflikte: length(s.konflikte)

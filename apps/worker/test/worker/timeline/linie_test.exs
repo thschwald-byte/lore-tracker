@@ -887,14 +887,21 @@ defmodule Worker.Timeline.LinieTest do
 
   describe "Fremddaten" do
     test "eine unbekannte art wird ignoriert statt zu einem Atom zu werden" do
-      vorher = :erlang.system_info(:atom_count)
-      a = [anker("voellig-unbekannt-#{System.unique_integer([:positive])}", ["u11"])]
-
-      linie = Linie.bauen(stellen(), a)
+      # **Geprüft wird DIESES Atom, nicht die Grösse der Atom-Tabelle.**
+      # Der erste Wurf zählte `:erlang.system_info(:atom_count)` vor und nach
+      # dem Aufruf — eine VM-weite Zahl, während bis zu 64 Testprozesse
+      # parallel laufen. Jeder fremde Test, der zufällig ein Atom anlegt,
+      # zählte mit; der Test war rot, ohne dass am Code etwas falsch war
+      # (gesehen am 20.09.2026, danach dreimal grün mit anderen Seeds).
+      # Ein Wächter, der misst, was ihm nicht gehört, meldet Rauschen —
+      # und wird nach dem zweiten Fehlalarm ignoriert.
+      wort = "voellig-unbekannt-#{System.unique_integer([:positive])}"
+      linie = Linie.bauen(stellen(), [anker(wort, ["u11"])])
 
       assert length(linie.reihe) == 9
-      # Kein String.to_atom auf Fremddaten: die Atom-Tabelle wächst nicht.
-      assert :erlang.system_info(:atom_count) - vorher < 5
+
+      # Kein String.to_atom auf Fremddaten: das Atom gibt es danach nicht.
+      assert_raise ArgumentError, fn -> String.to_existing_atom(wort) end
     end
 
     test "art als String verhält sich wie das Atom" do
