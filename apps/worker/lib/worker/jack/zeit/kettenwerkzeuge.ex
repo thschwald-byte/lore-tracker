@@ -119,6 +119,14 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
             "Zeilen dazugehören. Nimm grosse Abschnitte (von/bis); eine Kette aus " <>
             "zweitausend Einzelgliedern kannst du nicht mehr lesen, eine aus " <>
             "achtzig schon. " <>
+            "ABER: ZWEI ZEITEN SIND ZWEI GLIEDER. Kommen in einem Abschnitt zwei " <>
+            "verschiedene Zeitpunkte der Spielwelt vor (etwa „die Plage der frühen " <>
+            "2000er“ und „2011 erwachten die Drachen“), mach zwei Glieder daraus — " <>
+            "auch wenn derselbe Sprecher ohne Pause durchredet. Ein Glied trägt " <>
+            "genau EINE Zeit; alles Weitere darin wird unsichtbar. " <>
+            "Die Kette ist die Zeitleiste der SPIELWELT: Weltgeschichte gehört " <>
+            "hinein, auch wenn sie nie jemand gespielt hat — und an ihren Platz, " <>
+            "nicht an den Sitzungsanfang, wo sie erzählt wurde. " <>
             "Ohne Angabe kommt das Glied ans ENDE der Kette — das ist der " <>
             "Normalfall, wenn du den Mitschnitt der Reihe nach durchgehst. Gehört " <>
             "der Abschnitt woanders hin (ein Rückblick), nenn vor/nach mit einer " <>

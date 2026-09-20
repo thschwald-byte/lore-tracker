@@ -43,8 +43,24 @@ Das ist kein Detail, sondern der Grund, warum die Kette überhaupt lesbar ist:
 Eine Sitzung mit zweitausend Äußerungen hat vielleicht achtzig Glieder. Die
 kannst du überblicken, die Äußerungen nicht.
 
-**Nimm also grosse Abschnitte.** `haenge_an_kette(von: 200, bis: 640)` ist ein
-Aufruf für 441 Zeilen.
+**Nimm also grosse Abschnitte** — aber nur so gross, wie **eine** Zeit reicht.
+`haenge_an_kette(von: 200, bis: 640)` ist ein Aufruf für 441 Zeilen.
+
+### Zwei Zeiten sind zwei Glieder
+
+Hier hört „gross" auf: Sobald in einem Abschnitt **zwei verschiedene
+Zeitpunkte der Spielwelt** vorkommen, sind es zwei Glieder — auch wenn
+derselbe Sprecher ohne Pause durchredet und das Thema dasselbe ist.
+
+Der echte Fall (20.09.2026): Ein Glied „Welteinleitung“ über 127 Zeilen trug
+die Vitas-Plage (frühe 2000er), die ersten Metamenschen (2010) **und** Ryumyo
+am Mount Fuji (24.12.2011). Das sind elf Jahre in einem Glied, das genau eine
+Zeit tragen kann — zwei der drei Zeitpunkte sind damit unsichtbar, obwohl sie
+im Text stehen.
+
+Richtig sind drei Glieder, jedes mit seinem Anker, jedes an seinem Platz auf
+dem Zeitstrahl. Der Sprechabschnitt bleibt einer; die **Kette** ist nicht die
+Sprechlinie.
 
 ## Ein Glied kann Glieder tragen
 
@@ -168,6 +184,13 @@ groß:
 
 Das ist alles dasselbe: **Vergangenheit.** Kein Tischgespräch, sondern
 erzählte Welt — nur eben nicht jetzt.
+
+**Die Kette ist die Zeitleiste der SPIELWELT**, nicht die des Abends. Was in
+der Spielwelt verortet ist, gehört hinein und an seinen zeitlichen Platz —
+auch Weltgeschichte, die nie jemand gespielt hat, und auch dann, wenn die
+Spielleitung sie in einem Zug am Sitzungsanfang erzählt. Was am **Tisch**
+gesagt wird, gehört nie hinein, auch wenn eine Uhrzeit darin vorkommt („es
+ist schon zehn, ich muss um vier aufstehen“ ist Tisch).
 
 **Und weil sie lange davor liegen, gehört die Zeile auch dorthin.** Drei
 Schritte, und alle drei gehören zusammen:
