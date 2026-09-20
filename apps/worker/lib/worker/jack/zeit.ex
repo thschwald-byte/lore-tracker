@@ -89,18 +89,7 @@ defmodule Worker.Jack.Zeit do
       # sagt das Gegenteil („geh von den Befunden aus, nicht von Zeile 1"),
       # und die Schranke gewann: Im Lauf vom 19.09.2026 verbrachte er über
       # neunzig Runden damit, die Linie abzusuchen, statt sie zu prüfen.
-      eingabe =
-        Map.merge(eingabe, %{
-          anker: Map.values(e.stand.anker),
-          notizen: e.stand.notizen,
-          gelesen: e.stand.gelesen,
-          einordnung: e.stand.einordnung,
-          # **Die Kette ist das Ergebnis des Einsortier-Laufs** (#1247,
-          # 20.09.2026). Ohne sie stünde der Prüf-Lauf vor einer leeren
-          # Kette und hätte nichts zu prüfen — genau der Fehler, den die
-          # vererbte Leseabdeckung schon einmal hatte.
-          kette: e.stand.kette
-        })
+      eingabe = Map.merge(eingabe, erbe(e.stand))
 
       case lauf(eingabe, :pruefen, opts) do
         {:ok, p} ->
@@ -153,15 +142,44 @@ defmodule Worker.Jack.Zeit do
   defp fehlerklasse(:pruefen), do: :zeit_pruefen_ohne_abschluss
   defp fehlerklasse(_), do: :zeit_einsortieren_ohne_abschluss
 
+  @doc """
+  Was der Prüf-Lauf vom Einsortier-Lauf erbt — **die eine Liste**, aus der
+  beide Seiten lesen.
+
+  Sie stand vorher an zwei Stellen: `pruefen/3` legte die Felder in die
+  Eingabe, `stand/2` holte sie heraus. Genau das ging schief (20.09.2026):
+  `kette` wurde übergeben und **nie ausgepackt**, obwohl `Stand.neu/3` sie
+  kennt und ihr Kommentar dort die Vererbung ausdrücklich zusagt. Der
+  Prüf-Lauf startete also vor einer leeren Kette, baute keine — sein Auftrag
+  sagt ihm, er solle von den Befunden ausgehen — und sein Stand gewinnt am
+  Ende. **Die ganze Einsortier-Arbeit eines Laufs war damit weg**, sichtbar
+  nur an einem Widerspruch in den Zahlen: 2168 Zeilen eingeordnet, null in
+  der Kette. Ein fehlender Schlüssel erzeugt keinen Fehler, nur ein leeres
+  Ergebnis — dieselbe Klasse wie die vergessenen Permission-Assigns (#1090).
+  """
+  @spec erbe(Stand.t()) :: map()
+  def erbe(%Stand{} = stand) do
+    %{
+      anker: Map.values(stand.anker),
+      notizen: stand.notizen,
+      gelesen: stand.gelesen,
+      einordnung: stand.einordnung,
+      kette: stand.kette,
+      konflikte: stand.konflikte
+    }
+  end
+
   defp stand(eingabe, art) do
-    Stand.neu(art, Map.get(eingabe, :mitschnitt, []),
-      session_id: Map.get(eingabe, :session_id),
-      campaign_id: Map.get(eingabe, :campaign_id),
-      kalender: Map.get(eingabe, :kalender),
-      gelesen: Map.get(eingabe, :gelesen),
-      einordnung: Map.get(eingabe, :einordnung),
-      anker: Map.get(eingabe, :anker, []),
-      notizen: Map.get(eingabe, :notizen, %{})
+    geerbt = for {k, _} <- erbe(%Stand{}), do: {k, Map.get(eingabe, k)}
+
+    Stand.neu(
+      art,
+      Map.get(eingabe, :mitschnitt, []),
+      [
+        session_id: Map.get(eingabe, :session_id),
+        campaign_id: Map.get(eingabe, :campaign_id),
+        kalender: Map.get(eingabe, :kalender)
+      ] ++ geerbt
     )
   end
 

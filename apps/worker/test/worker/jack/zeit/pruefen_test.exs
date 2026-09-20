@@ -253,18 +253,19 @@ defmodule Worker.Jack.Zeit.PruefenTest do
       assert s.einordnung["u1"] == :ingame
     end
 
-    test "Zeit.pruefen reicht beides weiter" do
-      # Quelltext-Wächter: Ein vergessenes Feld erzeugt keinen Fehler,
-      # sondern einen Lauf, der von vorn anfängt — und das sieht von aussen
-      # aus wie Gründlichkeit.
-      quelle = File.read!("lib/worker/jack/zeit.ex")
-      [_, block] = String.split(quelle, "Map.merge(eingabe, %{", parts: 2)
-      block = String.slice(block, 0, 400)
+    test "Zeit.erbe nennt jedes Feld, das weitergereicht werden muss" do
+      # **Dieser Wächter hat einmal die falsche Seite geprüft.** Bis zum
+      # 20.09.2026 las er die Merge-Map in `pruefen/3` und war grün, weil
+      # `kette` dort ordnungsgemäss eingepackt wurde — `stand/2` packte sie
+      # nur nie aus. Eine geprüfte Übergabe ist keine geprüfte Ankunft.
+      # Seitdem gibt es EINE Liste (`Zeit.erbe/1`), aus der beide Seiten
+      # lesen; dass sie ankommt, prüft `zeit/erbe_test.exs` am ganzen Lauf.
+      felder = Worker.Jack.Zeit.erbe(%Stand{}) |> Map.keys() |> MapSet.new()
 
-      assert block =~ "gelesen: e.stand.gelesen"
-      assert block =~ "einordnung: e.stand.einordnung"
-      assert block =~ "anker:"
-      assert block =~ "notizen:"
+      for feld <- ~w(gelesen einordnung anker notizen kette konflikte)a do
+        assert MapSet.member?(felder, feld),
+               "#{feld} fehlt in der Erbschaft — der Prüf-Lauf fängt dort von vorn an"
+      end
     end
   end
 

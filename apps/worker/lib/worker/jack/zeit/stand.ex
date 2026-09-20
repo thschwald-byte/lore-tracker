@@ -98,7 +98,11 @@ defmodule Worker.Jack.Zeit.Stand do
       kette: opts[:kette] || Worker.Timeline.Kette.neu(),
       einordnung: opts[:einordnung] || %{},
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
-      notizen: opts[:notizen] || %{}
+      notizen: opts[:notizen] || %{},
+      # Ein Konflikt ist ein Befund für die Kuration. Erbte der Prüf-Lauf ihn
+      # nicht, verschwände er mit dem Stand, der ihn gemeldet hat — sein
+      # Stand ist der, der am Ende abgelegt wird.
+      konflikte: opts[:konflikte] || []
     }
   end
 
