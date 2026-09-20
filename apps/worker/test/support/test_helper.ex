@@ -407,6 +407,10 @@ defmodule Worker.TestHelper do
       # ganze Zeitlinie, ohne dass dort jemand mit Zeit rechnet.
       S.jack_zeit_staende(),
       S.zeit_anker(),
+      # #1247: die Kette — eine Row je Glied. Ein geleaktes Glied brächte in
+      # einem anderen Test eine fremde Reihenfolge mit, und `aus_zeilen/1`
+      # meldete Befunde über Glieder, die dieser Test nie angelegt hat.
+      S.zeit_kette(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

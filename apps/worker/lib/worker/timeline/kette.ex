@@ -514,4 +514,165 @@ defmodule Worker.Timeline.Kette do
       rest ++ neue
     end
   end
+
+  # ─── Zeilen: die Kette als Tabelle ──────────────────────────────────
+
+  @doc """
+  Die Kette als **flache Zeilen**, eine je Glied und eine je gelöster
+  Äußerung — die Form, in der sie gespeichert wird.
+
+  ## Der Platz steht als Bezug auf die Nachbar-Kennung
+
+  Maintainer, 20.09.2026: `vorher` ist die Kennung des linken Geschwisters
+  (`nil` für das erste), `eltern` die des Gliedes, an dem es hängt (`nil`
+  für ein Wurzelglied auf dem Zeitstrahl). Mehr braucht es nicht: Daraus
+  ist der ganze Baum eindeutig wiederherstellbar.
+
+  **Der Preis ist benannt** (die Alternative wäre ein Bezug auf eine
+  Äußerung des Nachbarn gewesen): Eine Kennung konvergiert nicht, und wer
+  ein Glied entfernt, muss die Zeile seines rechten Nachbarn nachziehen —
+  sonst zeigt sie auf etwas, das es nicht mehr gibt. `aus_zeilen/1` ist
+  deshalb **nachsichtig**: Ein gerissener Bezug hängt das Glied hinten an,
+  statt es zu verlieren, und meldet das als Befund.
+
+  Eine gelöste Äußerung bekommt ihre eigene Zeile mit `art: "draussen"` und
+  der **Utterance-ID als Kennung** — sie ist eindeutig, stabil, und
+  kollidiert nicht mit den `g_`-Kennungen der Glieder. Ohne sie wäre die
+  gespeicherte Kette unvollständig: „gehört nicht hinein" ist eine
+  Entscheidung wie jede andere und darf nicht zu „noch nicht angefasst"
+  verfallen.
+  """
+  @spec zu_zeilen(t()) :: [map()]
+  def zu_zeilen(%{glieder: glieder, draussen: draussen}) do
+    glied_zeilen(glieder, nil) ++
+      for {utt, grund} <- Enum.sort(draussen) do
+        %{"glied_id" => utt, "art" => "draussen", "grund" => grund}
+      end
+  end
+
+  defp glied_zeilen(geschwister, eltern_id) do
+    geschwister
+    |> Enum.reduce({[], nil}, fn g, {acc, vorher} ->
+      zeile = %{
+        "glied_id" => g.id,
+        "art" => "glied",
+        "utts" => g.utts,
+        "vorher" => vorher,
+        "eltern" => eltern_id,
+        "grund" => g.grund
+      }
+
+      {acc ++ [zeile] ++ glied_zeilen(g.kinder, g.id), g.id}
+    end)
+    |> elem(0)
+  end
+
+  @doc """
+  Die Kette aus ihren Zeilen — die Umkehrung von `zu_zeilen/1`.
+
+  Liefert `{kette, befunde}`. Die Befunde nennen, was nicht aufging:
+  ein `vorher`, das es nicht gibt, ein `eltern`, das es nicht gibt, oder
+  ein Ring von `vorher`-Bezügen. **Nichts wird dabei verworfen** — ein
+  Glied, dessen Platz unklar ist, landet hinten statt im Nichts
+  (flag-not-drop, wie überall in diesem Repo).
+  """
+  @spec aus_zeilen([map()]) :: {t(), [String.t()]}
+  def aus_zeilen(zeilen) when is_list(zeilen) do
+    {draussen_zeilen, glied_zeilen} =
+      Enum.split_with(zeilen, &(&1["art"] == "draussen"))
+
+    bekannt = MapSet.new(glied_zeilen, & &1["glied_id"])
+    {nach_eltern, waisen} = nach_eltern(glied_zeilen, bekannt)
+
+    {glieder, befunde} = baum(nil, nach_eltern)
+
+    draussen = Map.new(draussen_zeilen, &{&1["glied_id"], &1["grund"]})
+
+    {%{glieder: glieder, draussen: draussen}, waisen ++ befunde}
+  end
+
+  # Ein `eltern`, das es nicht gibt, macht das Glied zur Wurzel — sonst
+  # verschwände sein ganzer Unterbaum mit ihm.
+  defp nach_eltern(zeilen, bekannt) do
+    Enum.map_reduce(zeilen, [], fn z, befunde ->
+      e = z["eltern"]
+
+      if is_nil(e) or MapSet.member?(bekannt, e) do
+        {z, befunde}
+      else
+        {Map.put(z, "eltern", nil),
+         befunde ++
+           [
+             "Glied #{z["glied_id"]} hing an #{e}, das es nicht gibt — steht jetzt auf dem Zeitstrahl."
+           ]}
+      end
+    end)
+    |> then(fn {zeilen, befunde} -> {Enum.group_by(zeilen, & &1["eltern"]), befunde} end)
+  end
+
+  defp baum(eltern_id, nach_eltern) do
+    zeilen = Map.get(nach_eltern, eltern_id, [])
+    {geordnet, befunde} = ordnen(zeilen)
+
+    Enum.map_reduce(geordnet, befunde, fn z, acc ->
+      {kinder, kind_befunde} = baum(z["glied_id"], nach_eltern)
+
+      glied = %{
+        id: z["glied_id"],
+        utts: z["utts"] || [],
+        kinder: kinder,
+        grund: z["grund"]
+      }
+
+      {glied, acc ++ kind_befunde}
+    end)
+  end
+
+  # Aus den `vorher`-Bezügen eine Reihe: erst das Glied ohne Vorgänger, dann
+  # jeweils das, dessen `vorher` darauf zeigt. Was übrig bleibt, hängt an
+  # einem Ring oder an einem Bezug aus einer fremden Ebene; es kommt hinten
+  # dran und wird gemeldet.
+  defp ordnen([]), do: {[], []}
+
+  defp ordnen(zeilen) do
+    nachfolger = Map.new(zeilen, &{&1["vorher"], &1})
+    start = Enum.filter(zeilen, &is_nil(&1["vorher"]))
+
+    {kette, gesehen} = folgen(List.first(start), nachfolger, [], %{})
+    rest = Enum.reject(zeilen, &Map.has_key?(gesehen, &1["glied_id"]))
+
+    befunde =
+      cond do
+        length(start) > 1 ->
+          [
+            "#{length(start)} Glieder ohne Vorgänger auf derselben Ebene — die Reihenfolge ist dort nicht eindeutig."
+          ]
+
+        rest != [] ->
+          [
+            "#{length(rest)} Glied(er) hängen an einem Bezug, der nicht aufgeht — sie stehen am Ende ihrer Ebene."
+          ]
+
+        true ->
+          []
+      end
+
+    {kette ++ rest, befunde}
+  end
+
+  # `gesehen` ist eine Map statt eines MapSet: Der Dialyzer sieht in der
+  # `nil`-Klausel nur einen durchgereichten Wert und meldet die Opazität des
+  # MapSet — eine Map ist hier ebenso schnell und braucht keine Ausnahme.
+  @spec folgen(map() | nil, map(), [map()], map()) :: {[map()], map()}
+  defp folgen(nil, _nachfolger, acc, gesehen), do: {acc, gesehen}
+
+  defp folgen(zeile, nachfolger, acc, gesehen) do
+    id = zeile["glied_id"]
+
+    if Map.has_key?(gesehen, id) do
+      {acc, gesehen}
+    else
+      folgen(nachfolger[id], nachfolger, acc ++ [zeile], Map.put(gesehen, id, true))
+    end
+  end
 end

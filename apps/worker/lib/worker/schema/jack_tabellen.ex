@@ -19,6 +19,9 @@ defmodule Worker.Schema.JackTabellen do
       (`%{notizen, entwurf, quellen, zaehlwerte, modell, zeitpunkt}`);
     * `worker_jack_zeit_staende` — der Stand des Zeit-Jack (#1247).
 
+  Dazu die **Kette** (`worker_zeit_kette`, #1247): eine Row je Glied des
+  Zeitstrahls, mit dem Platz als Bezug auf die Kennung des Nachbarn.
+
   **`worker_zeit_anker` hat eine andere Form** und steht trotzdem hier, weil
   sie zum selben Umbau gehört: eine Row je **Anker**, nicht je Sitzung, mit
   der content-adressierten `anker_id` als Schlüssel. Die Nutzdaten liegen als
@@ -52,6 +55,13 @@ defmodule Worker.Schema.JackTabellen do
     :ok =
       Shared.Mnesia.ensure_table!(S.zeit_anker(),
         attributes: [:anker_id, :campaign_id, :session_id, :daten_json, :ts, :event_id],
+        type: :set,
+        index: [:campaign_id, :session_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(S.zeit_kette(),
+        attributes: [:glied_id, :campaign_id, :session_id, :daten_json, :ts, :event_id],
         type: :set,
         index: [:campaign_id, :session_id]
       )

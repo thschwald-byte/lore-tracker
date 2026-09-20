@@ -498,4 +498,158 @@ defmodule Worker.Timeline.KetteTest do
       unversehrt!(k, alle)
     end
   end
+
+  describe "die Kette als Zeilen — und zurück" do
+    # Maintainer, 20.09.2026: der Platz steht als Bezug auf die Kennung des
+    # Nachbarn (`vorher`) und des Elterngliedes (`eltern`). Die Rundreise ist
+    # die eigentliche Zusage: was gespeichert wird, muss vollständig
+    # zurückkommen — sonst verliert jeder Lauf still einen Teil der Arbeit.
+    defp rundreise(k) do
+      {zurueck, befunde} = k |> Kette.zu_zeilen() |> Kette.aus_zeilen()
+      assert befunde == [], "eine saubere Kette darf keine Befunde erzeugen"
+      zurueck
+    end
+
+    test "ein flacher Zeitstrahl kommt unverändert zurück" do
+      k = Kette.neu() |> mit([["u1", "u2"], ["u3"], ["u4"]])
+
+      assert rundreise(k) == k
+    end
+
+    test "ein Baum kommt mit allen Tiefen zurück" do
+      k = Kette.neu() |> mit([["u1"], ["u2"]])
+      zwei = Kette.glied_von(k, "u2").id
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"], grund: "der Hinterhalt")
+      {:ok, k, _} = Kette.unterhaengen(k, kind.id, ["u30"])
+      {:ok, k, _} = Kette.unterhaengen(k, zwei, ["u40"], grund: "die Flucht")
+
+      zurueck = rundreise(k)
+
+      assert zurueck == k
+      assert Kette.anzahl(zurueck) == 5
+      assert Kette.reihenfolge(zurueck) == ~w(u1 u2 u20 u30 u40)
+      assert Kette.glied(zurueck, kind.id).grund == "der Hinterhalt"
+    end
+
+    test "das Gelöste reist mit — sonst verfällt eine Entscheidung zu „noch offen“" do
+      k = Kette.neu() |> mit([["u1"]])
+      {:ok, k} = Kette.draussen(k, ["u8", "u9"], "Tischgespräch")
+
+      zurueck = rundreise(k)
+
+      assert zurueck.draussen == %{"u8" => "Tischgespräch", "u9" => "Tischgespräch"}
+      assert Kette.offen(zurueck, ~w(u1 u8 u9)) == []
+    end
+
+    test "jede Zeile nennt ihren Platz über die Kennung des Nachbarn" do
+      k = Kette.neu() |> mit([["u1"], ["u2"]])
+      zwei = Kette.glied_von(k, "u2").id
+      eins = Kette.glied_von(k, "u1").id
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"])
+
+      zeilen = Kette.zu_zeilen(k) |> Map.new(&{&1["glied_id"], &1})
+
+      assert zeilen[eins]["vorher"] == nil
+      assert zeilen[eins]["eltern"] == nil
+      assert zeilen[zwei]["vorher"] == eins
+      assert zeilen[kind.id]["eltern"] == zwei
+      assert zeilen[kind.id]["vorher"] == nil, "das erste Kind hat keinen linken Nachbarn"
+    end
+
+    test "die Zeilen überstehen JSON — sie werden so gespeichert" do
+      k = Kette.neu() |> mit([["u1", "u2"], ["u3"]])
+      {:ok, k} = Kette.draussen(k, ["u9"], "Regelfrage")
+      eins = Kette.glied_von(k, "u1").id
+      {:ok, k, _} = Kette.unterhaengen(k, eins, ["u5"], grund: "Teil davon")
+
+      {zurueck, []} =
+        k |> Kette.zu_zeilen() |> Jason.encode!() |> Jason.decode!() |> Kette.aus_zeilen()
+
+      assert zurueck == k
+    end
+  end
+
+  describe "ein gerissener Bezug verliert nichts — er wird gemeldet" do
+    # Der Preis der Kennung als Bezug (Maintainer-Entscheidung, 20.09.2026):
+    # Sie konvergiert nicht, und wer ein Glied entfernt, muss die Zeile
+    # seines rechten Nachbarn nachziehen. Geht das schief, darf die Kette
+    # nicht schweigend Glieder verlieren.
+    test "ein vorher, das es nicht gibt, hängt das Glied hinten an" do
+      zeilen = [
+        %{
+          "glied_id" => "g_a",
+          "art" => "glied",
+          "utts" => ["u1"],
+          "vorher" => nil,
+          "eltern" => nil
+        },
+        %{
+          "glied_id" => "g_b",
+          "art" => "glied",
+          "utts" => ["u2"],
+          "vorher" => "g_weg",
+          "eltern" => nil
+        }
+      ]
+
+      {k, befunde} = Kette.aus_zeilen(zeilen)
+
+      assert Kette.reihenfolge(k) == ~w(u1 u2)
+      assert [text] = befunde
+      assert text =~ "nicht aufgeht"
+    end
+
+    test "ein Ring von Bezügen endet, statt sich zu drehen" do
+      zeilen = [
+        %{
+          "glied_id" => "g_a",
+          "art" => "glied",
+          "utts" => ["u1"],
+          "vorher" => "g_b",
+          "eltern" => nil
+        },
+        %{
+          "glied_id" => "g_b",
+          "art" => "glied",
+          "utts" => ["u2"],
+          "vorher" => "g_a",
+          "eltern" => nil
+        }
+      ]
+
+      {k, befunde} = Kette.aus_zeilen(zeilen)
+
+      assert Kette.anzahl(k) == 2, "kein Glied geht verloren"
+      assert length(Kette.reihenfolge(k)) == 2
+      assert befunde != []
+    end
+
+    test "ein Elternglied, das es nicht gibt, stellt das Kind auf den Zeitstrahl" do
+      zeilen = [
+        %{
+          "glied_id" => "g_a",
+          "art" => "glied",
+          "utts" => ["u1"],
+          "vorher" => nil,
+          "eltern" => nil
+        },
+        %{
+          "glied_id" => "g_k",
+          "art" => "glied",
+          "utts" => ["u2"],
+          "vorher" => nil,
+          "eltern" => "g_weg"
+        }
+      ]
+
+      {k, befunde} = Kette.aus_zeilen(zeilen)
+
+      assert Kette.anzahl(k) == 2, "der Unterbaum verschwindet nicht mit seinem Elternteil"
+      assert Enum.any?(befunde, &(&1 =~ "g_weg"))
+    end
+
+    test "aus leeren Zeilen wird eine leere Kette, kein Absturz" do
+      assert {%{glieder: [], draussen: %{}}, []} = Kette.aus_zeilen([])
+    end
+  end
 end

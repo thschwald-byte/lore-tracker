@@ -150,6 +150,8 @@ defmodule Worker.Materializer.Cascade do
     # #1247: der Stand des Zeit-Jack je Sitzung und die Anker der Linie.
     delete_by_campaign(S.jack_zeit_staende(), id)
     delete_by_campaign(S.zeit_anker(), id)
+    # #1247: die Kette — eine Row je Glied, campaign-indiziert.
+    delete_by_campaign(S.zeit_kette(), id)
     # #916 (Cut 2), Bestands-Lücke: session_fact_overrides (#724 Datum/dismiss) war
     # in KEINER Cascade — #801-Klasse. Campaign-indiziert → delete_by_campaign.
     delete_by_campaign(S.session_fact_overrides(), id)
@@ -387,6 +389,10 @@ defmodule Worker.Materializer.Cascade do
       # index_read + Einzel-Delete, wie die Lücken-Vorschläge darunter.
       :mnesia.index_read(S.zeit_anker(), sid, :session_id)
       |> Enum.each(fn row -> :mnesia.delete({S.zeit_anker(), elem(row, 1)}) end)
+
+      # #1247: die Kettenglieder ebenso (PK = glied_id, session-indiziert).
+      :mnesia.index_read(S.zeit_kette(), sid, :session_id)
+      |> Enum.each(fn row -> :mnesia.delete({S.zeit_kette(), elem(row, 1)}) end)
 
       # #865: Vorschläge + Overrides sind session-indiziert (PK = block_id
       # bzw. lo_key) → index_read + Einzel-Delete.

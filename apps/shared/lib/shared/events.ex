@@ -372,6 +372,21 @@ defmodule Shared.Events do
   # dann unveränderlich, auch für einen Jack-Lauf.
   def zeit_anker_set, do: "ZeitAnkerSet"
 
+  # #1247: ein Glied der KETTE — des Zeitstrahls, auf dem das Geschehen liegt.
+  # Payload: `%{glied_id, campaign_id, session_id, daten: %{art, utts, vorher,
+  # eltern, grund, entfernt}}`.
+  #
+  # Eine Row je Glied, nicht ein Blob je Lauf: Ein Blob ist LWW über die ganze
+  # Kette — zwei Worker, die verschiedene Teile bauen, löschten sich
+  # gegenseitig aus (#698-Klasse). Und die Chronik muss die Kette lesen
+  # können, ohne einen Jack-Stand zu dekodieren.
+  #
+  # `vorher` und `eltern` tragen den Platz als Bezug auf die Kennung des
+  # Nachbarn bzw. des Elterngliedes (Maintainer, 20.09.2026). `entfernt`
+  # ist ein Grabstein — gelöscht wird nie, sonst divergieren zwei Worker bei
+  # vertauschter Zustellung.
+  def zeit_kettenglied_set, do: "ZeitKettengliedSet"
+
   # #1247 (Z2): der Stand des Zeit-Jack einer Sitzung nach seinem letzten Lauf.
   # Payload wie die drei Geschwister: `%{session_id, campaign_id, stand: %{...}}`.
   # 1 Row/Session, LWW-by-event_id. KEINE Dirty-Kante.

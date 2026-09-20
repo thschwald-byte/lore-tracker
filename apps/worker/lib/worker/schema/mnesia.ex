@@ -131,6 +131,16 @@ defmodule Worker.Schema.Mnesia do
   # event_id, nie ein :mnesia.delete — eine Rücknahme ist eine reguläre Row
   # mit art "geloest" (#698-Klasse).
   @zeit_anker :worker_zeit_anker
+  # #1247: die KETTE — 1 Row je Glied, Key = die Kennung des Gliedes (eine
+  # UUID, vergeben beim Anlegen und stabil über jede Änderung). Der Platz
+  # steht in den Nutzdaten als Bezug auf die Kennung des linken Nachbarn
+  # (`vorher`) und des Elterngliedes (`eltern`) — Maintainer-Entscheidung,
+  # 20.09.2026. Gelöste Äußerungen liegen in derselben Tabelle mit
+  # `art: "draussen"` und der Utterance-ID als Key; die Schlüsselräume sind
+  # disjunkt (`g_…` gegen Utterance-UUID). Nutzdaten als EIN JSON-Feld und nie
+  # ein :mnesia.delete — beides aus denselben Gründen wie bei den Ankern
+  # darüber; ein entferntes Glied bekommt einen Grabstein (`entfernt`).
+  @zeit_kette :worker_zeit_kette
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -236,6 +246,7 @@ defmodule Worker.Schema.Mnesia do
   def jack_epos_staende, do: @jack_epos_staende
   def jack_zeit_staende, do: @jack_zeit_staende
   def zeit_anker, do: @zeit_anker
+  def zeit_kette, do: @zeit_kette
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones

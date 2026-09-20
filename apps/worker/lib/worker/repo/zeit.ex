@@ -51,7 +51,7 @@ defmodule Worker.Repo.Zeit do
 
   alias Worker.Repo.Artifacts
   alias Worker.Schema.Mnesia, as: S
-  alias Worker.Timeline.{Ausdruck, Linie}
+  alias Worker.Timeline.{Ausdruck, Kette, Linie}
 
   import Worker.Repo, only: [transaction: 1]
 
@@ -164,4 +164,69 @@ defmodule Worker.Repo.Zeit do
   # Zeitstempel schreibt.
   defp gesetzt_am(%{date: d}) when is_binary(d) and d != "", do: d
   defp gesetzt_am(_), do: "gesetzt"
+
+  # ─── Die Kette ──────────────────────────────────────────────────────
+
+  @doc """
+  Die **Kette** einer Sitzung aus `worker_zeit_kette` — eine Row je Glied,
+  zurückgebaut zum Zeitstrahl samt seinen Bäumen.
+
+  Ohne `session_id` die Kette der ganzen Kampagne. Das ist kein Spezialfall,
+  sondern der Normalfall für die Chronik: Geschehen hört nicht an der
+  Sitzungsgrenze auf, und ein Rückblick in Sitzung 5 gehört vor Sitzung 1.
+  Die Sitzungsform ist für den Lauf selbst da, der auf seinem eigenen Stand
+  aufsetzt.
+
+  **Befunde werden geloggt, nicht verschluckt** (`Kette.aus_zeilen/1`): ein
+  gerissener `vorher`-Bezug ist der Preis der Kennung als Platzangabe
+  (Maintainer-Entscheidung, 20.09.2026), und wer ihn nicht sieht, sucht den
+  Fehler später in der Zeitrechnung.
+  """
+  @spec kette(String.t(), String.t() | nil) :: map()
+  def kette(campaign_id, session_id \\ nil) when is_binary(campaign_id) do
+    {k, befunde} = campaign_id |> ketten_zeilen(session_id) |> Kette.aus_zeilen()
+
+    for b <- befunde do
+      Logger.warning("Zeit-Kette #{campaign_id}/#{session_id || "alle"}: #{b}")
+    end
+
+    k
+  end
+
+  @doc """
+  Die gespeicherten Zeilen der Kette, ohne sie zusammenzubauen — **Grabsteine
+  schon entfernt**.
+
+  Der Publizierer braucht sie, um zu sehen, was sich geändert hat: Ein
+  Ereignis je Lauf und Glied, auch wo nichts anders ist, schöbe bei jedem
+  Lauf die `event_id` vor, und der LWW-Vergleich im Fold verlöre seine
+  Aussage (dieselbe Regel wie bei den Ankern).
+  """
+  @spec ketten_zeilen(String.t(), String.t() | nil) :: [map()]
+  def ketten_zeilen(campaign_id, session_id \\ nil) when is_binary(campaign_id) do
+    rows =
+      if is_binary(session_id) do
+        transaction(fn -> :mnesia.index_read(S.zeit_kette(), session_id, :session_id) end)
+      else
+        transaction(fn -> :mnesia.index_read(S.zeit_kette(), campaign_id, :campaign_id) end)
+      end
+
+    rows
+    |> List.wrap()
+    |> Enum.flat_map(&ketten_zeile/1)
+    |> Enum.reject(&(&1["entfernt"] == true))
+  end
+
+  defp ketten_zeile(row) when tuple_size(row) >= 5 do
+    with json when is_binary(json) <- elem(row, 4),
+         {:ok, %{} = daten} <- Jason.decode(json) do
+      [Map.put(daten, "glied_id", elem(row, 1))]
+    else
+      _ ->
+        Logger.warning("Zeit: Kettenglied #{inspect(elem(row, 1))} nicht lesbar — übersprungen")
+        []
+    end
+  end
+
+  defp ketten_zeile(_), do: []
 end

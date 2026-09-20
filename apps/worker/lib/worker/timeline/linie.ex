@@ -67,6 +67,8 @@ defmodule Worker.Timeline.Linie do
   sich die Strecke von allein gerade, wenn jemand einen Anker korrigiert.
   """
 
+  alias Worker.Timeline.Befunde
+
   @minuten_pro_tag 1440
 
   @typedoc "Eine Utterance in der Grundordnung."
@@ -150,7 +152,9 @@ defmodule Worker.Timeline.Linie do
     aktiv = Enum.reject(sprechlinie, &MapSet.member?(geloest, &1.utterance_id))
 
     kette = einreihen(aktiv, anker)
-    eintraege = minuten_verteilen(kette, anker)
+    feste = feste_punkte(kette, anker)
+    spannen = spannen_je_stelle(kette, anker)
+    eintraege = minuten_verteilen(kette, anker, feste, spannen)
 
     %{
       sprechlinie: sprechlinie,
@@ -160,7 +164,7 @@ defmodule Worker.Timeline.Linie do
       nach_utterance: Map.new(eintraege, &{&1.utterance_id, &1}),
       anker_an: anker_an(anker, geloest),
       geloest: geloest,
-      befunde: pruefen(eintraege, kette, anker)
+      befunde: Befunde.aus(%{reihe: kette, anker: anker, feste: feste, spannen: spannen})
     }
   end
 
@@ -490,7 +494,14 @@ defmodule Worker.Timeline.Linie do
     |> MapSet.new()
   end
 
-  defp art(a) do
+  @doc """
+  Die Art eines Ankers als Atom — `:zeitpunkt`, `:spanne`, `:frist`,
+  `:ordnung`, `:geloest` oder `:unbekannt`. Öffentlich, weil
+  `Worker.Timeline.Befunde` dieselbe Lesart braucht; zwei Fassungen liefen
+  auseinander, sobald eine Art dazukommt.
+  """
+  @spec art(map()) :: atom()
+  def art(a) do
     case Map.get(a, :art) do
       x when is_atom(x) -> x
       x when is_binary(x) -> safe_atom(x)
@@ -511,9 +522,7 @@ defmodule Worker.Timeline.Linie do
 
   # Feste Punkte sind die Zeitpunkt-Anker. Dazwischen wird interpoliert; die
   # Spannen dazwischen geben den Abstand vor, soweit sie hineinpassen.
-  defp minuten_verteilen(reihe, anker) do
-    feste = feste_punkte(reihe, anker)
-    spannen = spannen_je_stelle(reihe, anker)
+  defp minuten_verteilen(reihe, anker, feste, spannen) do
     zweifel = zweifel_je_stelle(anker)
     abgesegnet = abgesegnete(anker)
 
@@ -732,16 +741,21 @@ defmodule Worker.Timeline.Linie do
 
   # Wie viel Zeit zwischen zwei Stellen vergeht, **gerechnet ab `start`** —
   # ein Tageswechsel braucht den Stand, ein Mass nicht.
-  defp gelaufen(von, bis, spannen, start \\ 0)
+  @doc """
+  Die Summe der Spannen zwischen zwei Stellen. Öffentlich für
+  `Worker.Timeline.Befunde`, das damit den Überlauf prüft.
+  """
+  @spec gelaufen(non_neg_integer(), non_neg_integer(), map()) :: integer()
+  def gelaufen(von, bis, spannen, start \\ 0)
 
-  defp gelaufen(von, bis, spannen, start) when bis > von do
+  def gelaufen(von, bis, spannen, start) when bis > von do
     (von + 1)..bis
     |> Enum.flat_map(&Map.get(spannen, &1, []))
     |> Enum.reduce(start, &weiter/2)
     |> Kernel.-(start)
   end
 
-  defp gelaufen(_, _, _, _), do: 0
+  def gelaufen(_, _, _, _), do: 0
 
   defp weiter({:mass, m}, jetzt), do: jetzt + m
 
@@ -1026,44 +1040,6 @@ defmodule Worker.Timeline.Linie do
   defp verfeinert?(_, _), do: false
 
   # Die Stellen, an denen sich zwei Zeitpunkt-Anker widersprechen.
-  defp uneinige_zeitpunkte(reihe, anker) do
-    index = index_nach_utterance(reihe)
-
-    anker
-    |> Enum.filter(&(art(&1) == :zeitpunkt and zahl_traegt?(&1)))
-    |> Enum.group_by(&frueheste(&1, index))
-    |> Enum.reject(fn {i, gruppe} -> is_nil(i) or length(gruppe) < 2 end)
-    |> Enum.flat_map(fn {_i, gruppe} ->
-      minuten =
-        gruppe |> Enum.map(&(Map.get(&1, :minute) || Map.get(&1, :tagesminute))) |> Enum.uniq()
-
-      werte = gruppe |> Enum.map(&to_string(Map.get(&1, :wert) || "")) |> Enum.reject(&(&1 == ""))
-
-      if length(minuten) > 1 do
-        wer = if Enum.any?(gruppe, &abgesegnet?/1), do: "der abgesegnete", else: "der frühere"
-
-        [
-          %{
-            art: :zeitpunkte_uneinig,
-            anker_id: gruppe |> Enum.map(&Map.get(&1, :anker_id)) |> Enum.join(", "),
-            text:
-              "An derselben Stelle stehen zwei verschiedene Zeitpunkte " <>
-                "(#{gesagt_wort(werte, minuten)}). Gerechnet wird mit #{wer}."
-          }
-        ]
-      else
-        []
-      end
-    end)
-  end
-
-  # Ein Zeitpunkt trägt eine Zahl, wenn er ein Datum ODER eine Uhrzeit
-  # hergegeben hat. Nur auf `:minute` zu prüfen liesse den häufigsten Fall am
-  # Spieltisch aus dem Befund fallen: zwei widersprechende Uhrzeiten an einer
-  # Stelle wären still.
-  defp zahl_traegt?(a),
-    do: is_integer(Map.get(a, :minute)) or is_integer(Map.get(a, :tagesminute))
-
   # Eine Spanne gilt ab der SPÄTESTEN Stelle ihrer Menge: „wir sind zwei
   # Stunden marschiert" wird am Ende des Marsches gesagt, die Zeit ist
   # vergangen, bevor der Satz fällt.
@@ -1131,145 +1107,6 @@ defmodule Worker.Timeline.Linie do
     case Map.get(a, :abgesegnet_am) do
       s when is_binary(s) -> s != ""
       _ -> false
-    end
-  end
-
-  # ─── Befunde ────────────────────────────────────────────────────────
-
-  @doc """
-  Prüft die gebaute Linie und liefert Befunde — sie ändert nichts. Ein Befund
-  ist eine Meldung für die Kurationsliste (#1243), keine Korrektur.
-  """
-  @spec pruefen([eintrag()], [stelle()], [anker()]) :: [map()]
-  def pruefen(eintraege, reihe, anker) do
-    (ohne_ziel(anker, reihe) ++
-       spannen_ueberlauf(eintraege, reihe, anker) ++
-       uneinige_zeitpunkte(reihe, anker) ++
-       grosse_spruenge(reihe, anker) ++
-       zweifel(anker))
-    |> Enum.map(&Map.put(&1, :id, kennung(&1)))
-  end
-
-  @doc """
-  Die Kennung eines Befundes — **jeder hat eine, auch der ohne Anker**.
-
-  Ein Befund hängt nicht immer an einem Anker: Der Spannen-Überlauf gilt der
-  Strecke *zwischen* zweien und trägt `anker_id: nil`. Wer solche Befunde
-  über die Anker-ID abhakt, hakt sie nie ab — und eine Schranke, die sie
-  verlangt (die des Prüf-Laufs, #1247), wäre unter keinen Umständen zu
-  erfüllen. Genau diese Klasse hat beim Chronik-Jack 28 von 51 Runden
-  gekostet (#1211).
-
-  Deshalb entsteht die Kennung **hier**, an der einen Stelle, an der Befunde
-  gebaut werden, und nicht bei jedem Leser neu.
-  """
-  @spec kennung(map()) :: String.t()
-  def kennung(%{anker_id: id}) when is_binary(id) and id != "", do: id
-
-  def kennung(befund) do
-    roh = "#{Map.get(befund, :art)}|#{Map.get(befund, :text)}"
-    "b_" <> (:crypto.hash(:sha, roh) |> Base.encode16(case: :lower) |> String.slice(0, 16))
-  end
-
-  # s. `sprung?/3` — jeder grosse Vorwärtssprung ist eine Annahme und steht
-  # deshalb in der Liste, die ein Mensch durchsieht.
-  defp grosse_spruenge(reihe, anker) do
-    for {_i, %{sprung?: true} = p} <- feste_punkte(reihe, anker) do
-      %{
-        art: :zeitsprung_angenommen,
-        anker_id: p.anker_id,
-        text:
-          "Diese Uhrzeit liegt vor der vorhergehenden; gerechnet wird mit einem " <>
-            "Sprung nach vorn von mehr als sechs Stunden. Stimmt das nicht, ist es " <>
-            "vermutlich ein Rückblick, der noch verschoben werden muss."
-      }
-    end
-  end
-
-  defp ohne_ziel(anker, reihe) do
-    ids = MapSet.new(reihe, & &1.utterance_id)
-
-    for a <- anker,
-        art(a) == :ordnung,
-        ziel = Map.get(a, :ziel),
-        is_nil(ziel) or not MapSet.member?(ids, ziel) do
-      %{
-        art: :verschiebung_ohne_ziel,
-        anker_id: Map.get(a, :anker_id),
-        text: "Die Verschiebung nennt kein auflösbares Ziel — sie bleibt wirkungslos."
-      }
-    end
-  end
-
-  # Der Widerspruch, der im Plan Punkt 6 heisst: die genannten Dauern
-  # zwischen zwei festen Punkten ergeben mehr Zeit, als zwischen ihnen liegt.
-  # Gemeldet, nicht weggerechnet.
-  defp spannen_ueberlauf(_eintraege, reihe, anker) do
-    feste = feste_punkte(reihe, anker) |> Enum.sort_by(fn {i, _} -> i end)
-    spannen = spannen_je_stelle(reihe, anker)
-
-    feste
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.flat_map(fn [{vi, %{minute: vm}}, {ni, %{minute: nm}}] ->
-      summe = gelaufen(vi, ni, spannen)
-      abstand = nm - vm
-
-      if summe > abstand do
-        [
-          %{
-            art: :spannen_ueberlauf,
-            anker_id: nil,
-            text:
-              "Zwischen zwei Ankern liegen #{dauer_wort(abstand)}, die genannten Dauern " <>
-                "ergeben #{dauer_wort(summe)}. Entweder ist eine Dauer falsch gelesen " <>
-                "oder ein Anker sitzt falsch."
-          }
-        ]
-      else
-        []
-      end
-    end)
-  end
-
-  # **Im Befund steht, was GESAGT wurde** — „Ende 2011" und „kurz nach acht",
-  # nicht zwei Minutenzahlen. Jack hat die Ausdrücke gesetzt; er erkennt sie
-  # wieder, eine Restminutenzahl nicht.
-  defp gesagt_wort([_ | _] = werte, _minuten), do: Enum.map_join(werte, " und ", &"„#{&1}“")
-  defp gesagt_wort(_, minuten), do: Enum.map_join(minuten, " und ", &dauer_wort/1)
-
-  @doc """
-  Eine Minutenzahl in Worten — „zwei Stunden" statt „120", „69 Jahre" statt
-  „−1057331035".
-
-  **Rohminuten sind in einem Befund keine Auskunft** (#1247, 20.09.2026). Am
-  echten Lauf stand „Zwischen zwei Ankern liegen -1057331035 Minuten" — das
-  ist die Differenz zwischen 2011 und Jahr 0, formal richtig und praktisch
-  unlesbar. Ein Modell, das so etwas liest, sucht den Fehler in der Zahl
-  statt in den zwei Ankern.
-  """
-  @spec dauer_wort(integer()) :: String.t()
-  def dauer_wort(minuten) when is_integer(minuten) do
-    vor = if minuten < 0, do: "minus ", else: ""
-    m = abs(minuten)
-
-    cond do
-      m < 60 -> "#{vor}#{m} Minuten"
-      m < @minuten_pro_tag -> "#{vor}#{runde(m, 60)} Stunden"
-      m < 60 * 24 * 365 -> "#{vor}#{runde(m, @minuten_pro_tag)} Tage"
-      true -> "#{vor}#{runde(m, @minuten_pro_tag * 365)} Jahre"
-    end
-  end
-
-  defp runde(zahl, teiler) do
-    wert = zahl / teiler
-    if wert < 10, do: Float.round(wert, 1), else: round(wert)
-  end
-
-  defp zweifel(anker) do
-    for a <- anker,
-        z = Map.get(a, :zweifel),
-        is_binary(z) and z != "" do
-      %{art: :zweifel, anker_id: Map.get(a, :anker_id), text: z}
     end
   end
 end

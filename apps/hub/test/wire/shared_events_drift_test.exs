@@ -91,6 +91,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     UtteranceEdited
     UtterancesTranscribed
     ZeitAnkerSet
+    ZeitKettengliedSet
   )
 
   describe "all/0 — kanonische Wire-Kind-Liste" do

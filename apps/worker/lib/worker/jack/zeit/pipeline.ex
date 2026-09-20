@@ -19,7 +19,7 @@ defmodule Worker.Jack.Zeit.Pipeline do
   require Logger
 
   alias Worker.Jack.Zeit
-  alias Worker.Jack.Zeit.{Eingabe, Stand}
+  alias Worker.Jack.Zeit.{Eingabe, Kettenspeicher, Stand}
 
   @doc """
   Der Modellname des Zeit-Jack: `zeit_jack_model`, wenn gesetzt und nicht
@@ -93,8 +93,9 @@ defmodule Worker.Jack.Zeit.Pipeline do
 
     with {:ok, r} <- Zeit.laufen(eingabe, lauf_opts) do
       anker = veroeffentlichen(session, campaign, r.stand)
+      kette = Kettenspeicher.veroeffentlichen(session, campaign, r.stand.kette)
       stand_ablegen(session, campaign, r)
-      messen(session, campaign, r, anker)
+      messen(session, campaign, r, anker, kette)
       {:ok, %{anker: length(anker), geprueft?: r.geprueft?}}
     end
   end
@@ -176,15 +177,14 @@ defmodule Worker.Jack.Zeit.Pipeline do
           "jack" => "zeit",
           "abbild" => Stand.abbild(r.stand),
           "notizen" => r.stand.notizen,
-          # **Die Kette reist mit** (#1247): Sie ist das eigentliche
-          # Ergebnis des Laufs — die Anker datieren sie, aber die
-          # Reihenfolge des Geschehens steht nur hier. Ohne sie könnte ein
-          # späterer Lauf nicht darauf aufsetzen, und die Chronik nicht
-          # lesen, in welcher Folge etwas geschah.
-          "kette" => %{
-            "glieder" => Enum.map(r.stand.kette.glieder, &glied_daten/1),
-            "draussen" => r.stand.kette.draussen
-          },
+          # **Die Kette steht NICHT hier** (#1247, 20.09.2026): Sie hat seit
+          # dem Umbau auf Bäume ihre eigenen Zeilen — eine Row je Glied in
+          # `worker_zeit_kette`, geschrieben von `Kettenspeicher`. Ein Blob
+          # wäre LWW über die ganze Kette gewesen: zwei Worker, die
+          # verschiedene Teile einsortieren, hätten sich gegenseitig
+          # gelöscht. Der Stand nennt nur noch ihre Grösse, damit die
+          # Laufsicht ohne zweiten Leser auskommt.
+          "kette_glieder" => Worker.Timeline.Kette.anzahl(r.stand.kette),
           "konflikte" => r.stand.konflikte,
           "geprueft" => r.geprueft?,
           "modell" => modell_name(),
@@ -195,10 +195,6 @@ defmodule Worker.Jack.Zeit.Pipeline do
     :ok
   end
 
-  # Ein Glied als Daten — ohne Atome, damit es durch JSON und zurück kommt.
-  defp glied_daten(g),
-    do: %{"id" => g.id, "utts" => g.utts, "grund" => g[:grund]}
-
   @doc """
   Die Messzeile des Trichters. Ohne sie ist „nichts zu finden" von „nichts
   gefunden" nicht zu unterscheiden — dieselbe Lehre wie beim Chronik-Jack
@@ -206,14 +202,16 @@ defmodule Worker.Jack.Zeit.Pipeline do
   Uhrzeit ist ein realer Fall (eine der vier durchgesehenen hat in 1591
   Blöcken keine).
   """
-  @spec messen(map(), map(), map(), [map()]) :: :ok
-  def messen(session, campaign, r, anker) do
+  @spec messen(map(), map(), map(), [map()], {non_neg_integer(), non_neg_integer()}) :: :ok
+  def messen(session, campaign, r, anker, kette \\ {0, 0}) do
     z = Stand.zahlen(r.stand)
+    {geschrieben, grabsteine} = kette
 
     Logger.info(
       "Zeit-Jack: campaign=#{campaign.id} session=#{session.id} " <>
         "zeilen=#{z.utterances} gelesen=#{z.gelesen} -> anker=#{length(anker)} " <>
         "(zeitpunkte=#{z.zeitpunkte} spannen=#{z.spannen} verschiebungen=#{z.verschiebungen}) " <>
+        "kette=#{z.glieder} glieder (geschrieben=#{geschrieben} grabsteine=#{grabsteine}) " <>
         "geloest=#{z.geloest} konflikte=#{z.konflikte} geprueft=#{r.geprueft?} " <>
         "runden=#{r.runden} ms=#{r.ms}"
     )

@@ -858,6 +858,11 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("ZeitAnkerSet", payload, ts, meta),
     do: Worker.Materializer.ZeitAnkerFolds.zeit_anker_set(payload, ts, meta)
 
+  # #1247: ein Glied der Kette — eine Row je Glied, Platz als Bezug auf die
+  # Kennung des Nachbarn, Grabstein statt Delete.
+  def apply_kind("ZeitKettengliedSet", payload, ts, meta),
+    do: Worker.Materializer.ZeitKettenFolds.zeit_kettenglied_set(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der
