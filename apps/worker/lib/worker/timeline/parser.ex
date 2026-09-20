@@ -270,6 +270,23 @@ defmodule Worker.Timeline.Parser do
       ~r/^(ab|seit|nach|vor|bis)\s+(?:dem|der|den|das|etwa|rund|circa|ca\.?)\s+/u,
       "\\1 "
     )
+    # **„kurz vor 2080" ist ein Jahr, „kurz vor sieben" eine Uhrzeit.** Das
+    # Füllwort steht vor beidem; entfernt wird es nur, wenn eine drei- bis
+    # fünfstellige Zahl folgt — eine Uhrzeit hat höchstens zwei Stellen und
+    # wird ohnehin von `Worker.Timeline.Ausdruck` gelesen, bevor der Parser
+    # drankommt.
+    #
+    # Gefunden am Lauf vom 20.09.2026: Der Auftrag verlangt „sag es, wie es
+    # gesagt wurde" — und genau dann verstand der Parser es nicht. „2080"
+    # und „im Jahr 2080" gingen, „kurz vor 2080" nicht.
+    #
+    # **Ehrliche Grenze:** Das ist eine Liste von Füllwörtern, keine
+    # Bedeutungserkennung (#1109/#1213-Lehre). Sie fängt, was am Tisch
+    # üblich ist; „so etwa im Bereich von 2080 herum" fängt sie nicht.
+    |> String.replace(
+      ~r/^(?:kurz|knapp|gut|grob|gegen)\s+(?=(?:ab|seit|nach|vor|bis)\s+-?\d{3,5}\b)/u,
+      ""
+    )
     |> String.trim()
   end
 

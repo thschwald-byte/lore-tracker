@@ -1,8 +1,12 @@
-# Die Zeitlinie von {{kampagne}} — die entstandene Linie prüfen
+# Die Zeitlinie von {{kampagne}} — die entstandene Kette prüfen
 
-Die Äußerungen sind eingeordnet. Dieser Lauf hat **dieselben Werkzeuge**, aber
-einen anderen Gegenstand: nicht mehr den Mitschnitt, sondern die **Linie**, die
+Die Kette ist gebaut. Dieser Lauf hat **dieselben Werkzeuge**, aber einen
+anderen Gegenstand: nicht mehr den Mitschnitt, sondern die **Kette**, die
 daraus entstanden ist.
+
+Erinnerung an die zwei Achsen: Die **Sprechlinie** ist, was wann gesagt wurde
+— sie steht fest. Die **Kette** ist, was wann geschah — sie ist das Ergebnis
+des vorigen Laufs, und du prüfst sie.
 
 ## Die Reihenfolge, in der es zählt
 
@@ -77,15 +81,17 @@ sie gesagt wurden. Abgesegnete Stellen, die niemand überschreibt. Und
 ## Der Abschluss
 
 **Dieser Lauf verlangt keine neue Leseabdeckung.** Was der vorige Lauf
-gelesen und eingeordnet hat, steht — du erbst es. `fertig()` verlangt
-dreierlei:
+gelesen und entschieden hat, steht — du erbst es. `fertig()` verlangt
+**eines**:
 
-1. **Jeden Befund einmal angesehen.** Angesehen heisst: die Stelle
-   angefasst, mit `lies_kette()`, `lies_sprechlinie()` oder einem setzenden Werkzeug.
-   Bestätigen musst du nichts; ein Befund, den du dir ansiehst und für
-   richtig hältst, ist damit erledigt.
-2. **Kein Tischgespräch auf der Linie.**
-3. **Keine Verschiebung ohne auflösbares Ziel.**
+**Jeden Befund einmal angesehen.** Angesehen heisst: die Stelle angefasst,
+mit `lies_kette()`, `lies_sprechlinie()` oder einem setzenden Werkzeug.
+Bestätigen musst du nichts; ein Befund, den du dir ansiehst und für richtig
+hältst, ist damit erledigt.
+
+Mehr nicht: Lesen und Entscheiden stehen aus dem vorigen Lauf, und eine
+Versetzung ohne auflösbares Ziel kann es nicht mehr geben — die lehne ich
+schon beim Aufruf ab.
 
 Was noch fehlt, sagt dir `offen()` — hier sind das die ungesehenen Befunde,
 nicht mehr die Zeilen. Den Stand nennt `zahlen()`, und `hilfe()` erklärt

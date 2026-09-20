@@ -179,6 +179,17 @@ defmodule Worker.Timeline.Ausdruck do
       {:ok, %{typ: :date, von: von}} when is_integer(von) ->
         Map.put(a, :minute, von * Linie.minuten_pro_tag())
 
+      # **Eine nach hinten offene Angabe hat trotzdem eine Stelle** (#1247,
+      # 20.09.2026). „kurz vor 2080" und „bis 2080" liefern `von: nil, bis:
+      # <Tag>` — der Parser sagt damit richtig, dass kein Anfang genannt
+      # wurde. Als Anker ist es trotzdem gemeint: Die Sitzung spielt kurz
+      # vor 2080, und ohne diesen Zweig läge sie nirgends.
+      #
+      # Genommen wird das Ende als Stelle; die Unschärfe trägt bereits, dass
+      # es ungenau ist (`mit_unschaerfe/3` setzt sie aus demselben Ausdruck).
+      {:ok, %{typ: :date, von: nil, bis: bis}} when is_integer(bis) ->
+        Map.put(a, :minute, bis * Linie.minuten_pro_tag())
+
       _ when is_map_key(a, :tagesminute) or is_map_key(a, :halbtag_minute) ->
         a
 

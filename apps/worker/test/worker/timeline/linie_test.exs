@@ -781,8 +781,12 @@ defmodule Worker.Timeline.LinieTest do
 
       befund = Enum.find(linie.befunde, &(&1.art == :spannen_ueberlauf))
       assert befund, "der Widerspruch muss ein Befund sein"
-      assert befund.text =~ "300"
-      assert befund.text =~ "60"
+      # **Der Befund nennt die Dauer in Worten, nicht in Rohminuten** (#1247,
+      # 20.09.2026): „5.0 Stunden" statt „300". Am echten Lauf stand dort
+      # „-1057331035 Minuten" — formal richtig, praktisch unlesbar.
+      assert befund.text =~ "5.0 Stunden"
+      assert befund.text =~ "1.0 Stunden"
+
 
       # Die Linie bleibt trotzdem benutzbar und monoton — best effort.
       nach = linie.nach_utterance

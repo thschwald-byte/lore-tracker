@@ -698,14 +698,28 @@ defmodule Worker.Timeline.Linie do
   # die Position ist es nicht. Passen sie nicht in den Abstand, wird linear
   # verteilt — der Widerspruch ist dann ein BEFUND (s. `pruefen/3`) und wird
   # nicht durch eine stille Stauchung versteckt.
+  # **Rückwärts wird nicht interpoliert** (#1247, 20.09.2026). Liegt der
+  # nächste feste Punkt VOR dem vorigen, ist das kein Rechenfall, sondern ein
+  # Widerspruch — und zwischen ihnen gibt es keine sinnvolle Strecke.
+  #
+  # Der Fall ist nicht exotisch: Eine Sitzung, die 2080 spielt, erzählt am
+  # Anfang Weltgeschichte von 2011; die Jahreszahl ist taggenau genug für
+  # einen eigenen Punkt, vererbt aber keinen Tag (s. `taggenau?/1`), und die
+  # folgende Uhrzeit landet auf Tag 0. Interpoliert ergab das am echten Lauf
+  # vom 20.09. den **1. November 1005** — ein Datum, das niemand genannt hat,
+  # aus zwei Angaben, die beide richtig waren.
+  #
+  # Stattdessen wird vom Vorgänger fortgeschrieben; der Widerspruch selbst
+  # steht als Befund in `uneinige_zeitpunkte/2` und ist damit Jacks Arbeit,
+  # nicht die der Rechnung.
   defp zwischen(vi, vm, ni, nm, i, spannen) do
     summe = gelaufen(vi, ni, spannen, vm)
     abstand = nm - vm
 
-    if summe > 0 and summe <= abstand do
-      vm + gelaufen(vi, i, spannen, vm)
-    else
-      vm + div(abstand * (i - vi), max(ni - vi, 1))
+    cond do
+      abstand < 0 -> vm + gelaufen(vi, i, spannen, vm)
+      summe > 0 and summe <= abstand -> vm + gelaufen(vi, i, spannen, vm)
+      true -> vm + div(abstand * (i - vi), max(ni - vi, 1))
     end
   end
 
@@ -1014,6 +1028,7 @@ defmodule Worker.Timeline.Linie do
     |> Enum.reject(fn {i, gruppe} -> is_nil(i) or length(gruppe) < 2 end)
     |> Enum.flat_map(fn {_i, gruppe} ->
       minuten = gruppe |> Enum.map(&(Map.get(&1, :minute) || Map.get(&1, :tagesminute))) |> Enum.uniq()
+      werte = gruppe |> Enum.map(&to_string(Map.get(&1, :wert) || "")) |> Enum.reject(&(&1 == ""))
 
       if length(minuten) > 1 do
         wer = if Enum.any?(gruppe, &abgesegnet?/1), do: "der abgesegnete", else: "der frühere"
@@ -1024,7 +1039,7 @@ defmodule Worker.Timeline.Linie do
             anker_id: gruppe |> Enum.map(&Map.get(&1, :anker_id)) |> Enum.join(", "),
             text:
               "An derselben Stelle stehen zwei verschiedene Zeitpunkte " <>
-                "(#{Enum.join(minuten, " und ")} Minuten). Gerechnet wird mit #{wer}."
+                "(#{gesagt_wort(werte, minuten)}). Gerechnet wird mit #{wer}."
           }
         ]
       else
@@ -1195,14 +1210,49 @@ defmodule Worker.Timeline.Linie do
             art: :spannen_ueberlauf,
             anker_id: nil,
             text:
-              "Zwischen zwei Ankern liegen #{abstand} Minuten, die genannten Dauern ergeben " <>
-                "#{summe}. Entweder ist eine Dauer falsch gelesen oder ein Anker sitzt falsch."
+              "Zwischen zwei Ankern liegen #{dauer_wort(abstand)}, die genannten Dauern " <>
+                "ergeben #{dauer_wort(summe)}. Entweder ist eine Dauer falsch gelesen " <>
+                "oder ein Anker sitzt falsch."
           }
         ]
       else
         []
       end
     end)
+  end
+
+  # **Im Befund steht, was GESAGT wurde** — „Ende 2011" und „kurz nach acht",
+  # nicht zwei Minutenzahlen. Jack hat die Ausdrücke gesetzt; er erkennt sie
+  # wieder, eine Restminutenzahl nicht.
+  defp gesagt_wort([_ | _] = werte, _minuten), do: Enum.map_join(werte, " und ", &"„#{&1}“")
+  defp gesagt_wort(_, minuten), do: Enum.map_join(minuten, " und ", &dauer_wort/1)
+
+  @doc """
+  Eine Minutenzahl in Worten — „zwei Stunden" statt „120", „69 Jahre" statt
+  „−1057331035".
+
+  **Rohminuten sind in einem Befund keine Auskunft** (#1247, 20.09.2026). Am
+  echten Lauf stand „Zwischen zwei Ankern liegen -1057331035 Minuten" — das
+  ist die Differenz zwischen 2011 und Jahr 0, formal richtig und praktisch
+  unlesbar. Ein Modell, das so etwas liest, sucht den Fehler in der Zahl
+  statt in den zwei Ankern.
+  """
+  @spec dauer_wort(integer()) :: String.t()
+  def dauer_wort(minuten) when is_integer(minuten) do
+    vor = if minuten < 0, do: "minus ", else: ""
+    m = abs(minuten)
+
+    cond do
+      m < 60 -> "#{vor}#{m} Minuten"
+      m < @minuten_pro_tag -> "#{vor}#{runde(m, 60)} Stunden"
+      m < 60 * 24 * 365 -> "#{vor}#{runde(m, @minuten_pro_tag)} Tage"
+      true -> "#{vor}#{runde(m, @minuten_pro_tag * 365)} Jahre"
+    end
+  end
+
+  defp runde(zahl, teiler) do
+    wert = zahl / teiler
+    if wert < 10, do: Float.round(wert, 1), else: round(wert)
   end
 
   defp zweifel(anker) do

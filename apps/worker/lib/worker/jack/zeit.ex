@@ -93,7 +93,12 @@ defmodule Worker.Jack.Zeit do
           anker: Map.values(e.stand.anker),
           notizen: e.stand.notizen,
           gelesen: e.stand.gelesen,
-          einordnung: e.stand.einordnung
+          einordnung: e.stand.einordnung,
+          # **Die Kette ist das Ergebnis des Einsortier-Laufs** (#1247,
+          # 20.09.2026). Ohne sie stünde der Prüf-Lauf vor einer leeren
+          # Kette und hätte nichts zu prüfen — genau der Fehler, den die
+          # vererbte Leseabdeckung schon einmal hatte.
+          kette: e.stand.kette
         })
 
       case lauf(eingabe, :pruefen, opts) do

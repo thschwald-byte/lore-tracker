@@ -176,6 +176,15 @@ defmodule Worker.Jack.Zeit.Pipeline do
           "jack" => "zeit",
           "abbild" => Stand.abbild(r.stand),
           "notizen" => r.stand.notizen,
+          # **Die Kette reist mit** (#1247): Sie ist das eigentliche
+          # Ergebnis des Laufs — die Anker datieren sie, aber die
+          # Reihenfolge des Geschehens steht nur hier. Ohne sie könnte ein
+          # späterer Lauf nicht darauf aufsetzen, und die Chronik nicht
+          # lesen, in welcher Folge etwas geschah.
+          "kette" => %{
+            "glieder" => Enum.map(r.stand.kette.glieder, &glied_daten/1),
+            "draussen" => r.stand.kette.draussen
+          },
           "konflikte" => r.stand.konflikte,
           "geprueft" => r.geprueft?,
           "modell" => modell_name(),
@@ -185,6 +194,10 @@ defmodule Worker.Jack.Zeit.Pipeline do
 
     :ok
   end
+
+  # Ein Glied als Daten — ohne Atome, damit es durch JSON und zurück kommt.
+  defp glied_daten(g),
+    do: %{"id" => g.id, "utts" => g.utts, "grund" => g[:grund]}
 
   @doc """
   Die Messzeile des Trichters. Ohne sie ist „nichts zu finden" von „nichts

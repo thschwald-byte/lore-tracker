@@ -46,7 +46,9 @@ defmodule Worker.Jack.Zeit.Zusammenfassung do
         aufgabe(s.lauf),
         "",
         "## Zahlen",
-        "Zeilen: #{z.utterances}, gelesen #{z.gelesen}, offen #{z.offen}",
+        "Zeilen: #{z.utterances}, gelesen #{z.gelesen}, ungelesen #{z.offen}",
+        "Kette: #{z.glieder} Glieder, #{z.in_der_kette} Zeilen drin, " <>
+          "#{z.draussen} draussen, #{z.unentschieden} unentschieden",
         "Anker: #{z.anker} (Zeitpunkte #{z.zeitpunkte}, Spannen #{z.spannen}, " <>
           "Verschiebungen #{z.verschiebungen})",
         "Gelöst: #{z.geloest}, Konflikte: #{z.konflikte}",
@@ -70,8 +72,9 @@ defmodule Worker.Jack.Zeit.Zusammenfassung do
 
   defp aufgabe(_),
     do:
-      "Du gehst durch den Mitschnitt und ordnest die Äußerungen ein: Anker, " <>
-        "Spannen, Verschiebungen — oder begründet aus der Kette lösen."
+      "Du baust die KETTE: Jede Zeile kommt in ein Glied (haenge_an_kette) " <>
+        "oder ausdrücklich heraus (nicht_in_die_kette). Danach die Zeiten — " <>
+        "erst einreihen, dann datieren."
 
   # Die Bereiche, nicht nur die Zahl: Ohne sie weiss Jack nach dem Schnitt,
   # DASS etwas fehlt, aber nicht wo — und liest von vorn.

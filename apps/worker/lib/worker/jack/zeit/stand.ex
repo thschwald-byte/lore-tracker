@@ -372,6 +372,12 @@ defmodule Worker.Jack.Zeit.Stand do
       "fristen" => z.fristen,
       "verschiebungen" => z.verschiebungen,
       "geloest" => z.geloest,
+      # Die Kette ist das Ergebnis des Laufs — wer zusieht, will sehen, ob
+      # sie wächst, nicht nur ob Anker gesetzt werden.
+      "glieder" => z.glieder,
+      "in_der_kette" => z.in_der_kette,
+      "draussen" => z.draussen,
+      "unentschieden" => z.unentschieden,
       "eingeordnet" => z.eingeordnet,
       "konflikte" => z.konflikte,
       "notizen" => s.notizen
