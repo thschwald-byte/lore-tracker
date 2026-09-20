@@ -83,7 +83,11 @@ defmodule Worker.Jack.Zeit.Abschluss do
             "Arbeit dieses Laufs: Jeder ist eine Stelle, an der die Rechnung " <>
             "stolpert — sieh sie dir an und entscheide, ob sie stimmt. " <>
             "Offen:\n" <>
-            Enum.map_join(Enum.take(liste, @deckel), "\n", &("  - " <> String.slice(&1.text, 0, 120)))
+            Enum.map_join(
+              Enum.take(liste, @deckel),
+              "\n",
+              &("  - " <> String.slice(&1.text, 0, 120))
+            )
         ]
     end
   end
@@ -172,9 +176,10 @@ defmodule Worker.Jack.Zeit.Abschluss do
       |> Enum.sort()
       |> Enum.chunk_while(
         nil,
-        fn nr, nil -> {:cont, {nr, nr}}
-           nr, {von, bis} when nr == bis + 1 -> {:cont, {von, nr}}
-           nr, offen -> {:cont, offen, {nr, nr}}
+        fn
+          nr, nil -> {:cont, {nr, nr}}
+          nr, {von, bis} when nr == bis + 1 -> {:cont, {von, nr}}
+          nr, offen -> {:cont, offen, {nr, nr}}
         end,
         fn
           nil -> {:cont, nil}

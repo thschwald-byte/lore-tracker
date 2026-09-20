@@ -114,11 +114,22 @@ defmodule Worker.Timeline.Ausdruck do
   # Die zwölf Zahlwörter der Uhr. „ein"/„eins" beide, weil beides gesagt wird
   # („kurz vor eins", „viertel nach ein").
   @zahlwort %{
-    "ein" => 1, "eins" => 1, "zwei" => 2, "drei" => 3, "vier" => 4,
-    "fünf" => 5, "fuenf" => 5, "sechs" => 6, "sieben" => 7, "acht" => 8,
-    "neun" => 9, "zehn" => 10, "elf" => 11, "zwölf" => 12, "zwoelf" => 12
+    "ein" => 1,
+    "eins" => 1,
+    "zwei" => 2,
+    "drei" => 3,
+    "vier" => 4,
+    "fünf" => 5,
+    "fuenf" => 5,
+    "sechs" => 6,
+    "sieben" => 7,
+    "acht" => 8,
+    "neun" => 9,
+    "zehn" => 10,
+    "elf" => 11,
+    "zwölf" => 12,
+    "zwoelf" => 12
   }
-
 
   # **Dieselben Modifikatoren, aber vor einer ZIFFER** — „kurz vor 19 Uhr".
   # Die nackte Ziffernform allein las daraus „19 Uhr" und verlor das „kurz
@@ -238,7 +249,6 @@ defmodule Worker.Timeline.Ausdruck do
     do: a |> Map.put(:morgen_stunde, 7) |> Map.put(:unschaerfe, 6 * 60)
 
   defp mit_tageswechsel(a), do: a
-
 
   @doc """
   Wie breit der Zeitraum ist, den ein Ausdruck benennt — in Minuten.

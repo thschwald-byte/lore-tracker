@@ -136,7 +136,11 @@ defmodule Worker.MaterializerZeitAnkerTest do
   describe "die Absegnung ist hart" do
     test "ein maschineller Anker überschreibt keinen abgesegneten — auch mit höherem event_id" do
       Materializer.apply_event(
-        ev(%{"wert" => "von Hand", "quelle" => "mensch", "abgesegnet_am" => "2026-09-19"}, 1, "za-01")
+        ev(
+          %{"wert" => "von Hand", "quelle" => "mensch", "abgesegnet_am" => "2026-09-19"},
+          1,
+          "za-01"
+        )
       )
 
       # Höherer event_id, also nach LWW der Gewinner — und trotzdem abgewiesen.
@@ -148,8 +152,11 @@ defmodule Worker.MaterializerZeitAnkerTest do
     test "auch die Reihenfolge kann die Absegnung nicht aushebeln" do
       events = [
         ev(%{"wert" => "von Jack"}, 2, "za-02"),
-        ev(%{"wert" => "von Hand", "quelle" => "mensch", "abgesegnet_am" => "2026-09-19"}, 1,
-          "za-01")
+        ev(
+          %{"wert" => "von Hand", "quelle" => "mensch", "abgesegnet_am" => "2026-09-19"},
+          1,
+          "za-01"
+        )
       ]
 
       # Egal, welches zuerst ankommt: am Ende steht die menschliche Festlegung.

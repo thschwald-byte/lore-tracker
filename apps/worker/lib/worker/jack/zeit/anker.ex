@@ -65,18 +65,40 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Die Zeilennummern, an denen der Zeitpunkt hängt — eine, mehrere oder eine ganze Szene."},
-            "wert" => %{"type" => "string",
-              "description" => "Der Ausdruck, WIE er gesagt wurde: „drei viertel elf“, „am 15. November“, „kurz nach zwölf“. Wortformen bleiben Wortformen — nicht in Ziffern umschreiben, nicht umrechnen."},
-            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "„spielwelt“, wenn die Zeit in der erzählten Welt gilt; „tisch“, wenn sie den Abend meint (Pause, Restzeit, wann wir aufhören). Steht es nicht da: nicht raten, sondern kettenplatz_unklar() nehmen."},
-            "beleg" => %{"type" => "string",
-              "description" => "Das wörtliche Zitat aus der Zeile, in dem die Zeit vorkommt."},
-            "halbtag" => %{"type" => "string", "enum" => ~w(vormittag nachmittag unklar),
-              "description" => "Nur wenn BELEGT — steht im selben Satz eine Tageszeit („nachts um halb zwei“, „morgens um zehn“). Sonst weglassen: Ich löse den Halbtag aus der Reihe der Anker auf."},
-            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
-              "description" => "Optionale Notiz, wenn du den Anker setzt, aber unsicher bist. Der Anker gilt und trägt deinen Vorbehalt mit."}
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" =>
+                "Die Zeilennummern, an denen der Zeitpunkt hängt — eine, mehrere oder eine ganze Szene."
+            },
+            "wert" => %{
+              "type" => "string",
+              "description" =>
+                "Der Ausdruck, WIE er gesagt wurde: „drei viertel elf“, „am 15. November“, „kurz nach zwölf“. Wortformen bleiben Wortformen — nicht in Ziffern umschreiben, nicht umrechnen."
+            },
+            "welt" => %{
+              "type" => "string",
+              "enum" => ~w(spielwelt tisch),
+              "description" =>
+                "„spielwelt“, wenn die Zeit in der erzählten Welt gilt; „tisch“, wenn sie den Abend meint (Pause, Restzeit, wann wir aufhören). Steht es nicht da: nicht raten, sondern kettenplatz_unklar() nehmen."
+            },
+            "beleg" => %{
+              "type" => "string",
+              "description" => "Das wörtliche Zitat aus der Zeile, in dem die Zeit vorkommt."
+            },
+            "halbtag" => %{
+              "type" => "string",
+              "enum" => ~w(vormittag nachmittag unklar),
+              "description" =>
+                "Nur wenn BELEGT — steht im selben Satz eine Tageszeit („nachts um halb zwei“, „morgens um zehn“). Sonst weglassen: Ich löse den Halbtag aus der Reihe der Anker auf."
+            },
+            "kettenplatz_unklar" => %{
+              "type" => "string",
+              "minLength" => 0,
+              "description" =>
+                "Optionale Notiz, wenn du den Anker setzt, aber unsicher bist. Der Anker gilt und trägt deinen Vorbehalt mit."
+            }
           },
           "required" => ~w(zeilen wert welt beleg)
         },
@@ -103,18 +125,38 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Die Zeilen, an denen die Dauer hängt. Verrechnet wird sie an der HÖCHSTEN dieser Nummern — dort ist die Zeit bereits vergangen."},
-            "wert" => %{"type" => "string",
-              "description" => "Die Dauer, wie sie gesagt wurde: „zwei Stunden“, „eine halbe Stunde später“, „vier oder fünf Minuten“."},
-            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "Wie bei zeitpunkt: Vergeht die Zeit in der erzählten Welt oder am Tisch?"},
-            "beleg" => %{"type" => "string",
-              "description" => "Das wörtliche Zitat, in dem die Dauer genannt wird."},
-            "tageswechsel" => %{"type" => "boolean",
-              "description" => "true, wenn die Spanne über eine NACHT führt („es vergeht eine Nacht“, „am nächsten Morgen“). Dann zählt nicht die Stundenzahl, sondern der Morgen danach — den rechne ich."},
-            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
-              "description" => "Optionale Notiz, wenn die Spanne gilt, du aber unsicher bist."}
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" =>
+                "Die Zeilen, an denen die Dauer hängt. Verrechnet wird sie an der HÖCHSTEN dieser Nummern — dort ist die Zeit bereits vergangen."
+            },
+            "wert" => %{
+              "type" => "string",
+              "description" =>
+                "Die Dauer, wie sie gesagt wurde: „zwei Stunden“, „eine halbe Stunde später“, „vier oder fünf Minuten“."
+            },
+            "welt" => %{
+              "type" => "string",
+              "enum" => ~w(spielwelt tisch),
+              "description" =>
+                "Wie bei zeitpunkt: Vergeht die Zeit in der erzählten Welt oder am Tisch?"
+            },
+            "beleg" => %{
+              "type" => "string",
+              "description" => "Das wörtliche Zitat, in dem die Dauer genannt wird."
+            },
+            "tageswechsel" => %{
+              "type" => "boolean",
+              "description" =>
+                "true, wenn die Spanne über eine NACHT führt („es vergeht eine Nacht“, „am nächsten Morgen“). Dann zählt nicht die Stundenzahl, sondern der Morgen danach — den rechne ich."
+            },
+            "kettenplatz_unklar" => %{
+              "type" => "string",
+              "minLength" => 0,
+              "description" => "Optionale Notiz, wenn die Spanne gilt, du aber unsicher bist."
+            }
           },
           "required" => ~w(zeilen wert welt beleg)
         },
@@ -138,16 +180,33 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Die Zeilen, an denen die angekündigte Dauer genannt wird. Die Linie bewegt sich dadurch NICHT."},
-            "wert" => %{"type" => "string",
-              "description" => "Die angekündigte Dauer, wie gesagt: „noch eine Woche“, „in zwei Stunden“, „bis Freitag“."},
-            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "Wie bei zeitpunkt: Gilt die Frist in der erzählten Welt oder am Tisch?"},
-            "beleg" => %{"type" => "string",
-              "description" => "Das wörtliche Zitat, in dem die Frist genannt wird."},
-            "kettenplatz_unklar" => %{"type" => "string", "minLength" => 0,
-              "description" => "Optionale Notiz, wenn du unsicher bist."}
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" =>
+                "Die Zeilen, an denen die angekündigte Dauer genannt wird. Die Linie bewegt sich dadurch NICHT."
+            },
+            "wert" => %{
+              "type" => "string",
+              "description" =>
+                "Die angekündigte Dauer, wie gesagt: „noch eine Woche“, „in zwei Stunden“, „bis Freitag“."
+            },
+            "welt" => %{
+              "type" => "string",
+              "enum" => ~w(spielwelt tisch),
+              "description" =>
+                "Wie bei zeitpunkt: Gilt die Frist in der erzählten Welt oder am Tisch?"
+            },
+            "beleg" => %{
+              "type" => "string",
+              "description" => "Das wörtliche Zitat, in dem die Frist genannt wird."
+            },
+            "kettenplatz_unklar" => %{
+              "type" => "string",
+              "minLength" => 0,
+              "description" => "Optionale Notiz, wenn du unsicher bist."
+            }
           },
           "required" => ~w(zeilen wert welt beleg)
         },
@@ -164,15 +223,28 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "kennung" => %{"type" => "string",
-              "description" => "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."},
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."},
-            "art" => %{"type" => "string", "enum" => ~w(setz_zeitpunkt setz_spanne),
-              "description" => "Die Art des Ankers, den du setzen wolltest."},
+            "kennung" => %{
+              "type" => "string",
+              "description" =>
+                "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."
+            },
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."
+            },
+            "art" => %{
+              "type" => "string",
+              "enum" => ~w(setz_zeitpunkt setz_spanne),
+              "description" => "Die Art des Ankers, den du setzen wolltest."
+            },
             "wert" => %{"type" => "string", "description" => "Der Ausdruck, wie gesagt."},
-            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "„spielwelt“ oder „tisch“, wie bei zeitpunkt."},
+            "welt" => %{
+              "type" => "string",
+              "enum" => ~w(spielwelt tisch),
+              "description" => "„spielwelt“ oder „tisch“, wie bei zeitpunkt."
+            },
             "beleg" => %{"type" => "string", "description" => "Das wörtliche Zitat."}
           },
           "required" => ~w(kennung zeilen art wert welt beleg)
@@ -189,15 +261,28 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "kennung" => %{"type" => "string",
-              "description" => "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."},
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."},
-            "art" => %{"type" => "string", "enum" => ~w(setz_zeitpunkt setz_spanne),
-              "description" => "Die Art des Ankers, den du setzen wolltest."},
+            "kennung" => %{
+              "type" => "string",
+              "description" =>
+                "Die Kennung aus meiner Rückfrage. Sie gilt für genau einen Aufruf und nur an der Stelle, an der sie entstanden ist."
+            },
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" => "Dieselben Zeilen wie im abgelehnten Aufruf."
+            },
+            "art" => %{
+              "type" => "string",
+              "enum" => ~w(setz_zeitpunkt setz_spanne),
+              "description" => "Die Art des Ankers, den du setzen wolltest."
+            },
             "wert" => %{"type" => "string", "description" => "Der Ausdruck, wie gesagt."},
-            "welt" => %{"type" => "string", "enum" => ~w(spielwelt tisch),
-              "description" => "„spielwelt“ oder „tisch“, wie bei zeitpunkt."},
+            "welt" => %{
+              "type" => "string",
+              "enum" => ~w(spielwelt tisch),
+              "description" => "„spielwelt“ oder „tisch“, wie bei zeitpunkt."
+            },
             "beleg" => %{"type" => "string", "description" => "Das wörtliche Zitat."}
           },
           "required" => ~w(kennung zeilen art wert welt beleg)
@@ -217,12 +302,22 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"}, "minItems" => 1,
-              "description" => "Die Zeilen, um die es geht — dort, wo die abgesegnete Stelle deiner Ansicht nach nicht stimmt."},
-            "befund" => %{"type" => "string",
-              "description" => "WAS du gefunden hast: der Widerspruch in einem Satz, so dass ein Mensch entscheiden kann, ohne deine Arbeit zu wiederholen."},
-            "beleg" => %{"type" => "string",
-              "description" => "WORAUS: das wörtliche Zitat, auf das sich dein Befund stützt."}
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "minItems" => 1,
+              "description" =>
+                "Die Zeilen, um die es geht — dort, wo die abgesegnete Stelle deiner Ansicht nach nicht stimmt."
+            },
+            "befund" => %{
+              "type" => "string",
+              "description" =>
+                "WAS du gefunden hast: der Widerspruch in einem Satz, so dass ein Mensch entscheiden kann, ohne deine Arbeit zu wiederholen."
+            },
+            "beleg" => %{
+              "type" => "string",
+              "description" => "WORAUS: das wörtliche Zitat, auf das sich dein Befund stützt."
+            }
           },
           "required" => ~w(zeilen befund beleg)
         },
@@ -245,12 +340,25 @@ defmodule Worker.Jack.Zeit.Anker do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."},
-            "von" => %{"type" => "integer", "description" => "Erste Zeile des Abschnitts (mit bis)."},
-            "bis" => %{"type" => "integer", "description" => "Letzte Zeile des Abschnitts (mit von)."},
-            "text" => %{"type" => "string",
-              "description" => "Was du nicht entscheiden kannst — beides gehört hierher: „Welt oder Tisch?“ und „ingame, aber die Zeit ist unklar“."}
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "description" =>
+                "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."
+            },
+            "von" => %{
+              "type" => "integer",
+              "description" => "Erste Zeile des Abschnitts (mit bis)."
+            },
+            "bis" => %{
+              "type" => "integer",
+              "description" => "Letzte Zeile des Abschnitts (mit von)."
+            },
+            "text" => %{
+              "type" => "string",
+              "description" =>
+                "Was du nicht entscheiden kannst — beides gehört hierher: „Welt oder Tisch?“ und „ingame, aber die Zeit ist unklar“."
+            }
           },
           "required" => ["text"]
         },

@@ -51,7 +51,8 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # **Die Kette zuerst, die Anker danach** — in dieser Reihenfolge sieht sie
   # das Modell, und in dieser Reihenfolge ist die Arbeit gedacht: erst
   # einreihen, dann datieren.
-  @kette ~w(haenge_an_kette erweitere_kettenglied versetze_kettenglied loesche_kettenglied nicht_in_die_kette)
+  @kette ~w(haenge_an_kette unterhaenge_kettenglied erweitere_kettenglied
+            versetze_kettenglied loesche_kettenglied nicht_in_die_kette)
   @setzend ~w(setz_zeitpunkt setz_spanne setz_frist anker_dazu anker_ersetzen melde_konflikt kettenplatz_unklar)
 
   @doc """
@@ -63,6 +64,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   """
   @spec namen(Stand.t()) :: [String.t()]
   def namen(%Stand{lauf: :gedaechtnis}), do: @lesend ++ @notierend ++ ["fertig"]
+
   def namen(%Stand{lauf: lauf}) when lauf in [:einsortieren, :pruefen],
     do: @lesend ++ @kette ++ @setzend ++ ["fertig"]
 
@@ -90,8 +92,6 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   end
 
   # ─── Abschluss ──────────────────────────────────────────────────────
-
-
 
   # **Der Gedächtnis-Lauf hat einen anderen Abschluss, und das muss in der
   # Beschreibung stehen** (Befund des zweiten echten Laufs): Die gemeinsame
@@ -184,9 +184,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
         {s, {:halt, "Abgeschlossen. " <> Anker.reststand(s)}}
 
       hindernisse ->
-        {s,
-         {:error, "Noch nicht fertig:\n" <> Enum.map_join(hindernisse, "\n", &("- " <> &1))}}
+        {s, {:error, "Noch nicht fertig:\n" <> Enum.map_join(hindernisse, "\n", &("- " <> &1))}}
     end
   end
-
 end

@@ -1,7 +1,7 @@
 defmodule Worker.Timeline.Kette do
   @moduledoc """
-  #1247: die **Kette** — die zeitliche Reihenfolge des Geschehens. Pur, ohne
-  Mnesia und ohne Modell.
+  #1247: die **Kette** — der Zeitstrahl des Geschehens. Pur, ohne Mnesia und
+  ohne Modell.
 
   ## Zwei Achsen, und das ist der ganze Punkt
 
@@ -11,106 +11,139 @@ defmodule Worker.Timeline.Kette do
 
   Bis dahin gab es nur eine: `Worker.Timeline.Linie` nahm die
   Sprechreihenfolge und **mutierte** sie mit Verschiebungen. Was gesprochen
-  wurde und wann es geschah war dasselbe Ding. Für eine Uhrzeit im Spiel
-  fällt beides zusammen, für einen Rückblick nicht — und am echten Lauf vom
-  20.09.2026 ist es aufgeschlagen: Der Weltbau-Block am Sitzungsanfang
-  erzählt die Jahre 2000 bis 2011, steht aber in einer Sitzung, die 2080
-  spielt. Die eine Achse las das als Folge und rechnete rückwärts.
+  wurde und wann es geschah war dasselbe Ding — für eine Uhrzeit im Spiel
+  fällt beides zusammen, für einen Rückblick nicht. Am echten Lauf vom
+  20.09.2026 aufgeschlagen: Der Weltbau-Block am Sitzungsanfang erzählt die
+  Jahre 2000 bis 2011, die Sitzung spielt 2080; die eine Achse las das als
+  Folge und rechnete rückwärts.
 
-  ## Ein Glied ist eine ZEITEINHEIT, nicht eine Äußerung
+  ## Bäume auf dem Zeitstrahl
 
-  Maintainer: „jack soll auch kettenglieder aus mehreren utts bilden
-  können." Eine Szene — Ankunft, Verhandlung, Rückzug — ist ein Glied, auch
-  wenn vierzig Äußerungen dazugehören. Daraus folgt zweierlei:
+  Maintainer, 20.09.2026: „es gibt die ebene der kette (der zeitstrahl) — in
+  die kette werden glieder eingehängt — jedem glied kann ein oder mehrere
+  glieder angehängt werden — ein glied ist ein zusammenhängender context —
+  darum kann ein glied auf mehrere utts verweisen und ein glied mehrere
+  glieder haben — wie bäume die auf dem zeitstrahl stehen."
 
-    * Ein Glied braucht eine **eigene Kennung**; die Utterance-ID taugt
-      nicht mehr als Adresse, sobald mehrere zusammengehören.
-    * Die Kette wird **kurz genug, um sie zu lesen**. Eine Sitzung mit 2168
-      Äußerungen hat vielleicht achtzig Glieder — die kann ein Modell
-      überblicken, die Äußerungen nicht.
+      Zeitstrahl:  [ Glied ]──[ Glied ]────────────[ Glied ]
+                                  │
+                        ┌─────────┴─────────┐
+                     [ Glied ]          [ Glied ]
+
+  Ein Glied ist ein **zusammenhängender Kontext**: eine Szene, ein Auftrag,
+  ein Abend. Es trägt die Äußerungen, die unmittelbar dazugehören, **und**
+  kann feinere Kontexte als Unterglieder enthalten — „der Überfall" mit „der
+  Hinterhalt" und „die Flucht" darin.
+
+  **Ein Glied hängt entweder am Zeitstrahl oder an einem Glied** (Maintainer)
+  — nie an beidem. Daraus folgt die Regel beim Versetzen: Es bewegt sich
+  unter seinen Geschwistern, nicht aus seinem Kontext heraus. Wer eine Szene
+  aus ihrem Zusammenhang lösen will, nimmt sie heraus und hängt sie neu ein;
+  das ist eine bewusste Handlung, kein Nebeneffekt einer Verschiebung.
+
+  **Jedes Glied hat eine eigene Kennung, auf jeder Tiefe** (Maintainer:
+  „jedes element in der kette ist ein glied — egal in welcher tiefe — jedes
+  glied hat eine uuid"). Sie wird beim Anlegen vergeben und **überlebt jede
+  Änderung**: Wächst eine Szene um eine Zeile, bleibt sie dieselbe Szene.
+
+  Eine content-adressierte Kennung (Muster `Linie.anker_id/3`) wäre hier
+  falsch — sie änderte sich mit dem Schnitt, und jeder Bezug auf das Glied
+  zeigte danach ins Leere; genau das passiert bei `erweitern/4`, also im
+  Normalfall „ach, das fing schon früher an". **Der Preis ist benannt:** Eine
+  zufällige ID konvergiert nicht; zwei Worker, die dasselbe Glied bilden,
+  vergeben verschiedene. Das ist hinnehmbar, weil ein Glied in EINEM Lauf
+  entsteht und dieser Lauf sein Autor ist — die Anker daneben bleiben
+  content-adressiert und konvergieren weiterhin.
+
+  **Gefunden wird ein Glied über seine Äußerungen** (Maintainer: „jeder bezug
+  in der anwendung sollte auf eine utt zurückführen"): `glied_von/2` sucht
+  durch den ganzen Baum. Die Kennung ist die Identität, die Utterance der Weg
+  dorthin — und sie ist die einzige Adresse, die ein Re-Smoothing überlebt.
 
   ## Die Kette beginnt LEER
 
   Maintainer: „Default beim Start: Kette ist leer — jack soll bewusst
   einsortieren." Es gibt keine stillschweigende Übernahme der
   Sprechreihenfolge. Jede Äußerung braucht eine Entscheidung: in ein Glied,
-  oder ausdrücklich hinaus (Tischgespräch). Was niemand entschieden hat,
-  ist **offen** — und `fertig()` fragt danach.
+  oder ausdrücklich hinaus (Tischgespräch). Was niemand entschieden hat, ist
+  **offen** — und `fertig()` fragt danach.
 
   Der Unterschied ist keine Förmlichkeit. Mit einem Default hiesse „nicht
   angefasst" zweierlei zugleich: „die Reihenfolge stimmt hier" und „ich bin
-  noch nicht hingekommen". Genau diese Verwechslung machte die Schranke des
-  Einsortier-Laufs bisher unscharf.
+  noch nicht hingekommen".
 
-  ## Die fünf Operationen
+  ## Die Operationen
 
-      anhaengen(kette, utts, opts)     ein NEUES Glied, hinten oder an einer Stelle
-      erweitern(kette, glied, utts, o) ein BESTEHENDES Glied wächst, bleibt wo es ist
-      versetzen(kette, glied, wohin)   vor/nach ein anderes Glied, oder an den Anfang
-      loeschen(kette, glied)           das Glied fällt heraus, seine Utts sind offen
-      draussen(kette, utts, grund)     Äußerungen, die nie hineingehören
+      anhaengen(kette, utts, opts)       ein Glied AUF den Zeitstrahl
+      unterhaengen(kette, id, utts, o)   ein Glied AN ein Glied
+      erweitern(kette, id, utts, opts)   ein Glied bekommt mehr Äußerungen
+      versetzen(kette, id, wohin)        auf seiner Ebene: vor/nach/anfang
+      loeschen(kette, id)                das Glied samt Unterbäumen heraus
+      draussen(kette, utts, grund)       Äußerungen, die nie hineingehören
 
-  `anhaengen` und `erweitern` sind nicht dasselbe, und die Verwechslung
-  kostet die Stelle: Wer zwei Glieder über `anhaengen` vereinigt, bekommt
-  ein neues Glied **am Ende** der Kette; wer über `erweitern` geht, lässt
-  die Szene, wo sie ist, und macht sie grösser.
-
-  **Die Elemente eines Gliedes sind selbst eine Kette** (Maintainer,
-  20.09.2026). `erweitern/4` nimmt deshalb dieselben Positionsangaben wie
-  `anhaengen/3` — nur zeigen sie dort auf eine Äußerung des Gliedes statt
-  auf ein Glied der Kette.
-
-  Alle fünf halten die Kette **durchgehend** (Maintainer: „so dass es weiter
+  Alle halten den Zeitstrahl **durchgehend** (Maintainer: „so dass es weiter
   eine durchgehende kette ist"): Wer ein Glied herausnimmt, schliesst die
   Lücke; wer es woanders einsetzt, hinterlässt keine. Und jede eingereihte
-  Äußerung steht **genau einmal** darin — das prüft `kette_test.exs` nach
-  jeder Operation, nicht nur die Länge.
+  Äußerung steht **genau einmal** im ganzen Baum — das prüft
+  `kette_test.exs` nach jeder Operation als MENGE, nicht als Länge.
   """
 
-  @typedoc "Die Kennung eines Gliedes — stabil über seine Lebensdauer."
+  @typedoc """
+  Die Kennung eines Gliedes — eine UUID, vergeben beim Anlegen, **stabil über
+  jede Änderung** und eindeutig auf jeder Tiefe.
+  """
   @type glied_id :: String.t()
 
   @typedoc """
-  Ein Glied der Kette: eine Zeiteinheit aus einer oder mehreren Äußerungen.
+  Ein Glied: ein zusammenhängender Kontext.
+
+    * `utts` — die Äußerungen, die unmittelbar dazugehören
+    * `kinder` — feinere Kontexte darin, selbst wieder Glieder
+    * `grund` — wie Jack die Szene genannt hat
+
+  **Die Reihenfolge innerhalb eines Gliedes ist: erst die eigenen
+  Äußerungen, dann die Unterglieder.** Das ist eine Festlegung, keine
+  Ableitung — ohne sie wäre die Folge der Blätter nicht bestimmt. Wer eine
+  andere Ordnung braucht, bildet Unterglieder.
   """
   @type glied :: %{
           id: glied_id(),
           utts: [String.t()],
+          kinder: [glied()],
           grund: String.t() | nil
         }
 
-  @typedoc "Die Kette: Glieder in zeitlicher Reihenfolge, plus die, die draussen sind."
+  @typedoc "Der Zeitstrahl: Glieder in zeitlicher Reihenfolge, plus die, die draussen sind."
   @type t :: %{
           glieder: [glied()],
           draussen: %{String.t() => String.t()}
         }
 
-  @doc "Eine leere Kette."
+  @doc "Ein leerer Zeitstrahl."
   @spec neu() :: t()
   def neu, do: %{glieder: [], draussen: %{}}
 
+  # ─── Anlegen ────────────────────────────────────────────────────────
+
   @doc """
-  Hängt ein neues Glied aus `utts` an.
+  Hängt ein neues Glied **auf den Zeitstrahl**.
 
-  Optionen: `:vor` / `:nach` (eine `glied_id`) setzen es an eine bestimmte
-  Stelle, `:anfang` ganz nach vorn; ohne Angabe hinten an. `:grund` ist eine
-  Notiz für Menschen.
+  Optionen: `:vor` / `:nach` (eine `glied_id` auf derselben Ebene),
+  `:anfang`, `:grund`. Ohne Angabe hinten an.
 
-  **Eine Äußerung liegt in höchstens einem Glied.** Wer sie erneut anhängt,
-  nimmt sie aus dem alten heraus — sonst stünde dieselbe Äußerung an zwei
-  Stellen der Zeit, und die Kette wäre keine Reihenfolge mehr. Wird ein Glied
-  dadurch leer, fällt es weg.
+  **Eine Äußerung liegt in höchstens einem Glied** — im ganzen Baum. Wer sie
+  erneut einreiht, nimmt sie aus dem alten heraus; wird das dadurch leer
+  (keine Äußerungen, keine Kinder), fällt es weg.
   """
   @spec anhaengen(t(), [String.t()], keyword()) :: {:ok, t(), glied()} | {:fehler, String.t()}
   def anhaengen(kette, utts, opts \\ [])
 
-  def anhaengen(_kette, [], _opts),
-    do: {:fehler, "Ein Glied ohne Äußerung trägt nichts — nenn mindestens eine Zeile."}
+  def anhaengen(_kette, [], _opts), do: {:fehler, leer_text()}
 
   def anhaengen(%{} = kette, utts, opts) when is_list(utts) do
     utts = Enum.uniq(utts)
     kette = loesbinden(kette, utts)
-    glied = %{id: kennung(utts), utts: utts, grund: opts[:grund]}
+    glied = %{id: kennung(), utts: utts, kinder: [], grund: opts[:grund]}
 
     case einsetzen(kette.glieder, glied, opts) do
       {:ok, glieder} ->
@@ -122,63 +155,50 @@ defmodule Worker.Timeline.Kette do
   end
 
   @doc """
-  Versetzt ein Glied: `{:vor, glied_id}`, `{:nach, glied_id}` oder `:anfang`.
+  Hängt ein neues Glied **an ein bestehendes** — als Unterglied.
 
-  **Beide Richtungen, ausdrücklich** (Maintainer, 20.09.2026: „verschiebe
-  uuid a hinter uuid b — aber es muss auch geben verschiebe uuid a vor uuid
-  b"). Ein Rückblick gehört vor etwas, eine Ankündigung dahinter; mit nur
-  einer Richtung müsste man die andere über den Nachbarn ausdrücken, und
-  wer den Nachbarn später versetzt, verliert die Aussage.
+  Das ist der Baum: „Der Überfall" bekommt „Der Hinterhalt" und „Die Flucht".
+  Das Elternglied bleibt, wo es ist; das neue steht darin, hinten oder an
+  einer Stelle seiner Geschwister (`:vor` / `:nach` / `:anfang`).
   """
-  @spec versetzen(t(), glied_id(), {:vor | :nach, glied_id()} | :anfang) ::
-          {:ok, t()} | {:fehler, String.t()}
-  def versetzen(%{} = kette, glied_id, wohin) do
-    case entnehmen(kette.glieder, glied_id) do
-      {nil, _} ->
-        {:fehler, "Das Glied #{glied_id} gibt es in der Kette nicht."}
+  @spec unterhaengen(t(), glied_id(), [String.t()], keyword()) ::
+          {:ok, t(), glied()} | {:fehler, String.t()}
+  def unterhaengen(kette, eltern_id, utts, opts \\ [])
 
-      {glied, rest} ->
-        case wohin do
-          :anfang ->
-            {:ok, %{kette | glieder: [glied | rest]}}
+  def unterhaengen(_kette, _eltern_id, [], _opts), do: {:fehler, leer_text()}
 
-          {richtung, ziel} when richtung in [:vor, :nach] ->
-            wenn_ziel_da(kette, rest, glied, richtung, ziel)
+  def unterhaengen(%{} = kette, eltern_id, utts, opts) when is_list(utts) do
+    if glied(kette, eltern_id) do
+      utts = Enum.uniq(utts)
+      kette = loesbinden(kette, utts)
+      neues = %{id: kennung(), utts: utts, kinder: [], grund: opts[:grund]}
 
-          _ ->
-            {:fehler, "Sag wohin: vor ein Glied, nach ein Glied, oder an den Anfang."}
-        end
-    end
-  end
+      ergebnis =
+        aendern(kette, eltern_id, fn e ->
+          case einsetzen(e.kinder, neues, opts) do
+            {:ok, kinder} -> {:ok, %{e | kinder: kinder}}
+            f -> f
+          end
+        end)
 
-  defp wenn_ziel_da(kette, rest, glied, richtung, ziel) do
-    cond do
-      ziel == glied.id ->
-        {:fehler, "Ein Glied kann nicht vor oder hinter sich selbst stehen."}
-
-      not Enum.any?(rest, &(&1.id == ziel)) ->
-        {:fehler, "Das Zielglied #{ziel} gibt es in der Kette nicht."}
-
-      true ->
-        {:ok, %{kette | glieder: setze_relativ(rest, glied, richtung, ziel)}}
+      case ergebnis do
+        {:ok, kette} -> {:ok, %{kette | draussen: Map.drop(kette.draussen, utts)}, neues}
+        f -> f
+      end
+    else
+      {:fehler, kein_glied(eltern_id)}
     end
   end
 
   @doc """
-  Hängt Äußerungen **an ein bestehendes Glied** — das Glied wächst und
-  bleibt, wo es ist.
+  Gibt einem bestehenden Glied mehr Äußerungen — es bleibt, wo es ist, und
+  **behält seine Kennung**.
 
-  **Das ist etwas anderes als `anhaengen/3`** (Maintainer, 20.09.2026:
-  „wenn man ein glied aus der kette nimmt und nicht wieder in die kette
-  hängt, sondern an ein glied hängt?"). `anhaengen/3` bildet ein NEUES
-  Glied und setzt es an eine Stelle; die Utterances verlassen ihre alten
-  Glieder, und das Ergebnis liegt dort, wo das neue Glied hinkommt — bei
-  zwei verschmolzenen Gliedern also am Ende statt an der Stelle eines der
-  beiden. Für „diese Zeilen gehören zu der Szene da" ist das falsch: Die
-  Szene soll bleiben, wo sie ist, nur grösser werden.
+  Das ist etwas anderes als `anhaengen/3`: Dort entsteht ein NEUES Glied und
+  landet an der gewünschten Stelle; hier wächst eine Szene, die schon da ist.
 
-  Die Kennung ändert sich dabei (sie ist content-adressiert) — die Stelle
-  in der Kette nicht.
+  `:vor` / `:nach` nennen hier eine **Äußerung des Gliedes** — die eigenen
+  Äußerungen sind selbst eine geordnete Folge.
   """
   @spec erweitern(t(), glied_id(), [String.t()], keyword()) ::
           {:ok, t(), glied()} | {:fehler, String.t()}
@@ -187,31 +207,70 @@ defmodule Worker.Timeline.Kette do
   def erweitern(%{} = kette, glied_id, utts, opts) when is_list(utts) do
     case glied(kette, glied_id) do
       nil ->
-        {:fehler, "Das Glied #{glied_id} gibt es in der Kette nicht."}
+        {:fehler, kein_glied(glied_id)}
 
       alt ->
-        neue = im_glied(alt.utts, utts, opts)
         # Erst die Fremdbindungen lösen, DANN das Zielglied neu setzen —
-        # sonst nimmt `loesbinden/2` dem Zielglied seine eigenen Äußerungen.
+        # sonst nimmt `loesbinden/2` ihm seine eigenen Äußerungen.
         kette = loesbinden(kette, utts -- alt.utts)
-        groesser = %{alt | id: kennung(neue), utts: neue}
 
-        glieder =
-          Enum.map(kette.glieder, fn g -> if g.id == alt.id, do: groesser, else: g end)
+        {:ok, kette} =
+          aendern(kette, glied_id, fn g -> {:ok, %{g | utts: im_glied(g.utts, utts, opts)}} end)
 
-        {:ok, %{kette | glieder: glieder, draussen: Map.drop(kette.draussen, utts)}, groesser}
+        {:ok, %{kette | draussen: Map.drop(kette.draussen, utts)}, glied(kette, glied_id)}
+    end
+  end
+
+  # ─── Bewegen und entfernen ──────────────────────────────────────────
+
+  @doc """
+  Versetzt ein Glied **auf seiner Ebene**: `{:vor, id}`, `{:nach, id}` oder
+  `:anfang`.
+
+  **Beide Richtungen, ausdrücklich** (Maintainer, 20.09.2026: „verschiebe
+  uuid a hinter uuid b — aber es muss auch geben verschiebe uuid a vor uuid
+  b"). Ein Rückblick gehört vor etwas, eine Ankündigung dahinter; mit nur
+  einer Richtung müsste man die andere über den Nachbarn ausdrücken, und wer
+  den Nachbarn später versetzt, verliert die Aussage.
+
+  Ein Unterglied bewegt sich unter seinen Geschwistern, ein Wurzelglied auf
+  dem Zeitstrahl. Ein Ziel auf einer anderen Ebene wird abgelehnt: Ein Glied
+  hängt entweder am Zeitstrahl oder an einem Glied, und aus seinem Kontext
+  gelöst wird es nur durch eine bewusste Handlung.
+  """
+  @spec versetzen(t(), glied_id(), {:vor | :nach, glied_id()} | :anfang) ::
+          {:ok, t()} | {:fehler, String.t()}
+  def versetzen(%{} = kette, glied_id, wohin) do
+    with {:ok, eltern} <- eltern_von(kette, glied_id),
+         {:ok, ziel} <- versetz_ziel(wohin, glied_id) do
+      in_liste(kette, eltern, fn liste ->
+        {g, rest} = entnehmen(liste, glied_id)
+
+        cond do
+          is_nil(g) -> {:fehler, kein_glied(glied_id)}
+          ziel == :anfang -> {:ok, [g | rest]}
+          not Enum.any?(rest, &(&1.id == elem(ziel, 1))) -> {:fehler, ziel_fehlt(elem(ziel, 1))}
+          true -> {:ok, setze_relativ(rest, g, elem(ziel, 0), elem(ziel, 1))}
+        end
+      end)
     end
   end
 
   @doc """
-  Nimmt ein Glied aus der Kette. Seine Äußerungen sind danach **offen** —
-  nicht draussen: Herausnehmen ist kein Urteil über den Inhalt.
+  Nimmt ein Glied **samt seinen Untergliedern** aus der Kette. Alle
+  betroffenen Äußerungen sind danach **offen** — nicht draussen:
+  Herausnehmen ist kein Urteil über den Inhalt, sondern die Rücknahme einer
+  Einreihung.
   """
   @spec loeschen(t(), glied_id()) :: {:ok, t()} | {:fehler, String.t()}
   def loeschen(%{} = kette, glied_id) do
-    case entnehmen(kette.glieder, glied_id) do
-      {nil, _} -> {:fehler, "Das Glied #{glied_id} gibt es in der Kette nicht."}
-      {_, rest} -> {:ok, %{kette | glieder: rest}}
+    with {:ok, eltern} <- eltern_von(kette, glied_id) do
+      in_liste(kette, eltern, fn liste ->
+        case entnehmen(liste, glied_id) do
+          {nil, _} -> {:fehler, kein_glied(glied_id)}
+          {_, rest} -> {:ok, rest}
+        end
+      end)
     end
   end
 
@@ -225,6 +284,8 @@ defmodule Worker.Timeline.Kette do
     {:ok, %{kette | draussen: Enum.reduce(utts, kette.draussen, &Map.put(&2, &1, grund))}}
   end
 
+  # ─── Lesen ──────────────────────────────────────────────────────────
+
   @doc """
   Die Äußerungen, über die noch niemand entschieden hat — weder in einem
   Glied noch draussen. **Das ist die Schranke des Einsortier-Laufs.**
@@ -235,91 +296,161 @@ defmodule Worker.Timeline.Kette do
     Enum.reject(alle_utts, &(MapSet.member?(drin, &1) or Map.has_key?(kette.draussen, &1)))
   end
 
-  @doc "Alle Äußerungen, die in einem Glied liegen."
+  @doc "Alle Äußerungen, die irgendwo im Baum liegen."
   @spec eingereiht(t()) :: MapSet.t()
-  def eingereiht(%{glieder: g}), do: g |> Enum.flat_map(& &1.utts) |> MapSet.new()
-
-  @doc "Das Glied, in dem eine Äußerung liegt — oder `nil`."
-  @spec glied_von(t(), String.t()) :: glied() | nil
-  def glied_von(%{glieder: g}, utterance_id),
-    do: Enum.find(g, &(utterance_id in &1.utts))
-
-  @doc "Ein Glied nach seiner Kennung."
-  @spec glied(t(), glied_id()) :: glied() | nil
-  def glied(%{glieder: g}, id), do: Enum.find(g, &(&1.id == id))
+  def eingereiht(%{glieder: g}), do: g |> Enum.flat_map(&alle_utts/1) |> MapSet.new()
 
   @doc """
-  Die Äußerungen der Kette in ihrer zeitlichen Reihenfolge — Glied für
-  Glied, innerhalb eines Gliedes in der Reihenfolge seiner Äußerungen.
+  Das Glied, in dem eine Äußerung **unmittelbar** liegt — auf jeder Tiefe.
+  Der Weg von der Utterance zur Identität.
+  """
+  @spec glied_von(t(), String.t()) :: glied() | nil
+  def glied_von(%{glieder: g}, utterance_id), do: suche(g, &(utterance_id in &1.utts))
+
+  @doc "Ein Glied nach seiner Kennung, auf jeder Tiefe."
+  @spec glied(t(), glied_id()) :: glied() | nil
+  def glied(%{glieder: g}, id), do: suche(g, &(&1.id == id))
+
+  @doc """
+  Die Äußerungen des Zeitstrahls in ihrer zeitlichen Reihenfolge — Glied für
+  Glied, darin erst die eigenen Äußerungen, dann die Unterglieder.
   """
   @spec reihenfolge(t()) :: [String.t()]
-  def reihenfolge(%{glieder: g}), do: Enum.flat_map(g, & &1.utts)
+  def reihenfolge(%{glieder: g}), do: Enum.flat_map(g, &alle_utts/1)
 
-  # **Die Elemente eines Gliedes sind selbst eine Kette** (Maintainer,
-  # 20.09.2026: „und elemente an einem glied sind auch eine kette"). Dieselbe
-  # Sprache auf beiden Ebenen: `vor:` / `nach:` nennen hier eine
-  # **Utterance** des Gliedes statt eines Gliedes der Kette, `anfang:` setzt
-  # nach vorn. Ohne Angabe wird hinten angehängt.
-  #
-  # Warum das zählt: Eine Szene wird oft in zwei Anläufen erkannt — erst der
-  # Kern, dann eine Zeile, die davor gehört („ach, das fing schon bei 98
-  # an"). Ohne Positionsangabe landete sie am Ende der Szene, also in der
-  # falschen Reihenfolge, und die einzige Abhilfe wäre, das ganze Glied neu
-  # zu bilden.
-  defp im_glied(vorhandene, neue, opts) do
-    neue = Enum.uniq(neue) -- vorhandene
-    rest = vorhandene
+  @doc "Alle Äußerungen eines Gliedes samt seiner Unterglieder, in Reihenfolge."
+  @spec alle_utts(glied()) :: [String.t()]
+  def alle_utts(%{utts: u, kinder: k}), do: u ++ Enum.flat_map(k, &alle_utts/1)
 
-    cond do
-      neue == [] -> rest
-      opts[:anfang] -> neue ++ rest
-      is_binary(opts[:vor]) -> setze_utts(rest, neue, opts[:vor], :vor)
-      is_binary(opts[:nach]) -> setze_utts(rest, neue, opts[:nach], :nach)
-      true -> rest ++ neue
-    end
-  end
+  @doc """
+  Die Zahl der Glieder im **ganzen Baum**, nicht nur der Wurzeln. Wer nur die
+  oberste Ebene zählt, meldet eine Kette als klein, die tief ist.
+  """
+  @spec anzahl(t()) :: non_neg_integer()
+  def anzahl(%{glieder: g}), do: zaehle(g)
 
-  defp setze_utts(rest, neue, ziel, richtung) do
-    if ziel in rest do
-      {vorne, hinten} = Enum.split_while(rest, &(&1 != ziel))
+  defp zaehle(glieder), do: Enum.reduce(glieder, 0, fn g, n -> n + 1 + zaehle(g.kinder) end)
 
-      case {richtung, hinten} do
-        {:vor, _} -> vorne ++ neue ++ hinten
-        {:nach, [z | r]} -> vorne ++ [z] ++ neue ++ r
-        {:nach, []} -> vorne ++ neue
-      end
-    else
-      # Ein Ziel ausserhalb des Gliedes ist keine Position darin — angehängt
-      # wird trotzdem, damit die Äußerung nicht verloren geht.
-      rest ++ neue
-    end
-  end
+  @doc """
+  Der Baum flach, für die Anzeige: ein Eintrag `{glied, tiefe}` je Glied, in
+  Vorordnung — so, wie er gelesen wird.
+  """
+  @spec flach(t()) :: [{glied(), non_neg_integer()}]
+  def flach(%{glieder: g}), do: flach_liste(g, 0)
+
+  defp flach_liste(glieder, tiefe),
+    do: Enum.flat_map(glieder, fn g -> [{g, tiefe} | flach_liste(g.kinder, tiefe + 1)] end)
 
   # ─── Innereien ──────────────────────────────────────────────────────
 
-  # Die Kennung ist content-adressiert über die sortierten Utterance-IDs —
-  # dasselbe Muster wie `Linie.anker_id/3` und `Parsing.fact_content_id/2`.
-  # Zwei Worker, die dasselbe Glied bilden, kommen auf dieselbe Kennung,
-  # ohne sich abzustimmen. **Ehrlich:** Ändert sich der Schnitt eines
-  # Gliedes, ändert sich seine Kennung — ein Bezug darauf zeigt dann ins
-  # Leere und wird zum Befund. Eine über den Schnitt hinweg stabile ID
-  # müsste gespeichert werden; solange Glieder innerhalb eines Laufs
-  # entstehen, wiegt die Nachvollziehbarkeit schwerer.
-  defp kennung(utts) do
-    roh = utts |> Enum.sort() |> Enum.join("|")
-    "g_" <> (:crypto.hash(:sha, roh) |> Base.encode16(case: :lower) |> String.slice(0, 12))
+  defp kennung, do: "g_" <> (:crypto.strong_rand_bytes(9) |> Base.url_encode64(padding: false))
+
+  defp leer_text, do: "Ein Glied ohne Äußerung trägt nichts — nenn mindestens eine Zeile."
+
+  defp kein_glied(id), do: "Das Glied #{id} gibt es in der Kette nicht."
+
+  defp ziel_fehlt(ziel),
+    do:
+      "Das Zielglied #{ziel} liegt nicht auf derselben Ebene — ein Glied bewegt " <>
+        "sich unter seinen Geschwistern, nicht aus seinem Kontext heraus."
+
+  defp suche(glieder, pruef) do
+    Enum.find_value(glieder, fn g ->
+      if pruef.(g), do: g, else: suche(g.kinder, pruef)
+    end)
   end
 
-  # Dieselben Äußerungen dürfen nicht in zwei Gliedern liegen.
+  # Die Eltern-Kennung eines Gliedes, `nil` für ein Wurzelglied.
+  defp eltern_von(kette, glied_id) do
+    if glied(kette, glied_id),
+      do: {:ok, finde_eltern(kette.glieder, glied_id, nil)},
+      else: {:fehler, kein_glied(glied_id)}
+  end
+
+  defp finde_eltern(glieder, id, eltern) do
+    Enum.find_value(glieder, fn g ->
+      if g.id == id, do: {:gefunden, eltern}, else: finde_eltern(g.kinder, id, g.id)
+    end)
+    |> case do
+      {:gefunden, e} -> e
+      andere -> andere
+    end
+  end
+
+  # Wendet `fun` auf die Geschwisterliste an, in der das Glied liegt.
+  defp in_liste(kette, nil, fun) do
+    case fun.(kette.glieder) do
+      {:ok, liste} -> {:ok, %{kette | glieder: liste}}
+      f -> f
+    end
+  end
+
+  defp in_liste(kette, eltern_id, fun) do
+    aendern(kette, eltern_id, fn e ->
+      case fun.(e.kinder) do
+        {:ok, kinder} -> {:ok, %{e | kinder: kinder}}
+        f -> f
+      end
+    end)
+  end
+
+  # Ändert genau ein Glied im Baum über seine Kennung.
+  defp aendern(kette, glied_id, fun) do
+    case aendern_liste(kette.glieder, glied_id, fun) do
+      {:ok, glieder} -> {:ok, %{kette | glieder: glieder}}
+      f -> f
+    end
+  end
+
+  defp aendern_liste(glieder, id, fun) do
+    Enum.reduce(glieder, {:ok, []}, fn
+      _g, {:fehler, _} = f ->
+        f
+
+      g, {:ok, acc} ->
+        cond do
+          g.id == id ->
+            case fun.(g) do
+              {:ok, neu} -> {:ok, acc ++ [neu]}
+              f -> f
+            end
+
+          true ->
+            case aendern_liste(g.kinder, id, fun) do
+              {:ok, kinder} -> {:ok, acc ++ [%{g | kinder: kinder}]}
+              f -> f
+            end
+        end
+    end)
+  end
+
+  defp versetz_ziel(:anfang, _), do: {:ok, :anfang}
+
+  defp versetz_ziel({r, ziel}, glied_id) when r in [:vor, :nach] do
+    if ziel == glied_id,
+      do: {:fehler, "Ein Glied kann nicht vor oder hinter sich selbst stehen."},
+      else: {:ok, {r, ziel}}
+  end
+
+  defp versetz_ziel(_, _),
+    do: {:fehler, "Sag wohin: vor ein Glied, nach ein Glied, oder an den Anfang."}
+
+  # Dieselben Äußerungen dürfen nicht an zwei Stellen des Baums liegen.
   defp loesbinden(kette, utts) do
     menge = MapSet.new(utts)
+    %{kette | glieder: loesbinden_liste(kette.glieder, menge)}
+  end
 
-    glieder =
-      kette.glieder
-      |> Enum.map(fn g -> %{g | utts: Enum.reject(g.utts, &MapSet.member?(menge, &1))} end)
-      |> Enum.reject(&(&1.utts == []))
-
-    %{kette | glieder: glieder}
+  defp loesbinden_liste(glieder, menge) do
+    glieder
+    |> Enum.map(fn g ->
+      %{
+        g
+        | utts: Enum.reject(g.utts, &MapSet.member?(menge, &1)),
+          kinder: loesbinden_liste(g.kinder, menge)
+      }
+    end)
+    |> Enum.reject(&(&1.utts == [] and &1.kinder == []))
   end
 
   defp einsetzen(glieder, glied, opts) do
@@ -334,7 +465,7 @@ defmodule Worker.Timeline.Kette do
   defp relativ(glieder, glied, richtung, ziel) do
     if Enum.any?(glieder, &(&1.id == ziel)),
       do: {:ok, setze_relativ(glieder, glied, richtung, ziel)},
-      else: {:fehler, "Das Zielglied #{ziel} gibt es in der Kette nicht."}
+      else: {:fehler, ziel_fehlt(ziel)}
   end
 
   defp setze_relativ(glieder, glied, richtung, ziel) do
@@ -351,6 +482,36 @@ defmodule Worker.Timeline.Kette do
     case Enum.find(glieder, &(&1.id == id)) do
       nil -> {nil, glieder}
       g -> {g, Enum.reject(glieder, &(&1.id == id))}
+    end
+  end
+
+  # Die eigenen Äußerungen eines Gliedes sind selbst eine geordnete Folge —
+  # `vor`/`nach` nennen hier eine Äußerung, nicht ein Glied.
+  defp im_glied(vorhandene, neue, opts) do
+    neue = Enum.uniq(neue) -- vorhandene
+
+    cond do
+      neue == [] -> vorhandene
+      opts[:anfang] -> neue ++ vorhandene
+      is_binary(opts[:vor]) -> setze_utts(vorhandene, neue, opts[:vor], :vor)
+      is_binary(opts[:nach]) -> setze_utts(vorhandene, neue, opts[:nach], :nach)
+      true -> vorhandene ++ neue
+    end
+  end
+
+  defp setze_utts(rest, neue, ziel, richtung) do
+    if ziel in rest do
+      {vorne, hinten} = Enum.split_while(rest, &(&1 != ziel))
+
+      case {richtung, hinten} do
+        {:vor, _} -> vorne ++ neue ++ hinten
+        {:nach, [z | r]} -> vorne ++ [z] ++ neue ++ r
+        {:nach, []} -> vorne ++ neue
+      end
+    else
+      # Ein Ziel ausserhalb des Gliedes ist keine Position darin — angehängt
+      # wird trotzdem, damit die Äußerung nicht verloren geht.
+      rest ++ neue
     end
   end
 end

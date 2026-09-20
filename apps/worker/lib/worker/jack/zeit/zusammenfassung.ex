@@ -85,7 +85,8 @@ defmodule Worker.Jack.Zeit.Zusammenfassung do
     end
   end
 
-  defp weiter(_lauf, %{offen: 0}), do: "Alles gelesen — fertig() geht, wenn nichts mehr offen ist."
+  defp weiter(_lauf, %{offen: 0}),
+    do: "Alles gelesen — fertig() geht, wenn nichts mehr offen ist."
 
   defp weiter(_lauf, %{offen: n}),
     do: "Weiter mit mitschnitt(). Noch #{n} Zeilen ungelesen; fertig() lässt dich so nicht durch."

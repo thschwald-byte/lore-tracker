@@ -13,7 +13,12 @@ defmodule Worker.Jack.Zeit.MitschnittTest do
   defp u(id, did, text), do: %{id: id, discord_id: did, text: text}
 
   defp block(id, utt_ids, text, sprecher \\ "gm") do
-    %{"id" => id, "quell_utterance_ids" => utt_ids, "text" => text, "speaker_discord_id" => sprecher}
+    %{
+      "id" => id,
+      "quell_utterance_ids" => utt_ids,
+      "text" => text,
+      "speaker_discord_id" => sprecher
+    }
   end
 
   @namen %{"gm" => "Spielleitung", "p1" => "Kodex"}
@@ -37,7 +42,9 @@ defmodule Worker.Jack.Zeit.MitschnittTest do
       # Alle drei gehören zum selben Block — die feine Adresse ist die Zeile.
       assert Enum.all?(zeilen, &(&1.block_id == "b1"))
       assert Enum.at(zeilen, 0).text =~ "zehn Minuten"
-      assert Enum.at(zeilen, 2).text =~ "halbe Stunde" or Enum.at(zeilen, 2).text =~ "halben Stunde"
+
+      assert Enum.at(zeilen, 2).text =~ "halbe Stunde" or
+               Enum.at(zeilen, 2).text =~ "halben Stunde"
     end
 
     test "der Sprecher steht mit Namen da, nie mit Discord-ID" do

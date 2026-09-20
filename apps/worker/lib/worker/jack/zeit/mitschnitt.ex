@@ -208,7 +208,6 @@ defmodule Worker.Jack.Zeit.Mitschnitt do
     end
   end
 
-
   # `zeilen` und `von`/`bis` ergänzen sich; beides leer ist ein Fehler, den
   # `aufloesen/2` mit seiner eigenen Meldung abfängt.
   def nummern_aus(f) do
@@ -216,12 +215,16 @@ defmodule Worker.Jack.Zeit.Mitschnitt do
 
     aus_bereich =
       case {f["von"], f["bis"]} do
-        {von, bis} when is_integer(von) and is_integer(bis) and von <= bis -> Enum.to_list(von..bis)
-        {von, nil} when is_integer(von) -> [von]
-        _ -> []
+        {von, bis} when is_integer(von) and is_integer(bis) and von <= bis ->
+          Enum.to_list(von..bis)
+
+        {von, nil} when is_integer(von) ->
+          [von]
+
+        _ ->
+          []
       end
 
     (aus_liste ++ aus_bereich) |> Enum.uniq() |> Enum.sort()
   end
-
 end

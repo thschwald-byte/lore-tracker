@@ -339,7 +339,7 @@ defmodule Worker.Jack.Zeit.Stand do
       fristen: zaehle(aktiv, "frist"),
       verschiebungen: zaehle(aktiv, "ordnung"),
       geloest: map_size(s.anker) - length(aktiv),
-      glieder: length(s.kette.glieder),
+      glieder: Kette.anzahl(s.kette),
       in_der_kette: MapSet.size(Kette.eingereiht(s.kette)),
       draussen: map_size(s.kette.draussen),
       unentschieden: offene_zeilen(s).anzahl,

@@ -76,9 +76,7 @@ defmodule Worker.Materializer.ZeitAnkerFolds do
 
       true ->
         :ok =
-          :mnesia.write(
-            {S.zeit_anker(), anker_id, cid, sid, Jason.encode!(daten), ts, event_id}
-          )
+          :mnesia.write({S.zeit_anker(), anker_id, cid, sid, Jason.encode!(daten), ts, event_id})
     end
   end
 

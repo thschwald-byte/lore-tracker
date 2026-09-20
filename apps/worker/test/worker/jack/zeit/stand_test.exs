@@ -7,7 +7,16 @@ defmodule Worker.Jack.Zeit.StandTest do
 
   alias Worker.Jack.Zeit.{Setzen, Stand}
 
-  defp zeile(nr, id), do: %{nr: nr, utterance_id: id, sprecher: "x", text: "t", block_id: "b", block_text: nil, ooc?: false}
+  defp zeile(nr, id),
+    do: %{
+      nr: nr,
+      utterance_id: id,
+      sprecher: "x",
+      text: "t",
+      block_id: "b",
+      block_text: nil,
+      ooc?: false
+    }
 
   defp mitschnitt(n), do: for(i <- 1..n, do: zeile(i, "u#{i}"))
 

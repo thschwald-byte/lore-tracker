@@ -15,7 +15,7 @@ defmodule Worker.Jack.Zeit.Lesen do
   """
 
   alias Worker.Jack.Zeit.{Abschluss, Mitschnitt, Stand}
-  alias Worker.Timeline.{Calendar, Linie}
+  alias Worker.Timeline.{Calendar, Kette, Linie}
 
   @minuten_pro_tag 1440
 
@@ -36,10 +36,12 @@ defmodule Worker.Jack.Zeit.Lesen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "ab" => %{"type" => "integer",
-              "description" => "Erste Zeilennummer des Ausschnitts."},
-            "anzahl" => %{"type" => "integer",
-              "description" => "Wie viele Zeilen (Standard und Höchstwert #{@fenster}). Ein Abschnitt darf kleiner sein, wenn ein Szenenwechsel es nahelegt."}
+            "ab" => %{"type" => "integer", "description" => "Erste Zeilennummer des Ausschnitts."},
+            "anzahl" => %{
+              "type" => "integer",
+              "description" =>
+                "Wie viele Zeilen (Standard und Höchstwert #{@fenster}). Ein Abschnitt darf kleiner sein, wenn ein Szenenwechsel es nahelegt."
+            }
           },
           "required" => ["ab"]
         },
@@ -67,10 +69,15 @@ defmodule Worker.Jack.Zeit.Lesen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "ab" => %{"type" => "integer",
-              "description" => "Erste ZEILENNUMMER des Ausschnitts — dieselbe Nummerierung wie im Mitschnitt. Gelöste Zeilen erscheinen nicht; gezeigt wird ab der nächsten, die noch auf der Linie liegt. Ohne Angabe von vorn."},
-            "anzahl" => %{"type" => "integer",
-              "description" => "Wie viele Zeilen der Linie gezeigt werden."}
+            "ab" => %{
+              "type" => "integer",
+              "description" =>
+                "Erste ZEILENNUMMER des Ausschnitts — dieselbe Nummerierung wie im Mitschnitt. Gelöste Zeilen erscheinen nicht; gezeigt wird ab der nächsten, die noch auf der Linie liegt. Ohne Angabe von vorn."
+            },
+            "anzahl" => %{
+              "type" => "integer",
+              "description" => "Wie viele Zeilen der Linie gezeigt werden."
+            }
           },
           "required" => []
         },
@@ -133,7 +140,9 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     case zeilen do
       [] ->
-        {s, {:ok, "Ab Zeile #{ab} gibt es nichts mehr — der Mitschnitt hat #{length(s.mitschnitt)} Zeilen."}}
+        {s,
+         {:ok,
+          "Ab Zeile #{ab} gibt es nichts mehr — der Mitschnitt hat #{length(s.mitschnitt)} Zeilen."}}
 
       _ ->
         s = Stand.gelesen(s, zeilen)
@@ -144,7 +153,7 @@ defmodule Worker.Jack.Zeit.Lesen do
          {:ok,
           Mitschnitt.als_text(zeilen) <>
             "\n\n(Zeile #{ab}–#{letzte} von #{z.utterances}; gelesen #{z.gelesen}, " <>
-              "offen #{z.offen}.#{einordnungs_hinweis(s, z)})"}}
+            "offen #{z.offen}.#{einordnungs_hinweis(s, z)})"}}
     end
   end
 
@@ -174,10 +183,15 @@ defmodule Worker.Jack.Zeit.Lesen do
     ab = max(f["ab"] || 1, 1)
     anzahl = min(f["anzahl"] || 40, 40)
 
+    # **Über den ganzen Baum, nicht nur die Wurzeln** (#1247): Ein Unterglied
+    # ist ein Glied, und was Jack nicht sieht, kann er nicht prüfen. Die
+    # Vorordnung ist die Lesereihenfolge; die Tiefe steht als Einrückung
+    # davor, damit der Zusammenhang sichtbar ist, ohne ihn zu benennen.
     glieder =
-      s.kette.glieder
+      s.kette
+      |> Kette.flach()
       |> Enum.with_index(1)
-      |> Enum.filter(fn {g, _} -> max_nr(g, s) >= ab end)
+      |> Enum.filter(fn {{g, _tiefe}, _platz} -> max_nr(g, s) >= ab end)
       |> Enum.take(anzahl)
 
     zeigen = befunde_zum_zeigen(s, linie)
@@ -186,15 +200,22 @@ defmodule Worker.Jack.Zeit.Lesen do
     {s, {:ok, ketten_text(s, linie, glieder, ab, zeigen, length(linie.befunde))}}
   end
 
-  defp max_nr(glied, %Stand{mitschnitt: m}) do
-    nrs = for u <- glied.utts, z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
-    if nrs == [], do: 0, else: Enum.max(nrs)
+  # Die Spanne eines Gliedes nennt den ganzen Unterbaum: Wer „Zeilen 10–90"
+  # liest, sieht den Kontext, den das Glied umspannt — die eigenen Zeilen
+  # allein wären bei einem Glied mit Kindern eine Teilangabe.
+  defp nummern(glied, %Stand{mitschnitt: m}) do
+    for u <- Kette.alle_utts(glied), z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
   end
 
-  defp spanne_wort(glied, %Stand{mitschnitt: m}) do
-    nrs = for u <- glied.utts, z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
+  defp max_nr(glied, %Stand{} = s) do
+    case nummern(glied, s) do
+      [] -> 0
+      nrs -> Enum.max(nrs)
+    end
+  end
 
-    case Enum.sort(nrs) do
+  defp spanne_wort(glied, %Stand{} = s) do
+    case glied |> nummern(s) |> Enum.sort() do
       [] -> "—"
       [n] -> "#{n}"
       liste -> "#{List.first(liste)}–#{List.last(liste)}"
@@ -259,11 +280,13 @@ defmodule Worker.Jack.Zeit.Lesen do
   # liefert doch die ref — mit der ref kann es sich doch jack holen?").
   defp ketten_text(s, linie, glieder, ab, zeigen, gesamt) do
     zeilen =
-      Enum.map_join(glieder, "\n", fn {g, platz} ->
+      Enum.map_join(glieder, "\n", fn {{g, tiefe}, platz} ->
         zeit = zeit_des_gliedes(g, linie, s)
         name = if g[:grund] in [nil, ""], do: "", else: "  #{g.grund}"
+        einzug = String.duplicate("  ", tiefe)
+        an = if tiefe > 0, do: "↳ ", else: ""
 
-        "Glied #{String.pad_leading(to_string(platz), 4)}  " <>
+        "Glied #{String.pad_leading(to_string(platz), 4)}  #{einzug}#{an}" <>
           "Zeilen #{String.pad_trailing(spanne_wort(g, s), 12)} #{zeit}#{name}"
       end)
 
@@ -334,7 +357,10 @@ defmodule Worker.Jack.Zeit.Lesen do
   defp genauigkeit(nil), do: ""
   defp genauigkeit(u) when u <= 60, do: ""
   defp genauigkeit(u) when u < @minuten_pro_tag, do: " (auf #{div(u, 60)} h genau)"
-  defp genauigkeit(u) when u < 60 * @minuten_pro_tag, do: " (auf #{div(u, @minuten_pro_tag)} Tage genau)"
+
+  defp genauigkeit(u) when u < 60 * @minuten_pro_tag,
+    do: " (auf #{div(u, @minuten_pro_tag)} Tage genau)"
+
   defp genauigkeit(u), do: " (auf #{Float.round(u / (365 * @minuten_pro_tag), 1)} Jahre genau)"
 
   # **Ein Tageszähler ist für niemanden lesbar** — das ist die #1092-Lehre, und

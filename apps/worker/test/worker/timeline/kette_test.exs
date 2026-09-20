@@ -322,20 +322,180 @@ defmodule Worker.Timeline.KetteTest do
     end
   end
 
-  describe "die Kennung" do
-    test "ist content-adressiert: dieselben Äußerungen, dieselbe Kennung" do
-      {:ok, _, a} = Kette.anhaengen(Kette.neu(), ["u2", "u1"])
-      {:ok, _, b} = Kette.anhaengen(Kette.neu(), ["u1", "u2"])
+  describe "die Kennung ist eine UUID und überlebt jede Änderung" do
+    # Maintainer, 20.09.2026: „Glied braucht uuid — und ein glied an einem
+    # glied auch, zwingend." Der erste Wurf war content-adressiert; dann
+    # ändert sich die Kennung, sobald eine Szene wächst, und jeder Bezug
+    # darauf zeigt ins Leere.
+    test "erweitern behält die Kennung — die Szene ist dieselbe, nur grösser" do
+      k = Kette.neu() |> mit([["u1", "u2"], ["u3"]])
+      vorher = Kette.glied_von(k, "u1").id
 
-      assert a.id == b.id
-      assert String.starts_with?(a.id, "g_")
+      {:ok, k, g} = Kette.erweitern(k, vorher, ["u9"])
+
+      assert g.id == vorher, "ein Bezug auf dieses Glied muss gültig bleiben"
+      assert Kette.glied(k, vorher).utts == ["u1", "u2", "u9"]
     end
 
-    test "verschiedene Äußerungen, verschiedene Kennung" do
-      {:ok, _, a} = Kette.anhaengen(Kette.neu(), ["u1"])
+    test "zwei Glieder mit denselben Äußerungen sind trotzdem verschieden" do
+      # Die Kehrseite: Eine UUID konvergiert nicht. Zwei Worker, die dasselbe
+      # Glied bilden, vergeben verschiedene — hinnehmbar, weil ein Glied in
+      # EINEM Lauf entsteht und dieser Lauf sein Autor ist.
+      {:ok, _, a} = Kette.anhaengen(Kette.neu(), ["u1", "u2"])
       {:ok, _, b} = Kette.anhaengen(Kette.neu(), ["u1", "u2"])
 
       refute a.id == b.id
+      assert String.starts_with?(a.id, "g_")
+    end
+
+    test "gefunden wird ein Glied über seine Äußerungen" do
+      # Maintainer: „jeder bezug in der anwendung sollte auf eine utt
+      # zurückführen." Die Kennung ist die Identität, die Utterance der Weg.
+      k = Kette.neu() |> mit([["u1", "u2"], ["u3"]])
+
+      assert Kette.glied_von(k, "u2").id == Kette.glied_von(k, "u1").id
+      refute Kette.glied_von(k, "u3").id == Kette.glied_von(k, "u1").id
+      assert Kette.glied_von(k, "u99") == nil
+    end
+  end
+
+  describe "Bäume auf dem Zeitstrahl" do
+    # Maintainer, 20.09.2026: „es gibt die ebene der kette (der zeitstrahl) —
+    # in die kette werden glieder eingehangen — jedem glied kann ein oder
+    # mehrere glieder angehangen werden … wie bäume die auf dem zeitstrahl
+    # stehen." Und: „ein glied hängt entweder am zeitstrahl oder an einem
+    # glied."
+    setup do
+      k = Kette.neu() |> mit([["u1"], ["u2"], ["u3"]])
+      %{k: k, zwei: Kette.glied_von(k, "u2").id}
+    end
+
+    test "ein Unterglied steht IN seinem Elternglied, nicht daneben", %{k: k, zwei: zwei} do
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"], grund: "der Hinterhalt")
+
+      assert length(k.glieder) == 3, "der Zeitstrahl hat kein viertes Wurzelglied bekommen"
+      assert Kette.glied(k, zwei).kinder |> Enum.map(& &1.id) == [kind.id]
+      assert folge(k) == ~w(u1 u2 u20 u3)
+    end
+
+    test "jedes Glied hat eine eigene Kennung, auf jeder Tiefe", %{k: k, zwei: zwei} do
+      # Maintainer: „jedes element in der kette ist ein glied — egal in
+      # welcher tiefe — jedes glied hat eine uuid."
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"])
+      {:ok, k, enkel} = Kette.unterhaengen(k, kind.id, ["u30"])
+
+      ids = Kette.flach(k) |> Enum.map(fn {g, _} -> g.id end)
+
+      assert length(ids) == 5
+      assert ids == Enum.uniq(ids)
+      assert Enum.all?(ids, &String.starts_with?(&1, "g_"))
+      assert Kette.glied(k, enkel.id).utts == ["u30"]
+      assert Kette.anzahl(k) == 5
+    end
+
+    test "gefunden wird ein Unterglied über seine Äußerung, wie jedes andere", %{
+      k: k,
+      zwei: zwei
+    } do
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20", "u21"])
+
+      assert Kette.glied_von(k, "u21").id == kind.id
+    end
+
+    test "die Glieder an einem Glied sind wieder eine Kette", %{k: k, zwei: zwei} do
+      # Maintainer, 20.09.2026: „die glieder die an einem glied hängen sind
+      # wieder eine kette." Dieselben Wörter, dieselbe Ordnung, eine Ebene
+      # tiefer — `vor`/`nach`/`anfang` beim Einhängen wie beim Versetzen.
+      {:ok, k, a} = Kette.unterhaengen(k, zwei, ["ua"])
+      {:ok, k, b} = Kette.unterhaengen(k, zwei, ["ub"])
+      {:ok, k, c} = Kette.unterhaengen(k, zwei, ["uc"], vor: b.id)
+
+      assert folge(k) == ~w(u1 u2 ua uc ub u3)
+
+      {:ok, k} = Kette.versetzen(k, c.id, {:nach, b.id})
+      assert folge(k) == ~w(u1 u2 ua ub uc u3)
+
+      {:ok, k} = Kette.versetzen(k, c.id, :anfang)
+      assert folge(k) == ~w(u1 u2 uc ua ub u3)
+
+      {:ok, k} = Kette.loeschen(k, a.id)
+      assert folge(k) == ~w(u1 u2 uc ub u3)
+      assert "ua" in Kette.offen(k, ~w(u1 u2 u3 ua ub uc))
+    end
+
+    test "ein Glied bewegt sich unter seinen Geschwistern, nicht aus dem Kontext heraus", %{
+      k: k,
+      zwei: zwei
+    } do
+      # „ein glied hängt entweder am zeitstrahl oder an einem glied" — wer
+      # eine Szene aus ihrem Zusammenhang lösen will, nimmt sie heraus und
+      # hängt sie neu ein. Das ist eine bewusste Handlung.
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"])
+      eins = Kette.glied_von(k, "u1").id
+
+      assert {:fehler, t} = Kette.versetzen(k, kind.id, {:nach, eins})
+      assert t =~ "derselben Ebene"
+
+      assert {:fehler, t2} = Kette.versetzen(k, zwei, {:vor, kind.id})
+      assert t2 =~ "derselben Ebene"
+    end
+
+    test "löschen nimmt den ganzen Unterbaum mit — und alles wird wieder offen", %{
+      k: k,
+      zwei: zwei
+    } do
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20"])
+      {:ok, k, _} = Kette.unterhaengen(k, kind.id, ["u30"])
+
+      {:ok, k} = Kette.loeschen(k, zwei)
+
+      assert folge(k) == ~w(u1 u3)
+      assert Kette.offen(k, ~w(u1 u2 u3 u20 u30)) == ~w(u2 u20 u30)
+      assert k.draussen == %{}
+    end
+
+    test "eine Äußerung liegt in höchstens einem Glied — auch über Tiefen hinweg", %{
+      k: k,
+      zwei: zwei
+    } do
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20", "u21"])
+      {:ok, k, _} = Kette.anhaengen(k, ["u21"])
+
+      assert Kette.glied(k, kind.id).utts == ["u20"]
+      assert folge(k) == ~w(u1 u2 u20 u3 u21)
+    end
+
+    test "ein Unterglied an einem Glied, das es nicht gibt", %{k: k} do
+      assert {:fehler, t} = Kette.unterhaengen(k, "g_erfunden", ["u9"])
+      assert t =~ "g_erfunden"
+    end
+
+    test "erst die eigenen Äußerungen, dann die Unterglieder", %{k: k, zwei: zwei} do
+      # Eine Festlegung, keine Ableitung: ohne sie wäre die Folge der Blätter
+      # nicht bestimmt. Wer eine andere Ordnung braucht, bildet Unterglieder.
+      {:ok, k, _} = Kette.erweitern(k, zwei, ["u2b"])
+      {:ok, k, _} = Kette.unterhaengen(k, zwei, ["u20"])
+
+      assert folge(k) == ~w(u1 u2 u2b u20 u3)
+    end
+
+    test "die Invariante gilt auch im Baum", %{k: k, zwei: zwei} do
+      alle = ~w(u1 u2 u3 u20 u21 u30 u40)
+
+      {:ok, k, kind} = Kette.unterhaengen(k, zwei, ["u20", "u21"])
+      k = unversehrt!(k, alle)
+
+      {:ok, k, _} = Kette.unterhaengen(k, kind.id, ["u30"])
+      k = unversehrt!(k, alle)
+
+      {:ok, k} = Kette.draussen(k, ["u21", "u40"], "Tisch")
+      k = unversehrt!(k, alle)
+
+      {:ok, k, _} = Kette.erweitern(k, kind.id, ["u40"])
+      k = unversehrt!(k, alle)
+
+      {:ok, k} = Kette.loeschen(k, kind.id)
+      unversehrt!(k, alle)
     end
   end
 end

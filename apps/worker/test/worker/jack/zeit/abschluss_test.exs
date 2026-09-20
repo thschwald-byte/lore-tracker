@@ -11,7 +11,15 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
   alias Worker.Timeline.Kette
 
   defp zeile(nr, id),
-    do: %{nr: nr, utterance_id: id, sprecher: "x", text: "t", block_id: "b", block_text: nil, ooc?: false}
+    do: %{
+      nr: nr,
+      utterance_id: id,
+      sprecher: "x",
+      text: "t",
+      block_id: "b",
+      block_text: nil,
+      ooc?: false
+    }
 
   defp lies_sprechlinie(n), do: for(i <- 1..n, do: zeile(i, "u#{i}"))
 
@@ -171,7 +179,8 @@ defmodule Worker.Jack.Zeit.AbschlussTest do
     test "Zeitpunkte und Spannen blockieren nie — sie sind vollständig für sich" do
       s =
         Stand.neu(:einsortieren, lies_sprechlinie(5))
-        |> alles_gelesen() |> alles_eingereiht()
+        |> alles_gelesen()
+        |> alles_eingereiht()
         |> Stand.setzen(
           Setzen.bauen(%{
             utterance_ids: ["u1"],

@@ -33,12 +33,22 @@ defmodule Worker.Jack.Zeit.Notizen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "abschnitt" => %{"type" => "string", "enum" => @abschnitte,
-              "description" => "ABLAUF (die Stationen der Handlung), ZEITEN (jede Zeitangabe mit Zeilennummer) oder OFFEN (was du nicht einordnen konntest)."},
-            "schluessel" => %{"type" => "string",
-              "description" => "Kurzer Name des Eintrags. Derselbe Schlüssel ersetzt die bisherige Notiz — so korrigierst du, ohne zu wiederholen."},
-            "text" => %{"type" => "string",
-              "description" => "Der Eintrag selbst. Bei ZEITEN gehört die Zeilennummer hinein, sonst muss der nächste Lauf sie suchen."}
+            "abschnitt" => %{
+              "type" => "string",
+              "enum" => @abschnitte,
+              "description" =>
+                "ABLAUF (die Stationen der Handlung), ZEITEN (jede Zeitangabe mit Zeilennummer) oder OFFEN (was du nicht einordnen konntest)."
+            },
+            "schluessel" => %{
+              "type" => "string",
+              "description" =>
+                "Kurzer Name des Eintrags. Derselbe Schlüssel ersetzt die bisherige Notiz — so korrigierst du, ohne zu wiederholen."
+            },
+            "text" => %{
+              "type" => "string",
+              "description" =>
+                "Der Eintrag selbst. Bei ZEITEN gehört die Zeilennummer hinein, sonst muss der nächste Lauf sie suchen."
+            }
           },
           "required" => ~w(abschnitt schluessel text)
         },
@@ -53,8 +63,11 @@ defmodule Worker.Jack.Zeit.Notizen do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "abschnitt" => %{"type" => "string", "enum" => @abschnitte,
-              "description" => "Nur diesen Abschnitt zeigen; ohne Angabe alle."}
+            "abschnitt" => %{
+              "type" => "string",
+              "enum" => @abschnitte,
+              "description" => "Nur diesen Abschnitt zeigen; ohne Angabe alle."
+            }
           },
           "required" => []
         },
@@ -106,5 +119,4 @@ defmodule Worker.Jack.Zeit.Notizen do
           end)}}
     end
   end
-
 end

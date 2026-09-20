@@ -67,7 +67,8 @@ defmodule Worker.Jack.Zeit do
     melde = Keyword.get(opts, :melde_stufe) || fn _stufe, _ereignis -> :ok end
     opts = Keyword.delete(opts, :melde_stufe)
 
-    with {:ok, g} <- Melder.gemeldet(@stufe_gedaechtnis, melde, opts, &lauf(eingabe, :gedaechtnis, &1)),
+    with {:ok, g} <-
+           Melder.gemeldet(@stufe_gedaechtnis, melde, opts, &lauf(eingabe, :gedaechtnis, &1)),
          eingabe = Map.put(eingabe, :notizen, notizen(g)),
          {:ok, e} <- Melder.gemeldet(@stufe_zeit, melde, opts, &lauf(eingabe, :einsortieren, &1)) do
       {:ok, ergebnis(e, pruefen(eingabe, e, opts))}

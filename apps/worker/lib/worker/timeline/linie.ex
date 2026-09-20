@@ -183,13 +183,22 @@ defmodule Worker.Timeline.Linie do
   Glied-IDs umgeschrieben, und das Ergebnis am Ende zurückgeschlüsselt.
   Damit gibt es weiterhin **eine** Stelle, an der Minuten verteilt werden —
   zwei wären zwei Wahrheiten über dieselbe Zeit.
+
+  **Gerechnet wird über den ganzen Baum, nicht über die Wurzeln** (#1247,
+  20.09.2026): Ein Unterglied ist ein Glied wie jedes andere und hat seine
+  eigene Zeit. Die Folge ist die Vorordnung (`Kette.flach/1`) — erst das
+  Elternglied mit seinen eigenen Äußerungen, dann seine Kinder —, also
+  genau die Reihenfolge, in der die Kette gelesen wird. Nur die Wurzeln zu
+  nehmen hiesse, jedes Untergliedes Zeit der seines Elternteils
+  gleichzusetzen; dann wäre „der Hinterhalt" so spät wie „die Flucht".
   """
   @spec aus_kette(map(), [anker()], [stelle()]) :: map()
   def aus_kette(kette, anker, stellen) when is_list(anker) and is_list(stellen) do
     pos_von = stellen |> Enum.with_index() |> Map.new(fn {s, i} -> {s.utterance_id, i} end)
+    alle = Enum.map(Worker.Timeline.Kette.flach(kette), fn {g, _tiefe} -> g end)
 
     glied_stellen =
-      kette.glieder
+      alle
       |> Enum.with_index()
       |> Enum.map(fn {g, i} -> %{utterance_id: g.id, session_nr: 1, pos: i} end)
 
@@ -199,7 +208,7 @@ defmodule Worker.Timeline.Linie do
     # Jede Äußerung erbt den Eintrag ihres Gliedes; die Reihenfolge innerhalb
     # eines Gliedes ist die seiner Utterance-Liste (sie ist selbst eine Kette).
     je_utterance =
-      for g <- kette.glieder,
+      for g <- alle,
           eintrag = roh.nach_utterance[g.id],
           u <- g.utts,
           into: %{},
@@ -207,7 +216,7 @@ defmodule Worker.Timeline.Linie do
 
     %{
       roh
-      | kette: Enum.flat_map(kette.glieder, fn g -> for u <- g.utts, do: je_utterance[u] end),
+      | kette: Enum.flat_map(alle, fn g -> for u <- g.utts, do: je_utterance[u] end),
         nach_utterance: je_utterance,
         geloest: MapSet.new(Map.keys(kette.draussen))
     }
@@ -512,6 +521,7 @@ defmodule Worker.Timeline.Linie do
     |> Enum.with_index()
     |> Enum.map(fn {s, i} ->
       {minute, herkunft} = minute_an(i, reihe, feste, spannen)
+
       %{
         utterance_id: s.utterance_id,
         minute: minute,
@@ -524,9 +534,6 @@ defmodule Worker.Timeline.Linie do
       }
     end)
   end
-
-
-
 
   # **Zwischen zwei Ankern wird interpoliert, hinter dem letzten
   # FORTGESCHRIEBEN — und der Unterschied steht an der Stelle.**
@@ -1027,7 +1034,9 @@ defmodule Worker.Timeline.Linie do
     |> Enum.group_by(&frueheste(&1, index))
     |> Enum.reject(fn {i, gruppe} -> is_nil(i) or length(gruppe) < 2 end)
     |> Enum.flat_map(fn {_i, gruppe} ->
-      minuten = gruppe |> Enum.map(&(Map.get(&1, :minute) || Map.get(&1, :tagesminute))) |> Enum.uniq()
+      minuten =
+        gruppe |> Enum.map(&(Map.get(&1, :minute) || Map.get(&1, :tagesminute))) |> Enum.uniq()
+
       werte = gruppe |> Enum.map(&to_string(Map.get(&1, :wert) || "")) |> Enum.reject(&(&1 == ""))
 
       if length(minuten) > 1 do
@@ -1098,7 +1107,8 @@ defmodule Worker.Timeline.Linie do
   defp spaeteste(a, index), do: a |> stellen_index(index) |> Enum.max(fn -> nil end)
 
   defp stellen_index(a, index),
-    do: a |> Map.get(:utterance_ids, []) |> Enum.map(&Map.get(index, &1)) |> Enum.reject(&is_nil/1)
+    do:
+      a |> Map.get(:utterance_ids, []) |> Enum.map(&Map.get(index, &1)) |> Enum.reject(&is_nil/1)
 
   defp zweifel_je_stelle(anker) do
     for a <- anker,

@@ -21,7 +21,6 @@ defmodule Worker.Jack.Zeit.Eingabe do
   `Worker.Jack.Zeit.Setzen`, nicht dieses Modul.
   """
 
-
   alias Worker.Jack.Zeit.Mitschnitt
 
   @doc """

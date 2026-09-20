@@ -644,8 +644,17 @@ defmodule Worker.Timeline.LinieTest do
     # den Tag des letzten festen Punktes, und das war die Jahreszahl: Die
     # Sitzung spielte plötzlich am 1. Januar 2044.
     test "eine Jahreszahl datiert die folgende Uhrzeit NICHT" do
-      jahr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "im Jahr 2044"}, cal())
-      uhr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "kurz nach acht"}, cal())
+      jahr =
+        Ausdruck.aufloesen(
+          %{art: :zeitpunkt, utterance_ids: ["u11"], wert: "im Jahr 2044"},
+          cal()
+        )
+
+      uhr =
+        Ausdruck.aufloesen(
+          %{art: :zeitpunkt, utterance_ids: ["u13"], wert: "kurz nach acht"},
+          cal()
+        )
 
       nach = Linie.bauen(stellen(), [jahr, uhr]).nach_utterance
 
@@ -658,7 +667,9 @@ defmodule Worker.Timeline.LinieTest do
     end
 
     test "ein TAGESgenaues Datum vererbt seinen Tag sehr wohl" do
-      datum = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "15.11.2080"}, cal())
+      datum =
+        Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "15.11.2080"}, cal())
+
       uhr = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "22:45"}, cal())
 
       nach = Linie.bauen(stellen(), [datum, uhr]).nach_utterance
@@ -727,7 +738,9 @@ defmodule Worker.Timeline.LinieTest do
     # verwechselte GROB mit UNSICHER: „Ende 2011" bekam 15 %, obwohl die
     # Aussage gewiss ist — sie ist nur vier Monate breit.
     test "ein belegter Anker ist 100 %, wie grob er auch ist" do
-      grob = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "Ende 2011"}, cal())
+      grob =
+        Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u11"], wert: "Ende 2011"}, cal())
+
       fein = Ausdruck.aufloesen(%{art: :zeitpunkt, utterance_ids: ["u13"], wert: "22:45"}, cal())
 
       nach = Linie.bauen(stellen(), [grob, fein]).nach_utterance
@@ -787,7 +800,6 @@ defmodule Worker.Timeline.LinieTest do
       assert befund.text =~ "5.0 Stunden"
       assert befund.text =~ "1.0 Stunden"
 
-
       # Die Linie bleibt trotzdem benutzbar und monoton — best effort.
       nach = linie.nach_utterance
       assert nach["u12"].minute >= nach["u11"].minute
@@ -841,8 +853,11 @@ defmodule Worker.Timeline.LinieTest do
       # gegen die Festlegung, deterministisch.
       a = [
         Map.put(
-          anker(:zeitpunkt, ["u11"], %{minute: 22 * 60 + 45, wert: "22:45",
-                                        abgesegnet_am: "2026-09-19"}),
+          anker(:zeitpunkt, ["u11"], %{
+            minute: 22 * 60 + 45,
+            wert: "22:45",
+            abgesegnet_am: "2026-09-19"
+          }),
           :anker_id,
           "z_mensch"
         ),
@@ -867,10 +882,16 @@ defmodule Worker.Timeline.LinieTest do
 
     test "zwei abgesegnete untereinander: wieder der frühere" do
       a = [
-        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 600, abgesegnet_am: "2026-09-18"}),
-                :anker_id, "z_a"),
-        Map.put(anker(:zeitpunkt, ["u11"], %{minute: 900, abgesegnet_am: "2026-09-19"}),
-                :anker_id, "z_b")
+        Map.put(
+          anker(:zeitpunkt, ["u11"], %{minute: 600, abgesegnet_am: "2026-09-18"}),
+          :anker_id,
+          "z_a"
+        ),
+        Map.put(
+          anker(:zeitpunkt, ["u11"], %{minute: 900, abgesegnet_am: "2026-09-19"}),
+          :anker_id,
+          "z_b"
+        )
       ]
 
       assert Linie.bauen(stellen(), a).nach_utterance["u11"].minute == 600

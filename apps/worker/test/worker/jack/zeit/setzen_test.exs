@@ -13,7 +13,15 @@ defmodule Worker.Jack.Zeit.SetzenTest do
   alias Worker.Jack.Zeit.{Setzen, Stand}
 
   defp zeile(nr, id),
-    do: %{nr: nr, utterance_id: id, sprecher: "x", text: "t", block_id: "b", block_text: nil, ooc?: false}
+    do: %{
+      nr: nr,
+      utterance_id: id,
+      sprecher: "x",
+      text: "t",
+      block_id: "b",
+      block_text: nil,
+      ooc?: false
+    }
 
   defp stand, do: Stand.neu(:einsortieren, for(i <- 1..5, do: zeile(i, "u#{i}")))
 
@@ -108,7 +116,12 @@ defmodule Worker.Jack.Zeit.SetzenTest do
         |> Stand.ausgeben("g1", %{utterance_ids: ["u4"]})
 
       assert {:verworfen, v} =
-               Setzen.entscheiden(s, wunsch(:zeitpunkt, "x", ["u1"]), {:ersetzen, "g1"}, guid_gibt())
+               Setzen.entscheiden(
+                 s,
+                 wunsch(:zeitpunkt, "x", ["u1"]),
+                 {:ersetzen, "g1"},
+                 guid_gibt()
+               )
 
       assert v.text =~ "anderen Stelle"
     end

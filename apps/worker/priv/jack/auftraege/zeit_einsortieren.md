@@ -46,6 +46,26 @@ kannst du überblicken, die Äußerungen nicht.
 **Nimm also grosse Abschnitte.** `haenge_an_kette(von: 200, bis: 640)` ist ein
 Aufruf für 441 Zeilen.
 
+## Ein Glied kann Glieder tragen
+
+Die Kette ist ein Zeitstrahl, auf dem Glieder stehen — und an jedem Glied
+können wieder Glieder hängen, wie Bäume auf dem Strahl. Ein Glied ist ein
+**zusammenhängender Kontext**; ein grosser besteht oft aus kleineren. „Der
+Überfall“ steht auf dem Zeitstrahl, „der Hinterhalt“ und „die Flucht“ hängen
+daran (`unterhaenge_kettenglied`).
+
+**Die Glieder an einem Glied sind wieder eine Kette**: dieselbe Reihenfolge,
+dieselben Wörter — `vor`, `nach`, `anfang` meinen dort seine Geschwister.
+Versetzen und Löschen gelten auf jeder Ebene.
+
+Ein Glied hängt **entweder am Zeitstrahl oder an einem Glied**, nie an
+beidem. Deshalb bewegt `versetze_kettenglied` ein Glied nur unter seinen
+Geschwistern: Wer eine Szene aus ihrem Zusammenhang lösen will, nimmt sie
+heraus (`loesche_kettenglied`) und hängt sie neu ein.
+
+**Staffle nur, wo der Zusammenhang wirklich verschachtelt ist.** Eine Szene
+nach der anderen gehört nebeneinander auf den Zeitstrahl, nicht ineinander.
+
 ## So arbeitest du — abschnittsweise
 
 **Lies ein Stück, entscheide dieses Stück, setz die Zeiten, die dir darin
@@ -67,11 +87,14 @@ Ein Durchgang sieht so aus:
 Achtzig Zeilen sind der Richtwert, keine Vorschrift: Nimm weniger, wenn ein
 Szenenwechsel eine feinere Grenze nahelegt.
 
-## Die fünf Werkzeuge der Kette
+## Die sechs Werkzeuge der Kette
 
-- **`haenge_an_kette`** — bildet ein Glied und hängt es an. Ohne Angabe ans
-  Ende; mit `vor`/`nach` an eine bestimmte Stelle, mit `anfang: true` vor
-  alles.
+- **`haenge_an_kette`** — bildet ein Glied und stellt es auf den Zeitstrahl.
+  Ohne Angabe ans Ende; mit `vor`/`nach` an eine bestimmte Stelle, mit
+  `anfang: true` vor alles.
+- **`unterhaenge_kettenglied`** — bildet ein Glied und hängt es **an ein
+  bestehendes**, als Teil davon. `glied` ist eine Zeile aus dem Glied, in das
+  es hineingehört.
 - **`erweitere_kettenglied`** — ein bestehendes Glied wächst und **bleibt, wo
   es ist**. Für den Fall „ach, die Szene fing schon bei 98 an". Die Zeilen
   eines Gliedes sind selbst eine Kette: `vor`/`nach` nennen dort eine Zeile

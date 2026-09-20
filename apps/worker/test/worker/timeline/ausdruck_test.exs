@@ -100,8 +100,12 @@ defmodule Worker.Timeline.AusdruckTest do
 
     test "gegen und um brauchen das Wort Uhr — sie sind sonst zu häufig" do
       # Die Falsch-Positiven aus S2, das Rauschen dieser Sitzung.
-      for w <- ["um eins reduzieren", "um zwei Haupthandlungen", "um Drei von vier Spielern",
-                "gegen 5 Grad"] do
+      for w <- [
+            "um eins reduzieren",
+            "um zwei Haupthandlungen",
+            "um Drei von vier Spielern",
+            "gegen 5 Grad"
+          ] do
         assert Ausdruck.tagesminute(w) == nil, w
         assert Ausdruck.halbtag_minute(w) == nil, w
       end

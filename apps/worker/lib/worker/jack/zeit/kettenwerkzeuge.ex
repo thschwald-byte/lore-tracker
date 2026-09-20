@@ -8,11 +8,21 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
   Zweiteilung der Arbeit, die der Auftrag ohnehin vorgibt: **erst
   einreihen, dann datieren.** Hier liegt das Einreihen, dort das Datieren.
 
-      haenge_an_kette         ein neues Glied aus einer oder mehreren Zeilen
+      haenge_an_kette         ein neues Glied AUF den Zeitstrahl
+      unterhaenge_kettenglied ein neues Glied AN ein bestehendes Glied
       erweitere_kettenglied   ein bestehendes Glied wächst, bleibt wo es ist
-      versetze_kettenglied    vor/nach ein anderes Glied, oder an den Anfang
+      versetze_kettenglied    vor/nach ein Geschwisterglied, oder an den Anfang
       loesche_kettenglied     Glied raus, seine Zeilen sind wieder offen
       nicht_in_die_kette      Tischgespräch — kommt nie hinein
+
+  ## Bäume auf dem Zeitstrahl
+
+  Maintainer, 20.09.2026: „ein glied hängt entweder am zeitstrahl oder an
+  einem glied" — und „die glieder die an einem glied hängen sind wieder eine
+  kette". Daraus folgt die Gestalt der Werkzeuge: `haenge_an_kette` und
+  `unterhaenge_kettenglied` sind **dasselbe Werkzeug auf zwei Ebenen**,
+  `versetzen` und `löschen` gelten auf beiden unverändert, und `vor`/`nach`
+  meinen immer die Geschwister — nie den Sprung in eine andere Ebene.
 
   **Jack adressiert ein Glied über eine seiner Zeilennummern.** Die Kennung
   (`g_<hash>`) ist seine Adresse im Code, nicht im Gespräch: Ein Modell
@@ -26,7 +36,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
   alias Worker.Jack.Zeit.{Mitschnitt, Stand}
   alias Worker.Timeline.Kette
 
-  @doc "Die fünf Ketten-Werkzeuge."
+  @doc "Die sechs Ketten-Werkzeuge."
   def werkzeuge do
     [
       %{
@@ -47,16 +57,27 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "glied" => %{"type" => "integer",
-              "description" => "Eine Zeile aus dem Glied, das versetzt werden soll."},
-            "vor" => %{"type" => "integer",
-              "description" => "Eine Zeile; das Glied kommt VOR das Glied, in dem sie liegt."},
-            "nach" => %{"type" => "integer",
-              "description" => "Eine Zeile; das Glied kommt HINTER das Glied, in dem sie liegt."},
-            "anfang" => %{"type" => "boolean",
-              "description" => "true setzt das Glied vor die ganze Kette."},
-            "beleg" => %{"type" => "string",
-              "description" => "Das wörtliche Zitat, aus dem hervorgeht, dass die Stelle zeitlich nicht hierher gehört."}
+            "glied" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile aus dem Glied, das versetzt werden soll."
+            },
+            "vor" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile; das Glied kommt VOR das Glied, in dem sie liegt."
+            },
+            "nach" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile; das Glied kommt HINTER das Glied, in dem sie liegt."
+            },
+            "anfang" => %{
+              "type" => "boolean",
+              "description" => "true setzt das Glied vor die ganze Kette."
+            },
+            "beleg" => %{
+              "type" => "string",
+              "description" =>
+                "Das wörtliche Zitat, aus dem hervorgeht, dass die Stelle zeitlich nicht hierher gehört."
+            }
           },
           "required" => ~w(glied beleg)
         },
@@ -77,8 +98,10 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "glied" => %{"type" => "integer",
-              "description" => "Eine Zeile aus dem Glied, das herausgenommen werden soll."}
+            "glied" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile aus dem Glied, das herausgenommen werden soll."
+            }
           },
           "required" => ["glied"]
         },
@@ -105,24 +128,98 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."},
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "description" =>
+                "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."
+            },
             "von" => %{"type" => "integer", "description" => "Erste Zeile des Glieds (mit bis)."},
             "bis" => %{"type" => "integer", "description" => "Letzte Zeile des Glieds (mit von)."},
-            "vor" => %{"type" => "integer",
-              "description" => "OPTIONAL: eine Zeile aus dem Glied, VOR das dieses gehört."},
-            "nach" => %{"type" => "integer",
-              "description" => "OPTIONAL: eine Zeile aus dem Glied, HINTER das dieses gehört."},
-            "anfang" => %{"type" => "boolean",
-              "description" => "OPTIONAL: true setzt das Glied vor die ganze Kette — für alles, was vor allem anderen liegt (Weltgeschichte)."},
-            "grund" => %{"type" => "string",
-              "description" => "OPTIONAL: ein kurzer Name für die Szene, in deinen Worten."}
+            "vor" => %{
+              "type" => "integer",
+              "description" => "OPTIONAL: eine Zeile aus dem Glied, VOR das dieses gehört."
+            },
+            "nach" => %{
+              "type" => "integer",
+              "description" => "OPTIONAL: eine Zeile aus dem Glied, HINTER das dieses gehört."
+            },
+            "anfang" => %{
+              "type" => "boolean",
+              "description" =>
+                "OPTIONAL: true setzt das Glied vor die ganze Kette — für alles, was vor allem anderen liegt (Weltgeschichte)."
+            },
+            "grund" => %{
+              "type" => "string",
+              "description" => "OPTIONAL: ein kurzer Name für die Szene, in deinen Worten."
+            }
           },
           "required" => []
         },
         optional: ~w(zeilen von bis vor nach anfang grund),
         wiederholung: :zaehlt,
         ausfuehren: &w_haenge_an_kette/2
+      },
+      %{
+        name: "unterhaenge_kettenglied",
+        beschreibung:
+          "Hängt ein NEUES Glied an ein bestehendes — als Teil davon. Dafür " <>
+            "ist das da: Ein Glied ist ein zusammenhängender Zusammenhang, und " <>
+            "ein grosser besteht aus kleineren. „Der Überfall“ bekommt so „der " <>
+            "Hinterhalt“ und „die Flucht“; sie stehen IN ihm, nicht daneben auf " <>
+            "dem Zeitstrahl. " <>
+            "glied: eine Zeile aus dem Glied, in das das neue hineingehört. " <>
+            "DIE GLIEDER AN EINEM GLIED SIND WIEDER EINE KETTE: ohne Angabe " <>
+            "kommt das neue hinten dazu, vor/nach nennen eine Zeile aus einem " <>
+            "seiner Geschwister, anfang setzt es davor. " <>
+            "Nimm das nur, wenn der Zusammenhang wirklich verschachtelt ist — " <>
+            "eine Szene nach der anderen gehört mit haenge_an_kette auf den " <>
+            "Zeitstrahl, nicht ineinander.",
+        parameter: %{
+          "type" => "object",
+          "properties" => %{
+            "glied" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile aus dem Glied, an das das neue gehängt wird."
+            },
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "description" => "Einzelne Zeilennummern. Für Abschnitte lieber von/bis."
+            },
+            "von" => %{
+              "type" => "integer",
+              "description" => "Erste Zeile des neuen Glieds (mit bis)."
+            },
+            "bis" => %{
+              "type" => "integer",
+              "description" => "Letzte Zeile des neuen Glieds (mit von)."
+            },
+            "vor" => %{
+              "type" => "integer",
+              "description" =>
+                "OPTIONAL: eine Zeile aus einem Geschwisterglied, VOR das dieses gehört."
+            },
+            "nach" => %{
+              "type" => "integer",
+              "description" =>
+                "OPTIONAL: eine Zeile aus einem Geschwisterglied, HINTER das dieses gehört."
+            },
+            "anfang" => %{
+              "type" => "boolean",
+              "description" =>
+                "OPTIONAL: true setzt das neue Glied an den Anfang seiner Geschwister."
+            },
+            "grund" => %{
+              "type" => "string",
+              "description" => "OPTIONAL: ein kurzer Name für diesen Teil, in deinen Worten."
+            }
+          },
+          "required" => ["glied"]
+        },
+        optional: ~w(zeilen von bis vor nach anfang grund),
+        wiederholung: :zaehlt,
+        ausfuehren: &w_unterhaenge_kettenglied/2
       },
       %{
         name: "erweitere_kettenglied",
@@ -138,18 +235,29 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "glied" => %{"type" => "integer",
-              "description" => "Eine Zeile, die bereits in dem Glied liegt, das wachsen soll."},
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für Abschnitte lieber von/bis."},
+            "glied" => %{
+              "type" => "integer",
+              "description" => "Eine Zeile, die bereits in dem Glied liegt, das wachsen soll."
+            },
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "description" => "Einzelne Zeilennummern. Für Abschnitte lieber von/bis."
+            },
             "von" => %{"type" => "integer", "description" => "Erste Zeile (mit bis)."},
             "bis" => %{"type" => "integer", "description" => "Letzte Zeile (mit von)."},
-            "vor" => %{"type" => "integer",
-              "description" => "OPTIONAL: eine Zeile IM Glied, vor die das Neue gehört."},
-            "nach" => %{"type" => "integer",
-              "description" => "OPTIONAL: eine Zeile IM Glied, hinter die das Neue gehört."},
-            "anfang" => %{"type" => "boolean",
-              "description" => "OPTIONAL: true setzt das Neue an den Anfang des Gliedes."}
+            "vor" => %{
+              "type" => "integer",
+              "description" => "OPTIONAL: eine Zeile IM Glied, vor die das Neue gehört."
+            },
+            "nach" => %{
+              "type" => "integer",
+              "description" => "OPTIONAL: eine Zeile IM Glied, hinter die das Neue gehört."
+            },
+            "anfang" => %{
+              "type" => "boolean",
+              "description" => "OPTIONAL: true setzt das Neue an den Anfang des Gliedes."
+            }
           },
           "required" => ["glied"]
         },
@@ -171,19 +279,24 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         parameter: %{
           "type" => "object",
           "properties" => %{
-            "zeilen" => %{"type" => "array", "items" => %{"type" => "integer"},
-              "description" => "Einzelne Zeilennummern. Für Abschnitte lieber von/bis."},
+            "zeilen" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer"},
+              "description" => "Einzelne Zeilennummern. Für Abschnitte lieber von/bis."
+            },
             "von" => %{"type" => "integer", "description" => "Erste Zeile (mit bis)."},
             "bis" => %{"type" => "integer", "description" => "Letzte Zeile (mit von)."},
-            "grund" => %{"type" => "string",
-              "description" => "In deinen Worten, kurz: warum das nicht in die Kette gehört."}
+            "grund" => %{
+              "type" => "string",
+              "description" => "In deinen Worten, kurz: warum das nicht in die Kette gehört."
+            }
           },
           "required" => ["grund"]
         },
         optional: ~w(zeilen von bis),
         wiederholung: :zaehlt,
         ausfuehren: &w_nicht_in_die_kette/2
-      },
+      }
     ]
   end
 
@@ -208,7 +321,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   defp versetz_ziel(s, f) do
     cond do
       f["anfang"] == true ->
@@ -227,7 +339,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   defp ziel_glied(s, nr, richtung) do
     with {:ok, [utt], _} <- Mitschnitt.aufloesen(s.mitschnitt, [nr]),
          {:ok, ziel} <- glied_bei(s, utt) do
@@ -240,7 +351,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
            "eingereiht ist."}
     end
   end
-
 
   defp w_loesche_kettenglied(s, f) do
     with {:ok, [utt], zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, [f["glied"]]),
@@ -264,7 +374,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   defp w_haenge_an_kette(s, f) do
     with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f),
          {:ok, opts} <- kette_opts(s, f) do
@@ -283,6 +392,30 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
+  defp w_unterhaenge_kettenglied(s, f) do
+    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f),
+         {:ok, [eltern_utt], _} <- Mitschnitt.aufloesen(s.mitschnitt, [f["glied"]]),
+         {:ok, eltern} <- glied_bei(s, eltern_utt),
+         {:ok, opts} <- kette_opts(s, f) do
+      s = Stand.gelesen(s, zeilen)
+
+      case Stand.kette(s, &Kette.unterhaengen(&1, eltern.id, ids, opts)) do
+        {:ok, s, glied} ->
+          s = Stand.einordnen(s, zeilen, :ingame)
+
+          {s,
+           {:ok,
+            "Glied #{glied_wort(glied, s)} an #{glied_wort(eltern, s)} gehängt. " <>
+              kettenstand(s)}}
+
+        {:fehler, text} ->
+          {s, {:error, text}}
+      end
+    else
+      {:fehler, text} -> {s, {:error, text}}
+      _ -> {s, {:error, "Die Zeile in glied liegt in keinem Kettenglied."}}
+    end
+  end
 
   defp w_erweitere_kettenglied(s, f) do
     with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f),
@@ -308,7 +441,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
       _ -> {s, {:error, "Die Zeile in glied liegt in keinem Kettenglied."}}
     end
   end
-
 
   defp w_nicht_in_die_kette(s, f) do
     with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f) do
@@ -341,7 +473,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   defp mit_zielglied(s, nr, richtung, grund) do
     with {:ok, [utt], _} <- Mitschnitt.aufloesen(s.mitschnitt, [nr]),
          {:ok, glied} <- glied_bei(s, utt) do
@@ -365,7 +496,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   defp innere_pos(s, nr, richtung) do
     case Mitschnitt.aufloesen(s.mitschnitt, [nr]) do
       {:ok, [utt], _} -> {:ok, [{richtung, utt}]}
@@ -388,7 +518,9 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
 
   defp glied_wort(glied, s) do
     nrs =
-      for u <- glied.utts, z = Enum.find(s.mitschnitt, &(&1.utterance_id == u)), do: z.nr
+      for u <- Kette.alle_utts(glied),
+          z = Enum.find(s.mitschnitt, &(&1.utterance_id == u)),
+          do: z.nr
 
     case nrs do
       [] -> "(leer)"
@@ -397,7 +529,6 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     end
   end
 
-
   @doc "Der Stand der Kette in einem Satz — dieselbe Zeile in jeder Antwort."
   def kettenstand(s) do
     z = Stand.zahlen(s)
@@ -405,5 +536,4 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
     "Kette: #{z.glieder} Glied(er), #{z.in_der_kette} Zeile(n) drin, " <>
       "#{z.draussen} draussen, #{z.unentschieden} noch unentschieden."
   end
-
 end

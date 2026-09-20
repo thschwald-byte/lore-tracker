@@ -210,7 +210,9 @@ defmodule Worker.Jack.Zeit.PruefenTest do
     end
 
     test "die leere Kette sagt, was zu tun ist" do
-      {:ok, h} = Halter.start_link(Stand.neu(:einsortieren, mitschnitt()), abbild: &Stand.abbild/1)
+      {:ok, h} =
+        Halter.start_link(Stand.neu(:einsortieren, mitschnitt()), abbild: &Stand.abbild/1)
+
       antwort = ruf(h, "lies_kette", %{})
 
       assert antwort =~ "noch LEER"
