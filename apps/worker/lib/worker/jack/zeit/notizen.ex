@@ -53,6 +53,7 @@ defmodule Worker.Jack.Zeit.Notizen do
           "required" => ~w(abschnitt schluessel text)
         },
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_notiz/2
       },
       %{

@@ -90,7 +90,11 @@ defmodule Worker.Jack.Resuemee.Lauf do
 
   defp fahren(s, auftrag, modell, fenster, opts, jack) do
     {:ok, halter} =
-      Halter.start_link(s, beobachter: opts[:stand_beobachter], abbild: jack[:abbild])
+      Halter.start_link(s,
+        beobachter: opts[:stand_beobachter],
+        abbild: jack[:abbild],
+        nach_aufruf: jack[:nach_aufruf]
+      )
 
     ergebnis =
       Worker.Agent.laufen(

@@ -47,6 +47,7 @@ defmodule Worker.Jack.Zeit.Lesen do
         },
         optional: ["anzahl"],
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_mitschnitt/2
       },
       %{

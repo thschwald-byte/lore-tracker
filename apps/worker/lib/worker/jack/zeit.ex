@@ -48,7 +48,7 @@ defmodule Worker.Jack.Zeit do
   require Logger
 
   alias Worker.Jack.Resuemee.{Lauf, Melder}
-  alias Worker.Jack.Zeit.{Auftrag, Stand, Werkzeuge, Zusammenfassung}
+  alias Worker.Jack.Zeit.{Auftrag, Speicher, Stand, Werkzeuge, Zusammenfassung}
 
   @stufe_gedaechtnis "zeit_gedaechtnis"
   @stufe_zeit "zeit"
@@ -183,10 +183,17 @@ defmodule Worker.Jack.Zeit do
     )
   end
 
+  # **`nach_aufruf` sichert nach JEDEM Werkzeugaufruf** (Maintainer,
+  # 24.09.2026). Vorher wurde erst nach `laufen/2` veröffentlicht — und an
+  # einem Tag sind zwei Läufe von je rund einer Stunde verloren gegangen, weil
+  # sie das Ende nie erreichten (Wiederholungsschleife, Wiederholungssperre).
+  # Was eingetragen ist, steht damit in der Datenbank, auch wenn der Lauf
+  # danach scheitert.
   defp jack,
     do: %{
       werkzeuge: &Werkzeuge.fuer/1,
       zusammenfassung: &Zusammenfassung.fuer/1,
-      abbild: &Stand.abbild/1
+      abbild: &Stand.abbild/1,
+      nach_aufruf: &Speicher.sichern/1
     }
 end

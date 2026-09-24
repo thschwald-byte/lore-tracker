@@ -83,6 +83,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         },
         optional: ~w(vor nach anfang),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_versetze_kettenglied/2
       },
       %{
@@ -106,6 +107,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
           "required" => ["glied"]
         },
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_loesche_kettenglied/2
       },
       %{
@@ -172,6 +174,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         },
         optional: ~w(zeilen von bis vor nach anfang grund),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_haenge_an_kette/2
       },
       %{
@@ -233,6 +236,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         },
         optional: ~w(zeilen von bis vor nach anfang grund),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_unterhaenge_kettenglied/2
       },
       %{
@@ -277,6 +281,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         },
         optional: ~w(zeilen von bis vor nach anfang),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_erweitere_kettenglied/2
       },
       %{
@@ -311,6 +316,7 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
         },
         optional: ~w(zeilen von bis),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_nicht_in_die_kette/2
       }
     ]

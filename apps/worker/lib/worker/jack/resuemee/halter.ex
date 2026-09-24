@@ -48,10 +48,45 @@ defmodule Worker.Jack.Resuemee.Halter do
     abbild = opts[:abbild] || standard_abbild!(s)
 
     Agent.start_link(fn ->
-      z = %{stand: s, modul: s.__struct__, beobachter: opts[:beobachter], abbild: abbild}
+      z = %{
+        stand: s,
+        modul: s.__struct__,
+        beobachter: opts[:beobachter],
+        abbild: abbild,
+        nach_aufruf: opts[:nach_aufruf]
+      }
+
       melden(z)
       z
     end)
+  end
+
+  # **`:nach_aufruf` läuft nach JEDEM Werkzeugaufruf, im Halter.**
+  #
+  # `fn stand -> stand end` — der Zeit-Jack sichert damit seinen Stand in die
+  # Datenbank (Maintainer, 24.09.2026: „jeder werkzeugaufruf speichert in
+  # db"), statt erst am Ende des Laufs zu veröffentlichen. Zwei Läufe von je
+  # etwa einer Stunde sind an einem Tag verloren gegangen, weil sie das Ende
+  # nie erreichten.
+  #
+  # Der Halter weiss dabei NICHTS über das Speichern: Er ist geteilt
+  # (Resümee, Epos, Chronik, Zeit), und ein Jack-spezifischer Schreibpfad hier
+  # wäre dieselbe Auffangzweig-Klasse, die schon zweimal Läufe gekostet hat
+  # (#1211). Wer nichts mitgibt, bekommt das bisherige Verhalten.
+  #
+  # Läuft es synchron im Agent? Ja, mit Absicht: Zwei Speicherungen
+  # gleichzeitig könnten dieselbe Zeile in umgekehrter Reihenfolge schreiben,
+  # und die Ordnung zweier UUIDv7 innerhalb einer Millisekunde ist nicht
+  # garantiert. Der Aufrufer wartet ohnehin auf die Antwort des Werkzeugs.
+  defp nach_aufruf(%{nach_aufruf: nil} = z), do: z
+
+  defp nach_aufruf(%{nach_aufruf: fun} = z) when is_function(fun, 1) do
+    %{z | stand: fun.(z.stand)}
+  rescue
+    e ->
+      require Logger
+      Logger.error("Halter: nach_aufruf gescheitert: " <> Exception.message(e))
+      z
   end
 
   # **Der Default muss zum Stand passen, nicht zum Modul.** Solange der Guard
@@ -133,7 +168,7 @@ defmodule Worker.Jack.Resuemee.Halter do
       halter,
       fn z ->
         {s, ergebnis} = sicher(fun, z.stand, z.modul, argumente)
-        z = %{z | stand: s}
+        z = nach_aufruf(%{z | stand: s})
         melden(z)
         {ergebnis, z}
       end,

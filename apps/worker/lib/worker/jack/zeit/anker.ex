@@ -104,6 +104,7 @@ defmodule Worker.Jack.Zeit.Anker do
         },
         optional: ~w(halbtag kettenplatz_unklar),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_zeitpunkt/2
       },
       %{
@@ -162,6 +163,7 @@ defmodule Worker.Jack.Zeit.Anker do
         },
         optional: ~w(tageswechsel kettenplatz_unklar),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_spanne/2
       },
       %{
@@ -212,6 +214,7 @@ defmodule Worker.Jack.Zeit.Anker do
         },
         optional: ["kettenplatz_unklar"],
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_frist/2
       },
       %{
@@ -250,6 +253,7 @@ defmodule Worker.Jack.Zeit.Anker do
           "required" => ~w(kennung zeilen art wert welt beleg)
         },
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_dazu/2
       },
       %{
@@ -288,6 +292,7 @@ defmodule Worker.Jack.Zeit.Anker do
           "required" => ~w(kennung zeilen art wert welt beleg)
         },
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_ersetzen/2
       },
       %{
@@ -322,6 +327,7 @@ defmodule Worker.Jack.Zeit.Anker do
           "required" => ~w(zeilen befund beleg)
         },
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_konflikt/2
       },
       %{
@@ -364,6 +370,7 @@ defmodule Worker.Jack.Zeit.Anker do
         },
         optional: ~w(zeilen von bis),
         wiederholung: :zaehlt,
+        aendert_bestand: true,
         ausfuehren: &w_zweifel/2
       }
     ]
