@@ -1903,6 +1903,214 @@ Modell.
 
 **Einstellung:** `chronik_jack_model`, leer = Jacks Modell.
 
+### Die Zeit hängt an den Äußerungen: der Zeit-Jack und die Kette (Issue #1247)
+
+Bis hierher trug der **Fakt** die Zeit, in Feldern, die die Extraktion
+nebenbei ausfüllte. Das hat nicht getragen, und zwar belegt: 543 von 544
+Chronik-Einträgen einer echten Kampagne lagen auf demselben Tag (#1092), der
+deterministische Zeit-Vorlauf war gemessen wirkungslos und ist wieder
+entfernt (#1213), und zwei der drei Ankerformen kamen in echten Daten **null
+Mal** vor (#1109). Ein Fakt ist auch der falsche Träger: Er entsteht bei
+jeder Extraktion neu, seine ID hängt am Wortlaut, und eine Zeitangabe an ihm
+ist nach dem nächsten Regenerate weg.
+
+**Seit #1247 hängt die Zeit an den Utterances** — der stabilsten Schicht des
+Systems; sie werden nie neu erstellt.
+
+#### Zwei Achsen
+
+Maintainer, 20.09.2026: „es gibt 2 achsen — 1: die kette: in zeitlicher
+reihenfolge, 2: die sprechlinie: was wann gesprochen wurde. 2 bleibt
+unverändert, 1 wird komplett neu aufgebaut."
+
+Vorher gab es nur eine: `Worker.Timeline.Linie` nahm die Sprechreihenfolge
+und **mutierte** sie mit Verschiebungen. Was gesprochen wurde und wann es
+geschah war dasselbe Ding — für eine Uhrzeit im Spiel fällt beides zusammen,
+für einen Rückblick nicht. Am echten Lauf aufgeschlagen: Der Weltbau-Block am
+Sitzungsanfang erzählt die Jahre 2000 bis 2011, die Sitzung spielt 2080; die
+eine Achse las das als Folge und rechnete rückwärts.
+
+#### Die Kette: ein Zeitstrahl, auf dem Bäume stehen
+
+    Zeitstrahl:  [ Glied ]──[ Glied ]────────────[ Glied ]
+                                │
+                      ┌─────────┴─────────┐
+                   [ Glied ]          [ Glied ]
+
+Ein **Glied** ist ein zusammenhängender Kontext — eine Szene, ein Auftrag,
+ein Abend. Es trägt die Äußerungen, die unmittelbar dazugehören, **und** kann
+feinere Kontexte als Unterglieder enthalten. Ein Glied hängt **entweder am
+Zeitstrahl oder an einem Glied**, nie an beidem; die Glieder an einem Glied
+sind wieder eine Kette, mit denselben Wörtern (`vor`, `nach`, `anfang`).
+Daraus folgt die Regel beim Versetzen: Ein Glied bewegt sich unter seinen
+Geschwistern, nicht aus seinem Kontext heraus.
+
+**Jedes Glied hat eine eigene Kennung, auf jeder Tiefe**, vergeben beim
+Anlegen und **stabil über jede Änderung**: Wächst eine Szene um eine Zeile,
+bleibt sie dieselbe Szene. Eine content-adressierte Kennung (Muster
+`Linie.anker_id/3`) wäre hier falsch — sie änderte sich mit dem Schnitt, und
+jeder Bezug zeigte danach ins Leere. **Der Preis ist benannt:** Eine
+zufällige ID konvergiert nicht; zwei Worker, die dasselbe Glied bilden,
+vergeben verschiedene. Hinnehmbar, weil ein Glied in EINEM Lauf entsteht und
+dieser Lauf sein Autor ist — die Anker daneben bleiben content-adressiert und
+konvergieren weiterhin.
+
+**Die Kette beginnt LEER** (Maintainer: „jack soll bewusst einsortieren").
+Es gibt keine stillschweigende Übernahme der Sprechreihenfolge; jede Äußerung
+braucht eine Entscheidung. Mit einem Default hiesse „nicht angefasst"
+zweierlei zugleich: „die Reihenfolge stimmt hier" und „ich bin noch nicht
+hingekommen".
+
+**Zwei Zeiten sind zwei Glieder.** Sobald in einem Abschnitt zwei
+verschiedene Zeitpunkte der Spielwelt vorkommen, sind es zwei Glieder — auch
+wenn derselbe Sprecher ohne Pause durchredet. Der Anlass war ein Lauf, in dem
+ein Glied „Welteinleitung" über 127 Zeilen die Vitas-Plage (frühe 2000er),
+die ersten Metamenschen (2010) **und** Ryumyo am Mount Fuji (24.12.2011)
+trug: elf Jahre in einem Glied, das genau eine Zeit tragen kann. Der
+Sprechabschnitt bleibt einer; die Kette ist nicht die Sprechlinie.
+
+**Was hineingehört, entscheidet sich zweistufig** (Maintainer, 20.09.2026:
+„tisch gehört nicht in die kette — die kette ist die timeline der
+spielwelt"): Tisch fliegt immer heraus, auch wenn eine Uhrzeit darin vorkommt
+(„es ist schon zehn, ich muss um vier aufstehen"); was in der **Spielwelt**
+liegt, gehört hinein und an seinen zeitlichen Platz — auch Weltgeschichte,
+die nie jemand gespielt hat.
+
+Die Rechnung liegt pur in `Worker.Timeline.Kette` (`anhaengen/3`,
+`unterhaengen/4`, `erweitern/4`, `versetzen/3`, `loeschen/2`, `draussen/3`).
+Alle halten den Zeitstrahl **durchgehend**, und jede eingereihte Äußerung
+steht **genau einmal** im ganzen Baum — das prüft `kette_test.exs` nach jeder
+Operation als MENGE, nicht als Länge.
+
+#### Die drei Läufe
+
+    :gedaechtnis   den Ablauf verstehen, nichts setzen
+    :einsortieren  durch den Mitschnitt gehen und einordnen
+    :pruefen       die entstandene Linie lesen und geraderücken
+
+Anders als die Extraktion **sieht dieser Jack sein Ergebnis**: `lies_kette()`
+zeigt nicht die Eingaben, sondern die gerechnete Linie. Ein einzelner Anker
+kann für sich richtig sein und die Reihe trotzdem falsch — das ist nur am
+Ergebnis zu sehen.
+
+**Der Prüf-Lauf erbt, was der Einsortier-Lauf getan hat** — Anker, Notizen,
+Leseabdeckung, Einordnung, Kette und Konflikte, aus **einer** Liste
+(`Zeit.erbe/1`), aus der beide Seiten lesen. Vorher stand sie an zwei
+Stellen, und genau das ging schief: `kette` wurde übergeben und nie
+ausgepackt. Der Prüf-Lauf startete vor einer leeren Kette, baute keine — sein
+Auftrag sagt ihm, er solle von den Befunden ausgehen — und sein Stand gewinnt
+am Ende. Die ganze Einsortier-Arbeit war weg, sichtbar nur an einem
+Widerspruch in den Zahlen: 2168 Zeilen eingeordnet, null in der Kette.
+
+#### Gespeichert wird nach JEDEM Werkzeugaufruf
+
+Maintainer, 24.09.2026: „jeder werkzeugaufruf speichert in db" — und, auf den
+Einwand „der Stand ist mehr als die Kette", geht der ganze Stand mit.
+
+Der Anlass sind zwei Totalverluste an einem Tag: ein Lauf über 56 Minuten
+(Wiederholungsschleife) und einer über 62 Minuten (2168 Zeilen gelesen, 1992
+eingeordnet, 25 Glieder gebaut, dann Wiederholungssperre). Beide endeten mit
+**null** Zeilen in der Datenbank, weil erst nach `Zeit.laufen/2`
+veröffentlicht wurde — und dorthin kam keiner von beiden.
+
+`Halter.start_link/2` nimmt dafür `:nach_aufruf` (`fn stand -> stand end`),
+`aufrufen/3` ruft es nach jedem Werkzeug. **Der Halter weiss nichts vom
+Speichern** — er ist geteilt (Resümee, Epos, Chronik, Zeit), und ein
+Jack-spezifischer Schreibpfad dort wäre die Auffangzweig-Klasse aus #1211.
+`Worker.Jack.Zeit.Speicher` schreibt drei Dinge und vergleicht jedes gegen
+den Bestand, damit nur die Differenz als Ereignis rausgeht; ein Fehler dabei
+wird laut geloggt und beendet den Lauf nicht.
+
+#### Datenmodell
+
+| Tabelle | Inhalt |
+|---|---|
+| `worker_zeit_kette` | **eine Row je Glied** (`ZeitKettengliedSet`). Schlüssel ist die Glied-Kennung; der Platz steht als Bezug auf die Kennung des linken Nachbarn (`vorher`) und des Elterngliedes (`eltern`). Gelöste Äußerungen liegen in derselben Tabelle mit `art: "draussen"` und der Utterance-ID als Schlüssel — die Schlüsselräume sind disjunkt. |
+| `worker_zeit_anker` | eine Row je Anker (`ZeitAnkerSet`), content-adressiert über die sortierten Utterance-IDs. Eine menschlich abgesegnete Zeile überschreibt kein Lauf. |
+| `worker_jack_zeit_staende` | der übrige Stand je Sitzung (`JackZeitStandAbgelegt`): Leseabdeckung, Einordnung, Notizen, Konflikte. |
+
+Alle drei: LWW über `event_id`, **nie ein `:mnesia.delete`** — ein entferntes
+Glied bekommt einen Grabstein (`entfernt: true`). Cascade bei `SessionDeleted`
+und `CampaignDeleted`. `Worker.Timeline.Kette.zu_zeilen/1` und
+`aus_zeilen/1` sind die Umkehrung voneinander; ein gerissener Bezug hängt das
+Glied hinten an und **wird gemeldet**, statt es zu verlieren.
+
+**Der Platz als Nachbar-Kennung war eine Entscheidung gegen zwei
+Alternativen** (Maintainer, 20.09.2026): ein Bezug auf eine Äußerung des
+Nachbarn (stabiler, aber die Reihenfolge müsste zur Lesezeit aufgelöst
+werden) und ein Rang als Zahl (trivial zu sortieren, aber jedes Einfügen
+schreibt die Nachbarn um).
+
+#### Im Lauf
+
+Eingehängt in `run_wahrheitsbild` als `zeit_gedaechtnis` und `zeit` (Gruppe
+`zeit`, **best-effort**, keine Spalte) — nach Jacks Verifikation, vor dem
+Resümee. Der Prüf-Lauf hat bewusst **keine** eigene Stufe: Er ist derselbe
+Gegenstand wie das Einsortieren, und zwei Balken für eine Arbeit wären
+irreführend. Ein Fehlschlag reisst Resümee, Chronik und Epos nicht mit; ein
+`rescue` in `Pipeline.zeit_jack/4` fängt auch eine Ausnahme ab.
+
+**Modell:** `zeit_jack_model`, leer = Jacks Modell. Eigene lokale Laufsicht
+neben der von Jack: `LORE_ZEIT_SICHT_PORT`, sonst die Jack-Sicht **+ 10**
+(Default also 8109 gegen 8099). `mix lore.pr_test` vergibt Stage-Port + 20 je
+Worker — Stage 4005 bekommt 4025, ihr zweiter Worker 4045. Wie bei der
+Jack-Sicht gilt: **im Worker-Log nachsehen, auf welchem Port sie wirklich
+läuft**, statt einen anzunehmen; ein belegter Port ist eine Warnung, kein
+Startfehler, und der Denkstrom eines Laufs existiert nur dort.
+
+#### Gemessen am echten Lauf (seattleV5 S1, 2168 Äußerungen)
+
+Der erste durchgelaufene Lauf (24.09.2026, 37 Minuten): **27 Glieder**, 1164
+Zeilen eingereiht, 1004 draussen — alles entschieden, ein einziger Befund.
+Die Weltgeschichte ist nach Zeitpunkten zerlegt (bis 2000 / 2010+2011 / nach
+2011 / Gegenwart 2080 / Matrix-Crash 2060er), das Gelöste trägt brauchbare
+Gründe (Charaktererstellung 389 Zeilen, Foundry-Technik 119, Regelklärung 75).
+
+**Und trotzdem undatiert: alle zehn gesetzten Anker hatten `minute: nil`.**
+Drei Ursachen, alle an genau diesen Werten gemessen:
+
+* **Erläuterung im Wert** (fünfmal): „2070 (Konzernkriege, Fuji zerbricht)".
+  Ohne den Klammerzusatz lesbar.
+* **Zwei Ausdrücke mit Schrägstrich** (zweimal): „Ende 2011 / am 24. Dezember
+  2011". Jeder für sich lesbar.
+* **Dauer als Zeitpunkt** (dreimal): „60 Jahre her". Das lehnt der Parser zu
+  Recht ab.
+
+Dazu ein Parser-Mangel: „um 2010" war nicht lesbar, obwohl „2010" und „im
+Jahr 2010" es sind — das Füllwort stand in keiner Liste. Es fällt jetzt, mit
+derselben Schranke wie „kurz vor 2080": nur vor einer drei- bis fünfstelligen
+Zahl, damit „um sieben" eine Uhrzeit bleibt.
+
+**Die Antwort fragt jetzt, statt zu raten** (Maintainer, 24.09.2026: „man
+muss den context auswerten — ‚um 7' kann beides sein"). Den Kontext hat genau
+einer: Jack. Also probiert die Antwort beide Lesarten durch denselben Parser
+und nennt nur, was aufgeht — „um 7" bekommt „sag es eindeutig, ‚7 Uhr' oder
+‚im Jahr 7'", „um 70" nur „im Jahr 70" (70 ist keine Stunde). Das ist
+ausdrücklich **keine** Bedeutungserkennung (#1109/#1213: zweimal gescheitert,
+zweimal abgeschaltet), sondern eine Umformung mit anschliessender Prüfung.
+
+#### Ehrliche Grenzen
+
+* **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
+  bisherigen Hinweis („er ordnet, datiert aber nicht") hat das Modell zehnmal
+  bekommen und zehnmal übergangen; ob ein konkreter Vorschlag es ändert,
+  zeigt erst der nächste Lauf.
+* **Die Bäume sind ungenutzt.** In drei echten Läufen kam
+  `unterhaenge_kettenglied` **null Mal** vor, ebenso `versetze_kettenglied`.
+  Ob die Sitzungen flach sind oder die Werkzeuge nicht ankommen, ist offen.
+* **`verschiebungen: 0`** — die Weltgeschichte steht in Erzählreihenfolge, die
+  hier zufällig chronologisch ist. Ein Rückblick mitten in der Sitzung würde
+  heute am falschen Platz landen.
+* **Ein abgebrochener Lauf schliesst seine Ollama-Verbindung nicht.** Ollama
+  hält daraufhin den `llama-server` samt VRAM, obwohl `ollama ps` leer ist;
+  am 24.09. waren das 12,5 GB über Stunden. `ss -tnp | grep 11434` zeigt den
+  Halter, ein Worker-Neustart löst es.
+* **Z3 fehlt:** Die Chronik liest die Linie noch nicht — `Chronik.Eingabe`
+  reicht weiterhin die Fakt-Felder durch, nicht `Linie.anker_fuer/2`.
+* **Z5 fehlt:** Die Zeitfelder stehen weiterhin in Jacks Extraktionsschema
+  (`Worker.Jack.Felder`).
+
+
 **Zeitstrahl / Datums-Auflösung (#724) — HISTORIE, mit #1211 ersetzt.** Der folgende Absatz beschreibt den deterministischen Pfad, den der Chronik-Jack abgelöst hat (s. Abschnitt darüber). Er bleibt stehen, weil Kalender, Session-Anker und die Tageszähler-Rechnung weiterleben — nur der Weg von den Fakten zur Chronik ist ein anderer. Der Timeline-Publish war verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (primärer Sort-Schlüssel) + `precision` + seit #1092 `source_pos` (Zweitschlüssel innerhalb eines Tages, s.u.). UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Seit #911/#958 filtert der Timeline-Publish VOR `Graph.resolve` Vorstufen weg** (zwei damals, seit #1068 E3 drei — der Typ-Filter `Graph.datierbar?/2` kam dazu), die die Chronik sonst zum Fakten-Dump machten (Free-Seattle-Befund: 544 von 548 verifizierten Fakten wurden Chronik-Einträge): `Graph.time_signal?/1` (pure) verlangt ein EIGENES Zeit-Signal des Fakts (Anker/Offset/`in_game_date`-Bridge #676/#729) statt des reinen Präsens-Fallbacks (`narration_time == "present"` ohne jedes Signal sitzt sonst automatisch am Session-Anker-Tag), und `Repo.filter_arc_kind/2` lässt nur `kind == "arc"`-Fakten durch (gleiche Zuordnung wie Resümee/Epos seit #909, `fact_render_assignments/2`) — die Chronik ist ein Bogen-Zeitstrahl, kein Protokoll-Abzug.
 
 **#1069 (E7) ist mit #1213 wieder entfernt — gemessen wirkungslos.** Bis dahin leitete ein deterministischer Zeit-Vorlauf (`Worker.Timeline.Vorlauf`) nach der Glättung aus den geglätteten Blöcken einen Session-Zeitrahmen ab (Tageszeit, Tagesgrenzen, Jahres-Kandidaten), legte ihn als `SessionZeitrahmenSet` ab, und `Graph.time_signal?/2` liess bei belegtem Rahmen **jeden** Fakt der Session durch den ersten Vorfilter.
