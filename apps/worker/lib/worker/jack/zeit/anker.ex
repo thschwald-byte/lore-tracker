@@ -75,7 +75,12 @@ defmodule Worker.Jack.Zeit.Anker do
             "wert" => %{
               "type" => "string",
               "description" =>
-                "Der Ausdruck, WIE er gesagt wurde: „drei viertel elf“, „am 15. November“, „kurz nach zwölf“. Wortformen bleiben Wortformen — nicht in Ziffern umschreiben, nicht umrechnen."
+                "NUR der Zeitausdruck, WIE er gesagt wurde: „drei viertel elf“, „am 15. November“, " <>
+                  "„kurz nach zwölf“, „2070“. Wortformen bleiben Wortformen — nicht in Ziffern " <>
+                  "umschreiben, nicht umrechnen. KEINE Erläuterung dazu: nicht „2070 (Konzernkriege)“, " <>
+                  "nicht zwei Ausdrücke mit Schrägstrich („Ende 2011 / am 24. Dezember 2011“ — nimm " <>
+                  "den genaueren). Was der Zeitpunkt bedeutet, steht im beleg; hier steht nur, woran " <>
+                  "ich rechne. Ein Zusatz macht den Wert unlesbar, und dann datiert der Anker nichts."
             },
             "welt" => %{
               "type" => "string",
@@ -549,14 +554,19 @@ defmodule Worker.Jack.Zeit.Anker do
           "Steht es im Gespräch, nenn es in halbtag. "
 
       true ->
-        "Als Zeit lesbar ist er nicht#{als(a, s)} — er ordnet, datiert aber nicht. "
+        "Als Zeit lesbar ist er nicht#{als(a, s)} — er ordnet, datiert aber nicht. " <>
+          vorschlag(a, s)
     end
   end
 
   defp gelesen_hinweis(%{art: :spanne} = a, s) do
     case a[:minuten] do
-      m when is_integer(m) -> "Das sind #{m} Minuten. "
-      _ -> "Als Dauer lesbar ist er nicht#{als(a, s)} — er ordnet, misst aber nicht. "
+      m when is_integer(m) ->
+        "Das sind #{m} Minuten. "
+
+      _ ->
+        "Als Dauer lesbar ist er nicht#{als(a, s)} — er ordnet, misst aber nicht. " <>
+          vorschlag(a, s)
     end
   end
 
@@ -571,6 +581,49 @@ defmodule Worker.Jack.Zeit.Anker do
   end
 
   defp gelesen_hinweis(_a, _s), do: ""
+
+  # **Wenn ein Zusatz das Lesen verhindert, sagt die Antwort, wie es geht.**
+  #
+  # Am Lauf vom 24.09.2026 gefunden: Jack setzte zehn Anker, keiner ergab
+  # eine Minute — er schreibt Erläuterungen in den Wert („2070
+  # (Konzernkriege, Fuji zerbricht)", „um 2010 (erste Metamenschen)") oder
+  # zwei Ausdrücke mit Schrägstrich („Ende 2011 / am 24. Dezember 2011").
+  # Fünf der zehn wären ohne den Klammerzusatz lesbar gewesen, zwei ohne
+  # den Schrägstrich.
+  #
+  # Den bisherigen Satz („er ordnet, datiert aber nicht") hat er zehnmal
+  # bekommen und zehnmal übergangen — er benennt das Problem, aber nicht die
+  # Handlung. Der Vorschlag nennt den Wert, der funktioniert hätte;
+  # **geändert wird nichts von selbst**: Ein stilles Zurechtschneiden machte
+  # aus Jacks Angabe eine andere, ohne dass er es erfährt.
+  defp vorschlag(a, s) do
+    case lesbare_kurzform(to_string(a[:wert] || ""), a.art, s) do
+      nil -> ""
+      kurz -> "So ginge es: nimm nur den Ausdruck selbst, also „#{kurz}“. "
+    end
+  end
+
+  @kuerzungen [
+    # „2070 (Konzernkriege…)" → „2070"
+    {~r/\s*\([^)]*\)\s*$/u, ""},
+    # „Ende 2011 / am 24. Dezember 2011" → „Ende 2011"
+    {~r/\s*\/.*$/u, ""}
+  ]
+
+  defp lesbare_kurzform(wert, art, s) do
+    Enum.find_value(@kuerzungen, fn {muster, ersatz} ->
+      kurz = wert |> String.replace(muster, ersatz) |> String.trim()
+
+      if kurz != "" and kurz != wert and lesbar?(kurz, art, s), do: kurz
+    end)
+  end
+
+  defp lesbar?(wert, art, s) do
+    a = Ausdruck.aufloesen(%{art: art, wert: wert, utterance_ids: []}, s.kalender)
+
+    is_integer(a[:minute]) or is_integer(a[:tagesminute]) or is_integer(a[:halbtag_minute]) or
+      (art == :spanne and is_integer(a[:minuten]))
+  end
 
   defp uhr(m) do
     "#{String.pad_leading(to_string(div(m, 60)), 2, "0")}:" <>

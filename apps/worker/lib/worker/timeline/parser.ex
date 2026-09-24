@@ -287,6 +287,16 @@ defmodule Worker.Timeline.Parser do
       ~r/^(?:kurz|knapp|gut|grob|gegen)\s+(?=(?:ab|seit|nach|vor|bis)\s+-?\d{3,5}\b)/u,
       ""
     )
+    # **„um 2010" ist ein Jahr, „um sieben" eine Uhrzeit** — dieselbe
+    # Unterscheidung wie eine Zeile höher, deshalb dieselbe Schranke: `um`
+    # fällt nur vor einer drei- bis fünfstelligen Zahl.
+    #
+    # Gefunden am Lauf vom 24.09.2026: Jack setzte „um 2010 (erste
+    # Metamenschen)" als Zeitpunkt. „2010" allein liest der Parser, „um
+    # 2010" nicht — das Wort stand in keiner der Listen darüber, obwohl
+    # „im 2010" und „am 2010" gehen. Von zehn Ankern dieses Laufs ergab
+    # keiner eine Minute; dieser war einer davon.
+    |> String.replace(~r/^um\s+(?=-?\d{3,5}\b)/u, "")
     |> String.trim()
   end
 
