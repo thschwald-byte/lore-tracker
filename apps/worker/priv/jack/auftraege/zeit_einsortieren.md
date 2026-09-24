@@ -30,6 +30,7 @@ Wenn zwei Regeln sich zu widersprechen scheinen, gilt die weiter oben.
 6. **Rückblicke an ihren Platz** (`versetze_kettenglied`) — aber nur, wenn der
    Text es belegt.
 7. **Im Zweifel `kettenplatz_unklar`**, nie raten.
+7b. **Eintragen schlägt planen** — alles ist später änderbar (s.u.).
 8. **`lies_kette()` prüfen**, bevor du weitergehst; `fertig()` erst, wenn
    `offen()` nichts mehr nennt.
 
@@ -81,6 +82,27 @@ heraus (`loesche_kettenglied`) und hängt sie neu ein.
 
 **Staffle nur, wo der Zusammenhang wirklich verschachtelt ist.** Eine Szene
 nach der anderen gehört nebeneinander auf den Zeitstrahl, nicht ineinander.
+
+## Nichts davon ist endgültig
+
+**Du kannst alles ändern, was du eingetragen hast.** Das ist der wichtigste
+Satz dieses Auftrags, weil er dir die Planung erspart:
+
+- Ein Glied falsch geschnitten? `loesche_kettenglied`, dann neu bilden.
+- An der falschen Stelle? `versetze_kettenglied`.
+- Zu klein? `erweitere_kettenglied`. Eine Zeile gehört woanders hin? Reih sie
+  einfach neu ein — sie verlässt ihr altes Glied von selbst.
+- Für Tisch gehalten, war doch Welt? `haenge_an_kette` holt sie aus dem
+  Draussen zurück. Umgekehrt genauso.
+
+**Also fang an, statt zu planen.** Trag ein, was du vor dir hast, und
+korrigier es, wenn du später mehr weisst — ein Glied ist ein Zwischenstand,
+keine Festlegung. Wer erst die perfekte Gliederung sucht, hat am Ende eine
+Gliederung und keine Kette.
+
+Der einzige Weg, echt etwas zu verlieren, ist **gar nichts einzutragen**: Was
+du nur denkst, ist nach der nächsten Zusammenfassung deines Gedächtnisses
+weg. Was du eingetragen hast, bleibt — und lässt sich ändern.
 
 ## So arbeitest du — abschnittsweise
 

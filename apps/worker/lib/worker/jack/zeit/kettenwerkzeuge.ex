@@ -132,7 +132,13 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
             "der Abschnitt woanders hin (ein Rückblick), nenn vor/nach mit einer " <>
             "Zeile aus dem Zielglied, oder anfang für vor die ganze Kette. " <>
             "Was NICHT hineingehört, kommt mit nicht_in_die_kette() heraus — " <>
-            "Tischgespräch bekommt sonst eine Spielzeit, die es nicht hat.",
+            "Tischgespräch bekommt sonst eine Spielzeit, die es nicht hat. " <>
+            "NICHTS DAVON IST ENDGÜLTIG: Ein Glied lässt sich versetzen, " <>
+            "erweitern, herausnehmen und neu schneiden, und eine Zeile, die du " <>
+            "neu einreihst, verlässt ihr altes Glied von selbst. Trag also ein, " <>
+            "was du vor dir hast, statt erst die perfekte Gliederung zu suchen — " <>
+            "was du nur denkst, ist nach der nächsten Zusammenfassung deines " <>
+            "Gedächtnisses weg.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -283,7 +289,9 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
             "und werden nie datiert. " <>
             "Das ist eine vollwertige Entscheidung, kein Notausgang: Jede Zeile " <>
             "braucht eine — entweder in ein Glied oder hier heraus. Was niemand " <>
-            "entschieden hat, zählt als offen, und fertig() fragt danach.",
+            "entschieden hat, zählt als offen, und fertig() fragt danach. " <>
+            "Auch das ist umkehrbar: haenge_an_kette() holt eine Zeile aus dem " <>
+            "Draussen zurück, wenn sie doch zur Spielwelt gehört.",
         parameter: %{
           "type" => "object",
           "properties" => %{
