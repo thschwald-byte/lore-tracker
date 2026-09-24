@@ -25,6 +25,7 @@ defmodule Worker.Jack.Zeit.AnkerwertTest do
   """
   use ExUnit.Case, async: true
 
+  alias Worker.Jack.Zeit.{Anker, Stand}
   alias Worker.Timeline.{Ausdruck, Calendar}
 
   defp minute(wert, art \\ :zeitpunkt) do
@@ -85,6 +86,51 @@ defmodule Worker.Jack.Zeit.AnkerwertTest do
         ohne = w |> String.replace(~r/\s*\([^)]*\)\s*$/u, "") |> String.trim()
         refute is_integer(minute(ohne)), "#{ohne} ist eine Dauer, kein Zeitpunkt"
       end
+    end
+  end
+
+  describe "mehrdeutige Zahlen: die Antwort fragt, statt zu raten" do
+    # Maintainer, 24.09.2026: „man muss den context auswerten — um 7 kann
+    # beides sein." Den Kontext hat Jack, nicht der Parser. Also werden beide
+    # Lesarten ausprobiert und nur die genannt, die aufgehen.
+    # **Der Anker wird erst aufgelöst, dann beurteilt** — so wie im echten
+    # Pfad (`Anker.setzen` ruft `Ausdruck.aufloesen/2`, bevor die Antwort
+    # entsteht). Der erste Anlauf übergab den rohen Anker und bekam für das
+    # lesbare „2070“ ein „als Zeit lesbar ist er nicht“ — der Test hätte
+    # eine Aussage über einen Pfad gemacht, den es nicht gibt.
+    defp hinweis(wert) do
+      cal = Calendar.default()
+      s = Stand.neu(:einsortieren, [], kalender: cal)
+      a = Ausdruck.aufloesen(%{art: :zeitpunkt, wert: wert, utterance_ids: []}, cal)
+      Anker.gelesen_hinweis_fuer_test(a, s)
+    end
+
+    test "beide Lesarten möglich: beide werden genannt" do
+      for w <- ["um 7", "um 19"] do
+        t = hinweis(w)
+        assert t =~ "kann beides sein"
+        assert t =~ "Uhr"
+        assert t =~ "im Jahr"
+      end
+    end
+
+    test "nur eine Lesart möglich: nur die wird genannt" do
+      # 70 ist keine Stunde, „sieben" kein lesbares Jahr.
+      assert hinweis("um 70") =~ "im Jahr 70"
+      refute hinweis("um 70") =~ "kann beides sein"
+
+      assert hinweis("um sieben") =~ "sieben Uhr"
+      refute hinweis("um sieben") =~ "kann beides sein"
+    end
+
+    test "eine Dauer bekommt keinen Vorschlag" do
+      t = hinweis("60 Jahre her")
+      refute t =~ "kann beides sein"
+      refute t =~ "So ginge es"
+    end
+
+    test "ein lesbarer Ausdruck bekommt gar keinen Hinweis" do
+      assert hinweis("2070") == ""
     end
   end
 

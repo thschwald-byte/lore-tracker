@@ -543,6 +543,10 @@ defmodule Worker.Jack.Zeit.Anker do
   # Strich steht. Die Prüfung liest das Ergebnis der Auflösung, nicht ein
   # zweites Mal den Parser: Was hier steht, ist genau das, womit gerechnet
   # wird.
+  @doc false
+  # Nur für Tests: die Formprüfung des Hinweises ohne einen ganzen Lauf.
+  def gelesen_hinweis_fuer_test(anker, stand), do: gelesen_hinweis(anker, stand)
+
   defp gelesen_hinweis(%{art: :zeitpunkt} = a, s) do
     cond do
       is_integer(a[:minute]) ->
@@ -597,9 +601,62 @@ defmodule Worker.Jack.Zeit.Anker do
   # **geändert wird nichts von selbst**: Ein stilles Zurechtschneiden machte
   # aus Jacks Angabe eine andere, ohne dass er es erfährt.
   defp vorschlag(a, s) do
-    case lesbare_kurzform(to_string(a[:wert] || ""), a.art, s) do
-      nil -> ""
-      kurz -> "So ginge es: nimm nur den Ausdruck selbst, also „#{kurz}“. "
+    wert = to_string(a[:wert] || "")
+
+    case lesbare_kurzform(wert, a.art, s) do
+      kurz when is_binary(kurz) -> "So ginge es: nimm nur den Ausdruck selbst, also „#{kurz}“. "
+      nil -> lesarten_hinweis(wert, a.art, s)
+    end
+  end
+
+  # **„um 7" kann beides sein** (Maintainer, 24.09.2026: „man muss den
+  # context auswerten — ‚um 7‘ kann beides sein"). Eine Zahl ohne Einheit ist
+  # als Uhrzeit und als Jahreszahl lesbar, und **welche gemeint ist, steht
+  # nur im Gespräch** — der Parser sieht den Ausdruck, nicht den Satz. Er
+  # rät deshalb nicht, sondern liefert gar nichts; bis hierher erfuhr Jack
+  # davon nur „als Zeit lesbar ist er nicht".
+  #
+  # Den Kontext hat genau einer: Jack. Also fragt die Antwort ihn — und sie
+  # fragt konkret, indem sie **beide Lesarten ausprobiert** und nur die
+  # nennt, die tatsächlich aufgehen. Das ist keine Bedeutungserkennung
+  # (#1109/#1213: zweimal abgeschaltet, zweimal zu Recht), sondern eine
+  # Umformung mit anschliessender Prüfung: „7 Uhr" und „im Jahr 7" gehen
+  # beide, „70 Uhr" geht nicht, „im Jahr sieben" auch nicht.
+  defp lesarten_hinweis(wert, :zeitpunkt = art, s) do
+    case kern(wert) do
+      nil ->
+        ""
+
+      k ->
+        uhr = if lesbar?("#{k} Uhr", art, s), do: "#{k} Uhr"
+        jahr = if lesbar?("im Jahr #{k}", art, s), do: "im Jahr #{k}"
+
+        cond do
+          uhr && jahr ->
+            "„#{wert}“ kann beides sein — eine Uhrzeit oder eine Jahreszahl. Du hast den " <>
+              "Satz gelesen, ich nicht: Sag es eindeutig, „#{uhr}“ oder „#{jahr}“. "
+
+          uhr ->
+            "So ginge es: „#{uhr}“. "
+
+          jahr ->
+            "So ginge es: „#{jahr}“. "
+
+          true ->
+            ""
+        end
+    end
+  end
+
+  defp lesarten_hinweis(_wert, _art, _s), do: ""
+
+  # Der Kern eines Ausdrucks ist seine letzte Zahl oder sein letztes Wort —
+  # „um 7" → „7", „gegen sieben" → „sieben". Mehr braucht es nicht: Was
+  # daraus wird, entscheidet die Prüfung, nicht diese Zerlegung.
+  defp kern(wert) do
+    case Regex.run(~r/([\p{L}\d]+)\s*$/u, String.trim(wert)) do
+      [_, k] -> k
+      _ -> nil
     end
   end
 
