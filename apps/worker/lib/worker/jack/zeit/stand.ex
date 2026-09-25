@@ -70,6 +70,7 @@ defmodule Worker.Jack.Zeit.Stand do
             gelesen: MapSet.new(),
             kette: nil,
             einordnung: %{},
+            kette_geladen?: false,
             gesehen: MapSet.new(),
             anker: %{},
             offene: %{},
@@ -96,7 +97,31 @@ defmodule Worker.Jack.Zeit.Stand do
       # stillschweigende Übernahme der Sprechreihenfolge. Der Prüf-Lauf erbt
       # sie vom Einsortier-Lauf, wie Leseabdeckung und Anker.
       kette: opts[:kette] || Worker.Timeline.Kette.neu(),
-      einordnung: opts[:einordnung] || %{},
+      # **Die Einordnung wird aus der geladenen Kette abgeleitet** (#1247,
+      # 25.09.2026). Maintainer: „ich will den ersten Lauf nicht noch mal
+      # machen müssen, bevor wir den Lauf mit Kette testen."
+      #
+      # Ohne das war die Persistenz halb: Die Glieder überlebten, die
+      # Einordnung nicht. Ein zweiter Lauf startete mit vollständiger Kette
+      # und leerer `einordnung` — und `ohne_einordnung/1` prüft genau die,
+      # also verlangte `fertig()` eine Entscheidung für jede der 2168 Zeilen,
+      # die längst in einem Glied liegen. Eine Stunde Arbeit, um zu einem
+      # Zustand zurückzukehren, der schon da war.
+      #
+      # **Abgeleitet, nicht erfunden:** Eine Zeile in einem Glied ist
+      # `:ingame`, eine in `draussen` ist `:tisch`. Beides steht in der Kette
+      # — es wird nur gelesen. Ein ausdrücklich übergebenes `einordnung:`
+      # gewinnt (der Prüf-Lauf erbt sie samt Zweifeln, und `:zweifel` ist aus
+      # der Kette allein nicht ableitbar: eine unklare Zeile liegt drin wie
+      # eine sichere).
+      einordnung: opts[:einordnung] || aus_kette(opts[:kette]),
+      # **Ob eine Kette geladen wurde, ist eine andere Frage als, ob sie leer
+      # ist** (#1247). Der Speicher braucht die Unterscheidung: Ein Lauf ohne
+      # geladene Kette darf NICHTS begraben (er weiss nichts vom Bestand), ein
+      # Lauf mit geladener darf begraben, was Jack löscht. Am Zustand der
+      # Kette allein sind die beiden Fälle nicht zu trennen — beide haben am
+      # Ende keine eigenen Glieder.
+      kette_geladen?: not is_nil(opts[:kette]),
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{},
       # Ein Konflikt ist ein Befund für die Kuration. Erbte der Prüf-Lauf ihn
@@ -164,6 +189,18 @@ defmodule Worker.Jack.Zeit.Stand do
     offen = MapSet.new(Kette.offen(s.kette, Enum.map(s.mitschnitt, & &1.utterance_id)))
     zeilen = Enum.filter(s.mitschnitt, &MapSet.member?(offen, &1.utterance_id))
     %{anzahl: length(zeilen), zeilen: zeilen}
+  end
+
+  # Eine Zeile, die in einem Glied liegt, ist eingeordnet; eine gelöste ist
+  # Tischgespräch. `nil` (kein `kette:`) ergibt eine leere Map — dann ist
+  # nichts eingeordnet, und das ist für eine frische Kampagne richtig.
+  defp aus_kette(nil), do: %{}
+
+  defp aus_kette(kette) do
+    drin = for u <- Kette.reihenfolge(kette), into: %{}, do: {u, :ingame}
+    # `draussen` ist laut `Kette.t()` immer eine Map — ein `|| %{}` daneben
+    # wäre toter Code, und der Dialyzer sagt das auch (er hat es hier gefangen).
+    Enum.into(Map.keys(kette.draussen), drin, &{&1, :tisch})
   end
 
   @doc """

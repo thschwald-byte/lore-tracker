@@ -52,8 +52,18 @@ defmodule Worker.Jack.Zeit.SpeicherTest do
     ]
 
   defp halter do
+    # **`kette:` gehört dazu, auch wenn sie leer ist** (#1247, 25.09.2026).
+    # `Eingabe.aus_repo/1` liefert im Produktionspfad immer eine — bei einer
+    # frischen Kampagne eine leere. Fehlt sie, gilt der Lauf als „kennt den
+    # Bestand nicht", und der Speicher begräbt nichts (Riegel gegen den
+    # Totalverlust). Dieser Test hat das gefunden: Er löscht ein Glied und
+    # erwartete den Grabstein.
     stand =
-      Stand.neu(:einsortieren, mitschnitt(), session_id: @sid, campaign_id: @cid)
+      Stand.neu(:einsortieren, mitschnitt(),
+        session_id: @sid,
+        campaign_id: @cid,
+        kette: Kette.neu()
+      )
 
     {:ok, h} =
       Halter.start_link(stand, abbild: &Stand.abbild/1, nach_aufruf: &Speicher.sichern/1)

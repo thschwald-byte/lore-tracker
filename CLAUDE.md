@@ -2179,6 +2179,36 @@ alten Glieder. Ein bestehender Wächter (`auftragsvorlagen_test.exs`) hing an
 dem Satz „Die Kette beginnt leer" und hat den Widerspruch gefangen; er prüft
 jetzt die neue Aussage.
 
+**Die Einordnung kommt aus der geladenen Kette** (Maintainer, 25.09.2026: „ich
+will den ersten Lauf nicht noch mal machen müssen, bevor wir den Lauf mit
+Kette testen"). Ohne das war die Persistenz **halb**: Die Glieder überlebten,
+die Einordnung nicht. Ein zweiter Lauf startete mit vollständiger Kette und
+leerer `einordnung` — und weil `Stand.ohne_einordnung/1` genau die prüft,
+verlangte `fertig()` eine Entscheidung für jede der 2168 Zeilen, die längst in
+einem Glied liegen. Eine Stunde Modellzeit, um zu einem Zustand zurückzukehren,
+der schon da war.
+
+Abgeleitet, nicht erfunden: Eine Zeile in einem Glied ist `:ingame`, eine in
+`draussen` ist `:tisch` — beides steht in der Kette und wird nur gelesen. Ein
+ausdrücklich übergebenes `einordnung:` gewinnt, weil der Prüf-Lauf sie samt
+Zweifeln erbt und **`:zweifel` aus der Kette allein nicht ableitbar** ist: Eine
+unklare Zeile liegt darin wie eine sichere.
+
+**Ein Lauf ohne geladene Kette begräbt nichts.** Der Speicher kann zwei
+Zustände nicht am Zustand unterscheiden — „Jack hat das Glied gelöscht" und
+„dieser Lauf hat die Kette nie geladen"; in beiden Fällen fehlen eigene
+Glieder. Der Produktionspfad lädt sie (`Eingabe.aus_repo/1` liefert immer eine,
+bei frischer Kampagne eine leere), aber `Zeit.laufen/2` ist öffentlich und
+nimmt eine Eingabe-Map: Ein Test, ein Messlauf oder ein RPC von Hand mit
+`session_id` und `campaign_id`, aber ohne `kette:`, hätte am 25.09.2026 die 13
+Glieder der Teststage beerdigt — beim **ersten** Werkzeugaufruf, lautlos.
+
+Unterschieden wird deshalb an der **Herkunft** (`Stand.kette_geladen?`), nicht
+am Zustand. Der erste Anlauf prüfte den Zustand und traf damit auch den
+legitimen Fall „Jack löscht sein letztes Glied" — ein bestehender Test hat das
+gefangen. Der Riegel loggt laut; ein stiller Riegel erzeugte dieselbe Klasse
+wie die Lücke, die er schliesst.
+
 **Ehrliche Grenze:** Ob Jack den Bestand tatsächlich nutzt — seine Sitzung
 relativ zu den alten Gliedern einordnet, statt sie zu ignorieren und hinten
 anzuhängen — ist **nicht gemessen**. In den bisherigen Läufen gab es keinen

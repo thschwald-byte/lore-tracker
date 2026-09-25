@@ -151,6 +151,51 @@ defmodule Worker.Jack.Zeit.ErgaenzenTest do
     end
   end
 
+  describe "der Riegel: ein Lauf ohne geladene Kette begräbt nichts" do
+    test "leere Kette OHNE Herkunft lässt den Bestand stehen" do
+      # Der Fall, der zum Totalverlust führte: `Zeit.laufen/2` ist öffentlich
+      # und nimmt eine Eingabe-Map. Ein Test, ein Messlauf oder ein RPC von
+      # Hand mit den beiden IDs, aber ohne `kette:`, hätte am 25.09.2026 die
+      # 13 Glieder der Teststage beerdigt — beim ERSTEN Werkzeugaufruf.
+      erster_lauf()
+      naechster_lauf()
+
+      assert {0, 0} =
+               Kettenspeicher.veroeffentlichen(
+                 sitzung(@s1),
+                 kampagne(),
+                 Kette.neu(),
+                 nil,
+                 false
+               )
+
+      assert Kette.anzahl(Worker.Repo.Zeit.kette(@cid)) == 2, "nichts darf begraben sein"
+    end
+
+    test "leere Kette MIT Herkunft begräbt — Jack hat dann wirklich gelöscht" do
+      # Die Gegenrichtung gehört dazu: Der Riegel darf den legitimen Fall nicht
+      # mitnehmen. Unterschieden wird an der Herkunft (`Stand.kette_geladen?`),
+      # nicht am Zustand — beide Fälle enden ohne eigene Glieder.
+      erster_lauf()
+      naechster_lauf()
+
+      assert {0, 2} =
+               Kettenspeicher.veroeffentlichen(sitzung(@s1), kampagne(), Kette.neu(), nil, true)
+
+      assert Kette.anzahl(Worker.Repo.Zeit.kette(@cid)) == 0
+    end
+
+    test "und der Stand trägt die Herkunft" do
+      alias Worker.Jack.Zeit.Stand
+
+      mit = Stand.neu(:einsortieren, [], kette: Kette.neu())
+      ohne = Stand.neu(:einsortieren, [])
+
+      assert mit.kette_geladen? == true, "eine leere, aber geladene Kette zählt als geladen"
+      assert ohne.kette_geladen? == false
+    end
+  end
+
   describe "die Verdrahtung" do
     test "die Eingabe lädt die Kette der KAMPAGNE, nicht der Sitzung" do
       # Kampagnenweit, weil Geschehen an der Sitzungsgrenze nicht aufhört —

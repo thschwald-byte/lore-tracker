@@ -79,7 +79,13 @@ defmodule Worker.Jack.Zeit.Speicher do
     sitzung = %{id: sid}
     kampagne = %{id: cid}
 
-    zaehlen(fn -> Kettenspeicher.veroeffentlichen(sitzung, kampagne, s.kette) end, "kette")
+    zaehlen(
+      fn ->
+        Kettenspeicher.veroeffentlichen(sitzung, kampagne, s.kette, nil, s.kette_geladen?)
+      end,
+      "kette"
+    )
+
     zaehlen(fn -> anker_sichern(s, sitzung, kampagne) end, "anker")
     zaehlen(fn -> stand_sichern(s, sitzung, kampagne) end, "stand")
 

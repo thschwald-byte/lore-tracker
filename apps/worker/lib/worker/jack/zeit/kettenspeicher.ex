@@ -36,7 +36,7 @@ defmodule Worker.Jack.Zeit.Kettenspeicher do
   """
   @spec veroeffentlichen(map(), map(), map(), [map()] | nil) ::
           {non_neg_integer(), non_neg_integer()}
-  def veroeffentlichen(session, campaign, kette, bestand \\ nil) do
+  def veroeffentlichen(session, campaign, kette, bestand \\ nil, darf_begraben? \\ true) do
     # **Kampagnenweit vergleichen** (#1247, 25.09.2026). Seit die Eingabe die
     # Kette der ganzen Kampagne lädt, enthält `kette` auch Glieder anderer
     # Sitzungen. Verglichen der Speicher nur gegen die eigene Sitzung, wären
@@ -54,18 +54,61 @@ defmodule Worker.Jack.Zeit.Kettenspeicher do
       |> Enum.map(&publizieren(&1, sitzung_fuer(&1, sitzung_von, session), campaign))
       |> length()
 
-    # **Grabsteine nur für die eigene Sitzung.** Ein Glied einer anderen
-    # Sitzung, das in dieser Kette fehlt, ist kein gelöschtes Glied — es ist
-    # eines, das dieser Lauf nicht geladen hat oder nicht kennt. Es zu
-    # begraben, hiesse fremde Arbeit wegzuwerfen; das war vor diesem Cut der
-    # Normalfall bei jedem Regenerate.
+    # **Der letzte Grabstein: einer, den ein Lauf ohne Kette schreibt.**
+    #
+    # Der Speicher kann zwei Zustände nicht unterscheiden — „Jack hat dieses
+    # Glied gelöscht" und „dieser Lauf hat die Kette nie geladen". Im zweiten
+    # Fall fehlen ALLE eigenen Glieder, und der erste Werkzeugaufruf begräbt
+    # sie; kein Fehler, keine Warnung, nur weniger Daten.
+    #
+    # Der Produktionspfad lädt sie (`Eingabe.aus_repo/1`), aber `Zeit.laufen/2`
+    # ist öffentlich und nimmt eine Eingabe-Map: Ein Test, ein Messlauf oder
+    # ein RPC von Hand mit `session_id` und `campaign_id`, aber ohne `kette:`,
+    # löscht die echte Kette der Sitzung. Am 25.09.2026 wäre das in der
+    # Teststage beinahe passiert.
+    #
+    # **Unterschieden wird an der HERKUNFT, nicht am Zustand** — `darf_begraben?`
+    # kommt aus `Stand.kette_geladen?`. Der erste Anlauf prüfte stattdessen, ob
+    # die neue Kette eigene Glieder hat, und traf damit auch den legitimen Fall
+    # „Jack löscht sein letztes Glied" (ein bestehender Test hat das gefangen).
+    # Beide Fälle enden ohne eigene Glieder; nur die Herkunft trennt sie.
+    #
+    # **Die Abwägung ist einseitig** (#1054): Ein Glied, das stehen bleibt,
+    # obwohl es weg sollte, ist sichtbar und in einem Aufruf korrigierbar. Eine
+    # Kette, die weg ist, ist unsichtbar und endgültig. Also fail-closed — und
+    # laut, weil ein stiller Riegel dieselbe Klasse erzeugt wie die Lücke, die
+    # er schliesst.
+    #
+    # Der Preis ist benannt: Eine Sitzung, in der Jack wirklich sein letztes
+    # Glied löscht (alles war Tischgespräch), behält dieses eine Glied, bis es
+    # jemand von Hand entfernt. Das ist der Fall, für den die Warnung da ist.
+    eigene_im_bestand = Enum.count(alt, fn {id, _} -> Map.get(sitzung_von, id) == session.id end)
+
     grabsteine =
-      alt
-      |> Map.keys()
-      |> Enum.filter(&(Map.get(sitzung_von, &1) == session.id))
-      |> Kernel.--(Enum.map(neu, & &1["glied_id"]))
-      |> Enum.map(&publizieren(grabstein(&1), session, campaign))
-      |> length()
+      cond do
+        eigene_im_bestand == 0 ->
+          0
+
+        not darf_begraben? ->
+          require Logger
+
+          Logger.error(
+            "Zeit-Kette: Lauf ohne geladene Kette — #{eigene_im_bestand} Glied(er) der " <>
+              "Sitzung #{session.id} stehen im Bestand, dieser Lauf kennt sie nicht. Es " <>
+              "wird NICHTS begraben. Ursache: Die Eingabe wurde ohne `kette:` gebaut " <>
+              "(`Worker.Jack.Zeit.Eingabe.aus_repo/1` lädt sie)."
+          )
+
+          0
+
+        true ->
+          alt
+          |> Map.keys()
+          |> Enum.filter(&(Map.get(sitzung_von, &1) == session.id))
+          |> Kernel.--(Enum.map(neu, & &1["glied_id"]))
+          |> Enum.map(&publizieren(grabstein(&1), session, campaign))
+          |> length()
+      end
 
     {geschrieben, grabsteine}
   end
