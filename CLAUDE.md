@@ -2370,6 +2370,43 @@ gerufen, nichts gefunden, neu gelesen — kein Raten, keine
 Wiederholungsschleife. Die Sperre hat nicht gegriffen, weil er tatsächlich
 etwas Neues tat.
 
+#### Die Laufzeit sagt, wann es knapp wird — und das Modell gibt frei
+
+Maintainer, 25.09.2026: „können wir Jack nicht sagen, wann er schreiben soll —
+wir wissen doch, wie voll der Context ist? … so dass er sammeln kann bis es
+knapp wird und dann sagen wir ‚jetzt aber mal schreiben' — und ihm evtl ein
+Werkzeug geben ‚ich habe geschrieben, jetzt kompaktieren'."
+
+Die Auftragsregel oben („notiere unterwegs") hilft nur bedingt: Sie gilt immer,
+kostet also auch dann, wenn viel Platz ist, und sie wird ausgerechnet dann
+übersehen, wenn es eng wird. Die Laufzeit **weiss** dagegen, wie voll es ist.
+Drei Teile, in `Worker.Agent.Lauf` für **alle** Jacks:
+
+1. Ab **75 %** des Fensters (`@mahnschwelle`) hängt die Laufzeit eine
+   Aufforderung an die letzte Werkzeug-Antwort der Runde: sichere jetzt, was du
+   im Kopf hast; was eingetragen ist, überlebt.
+2. Das Modell sichert.
+3. Mit **`jetzt_kompaktieren()`** sagt es, dass es fertig ist — und **dann**
+   fasst die Laufzeit zusammen, an einer Stelle, die das Modell gewählt hat.
+   Der Verlust ist damit kalkuliert statt zufällig.
+
+Drei Entscheidungen daran:
+
+- **Die Mahnung reist am Werkzeug-Ergebnis**, nicht als eigener `:user`-Zug —
+  ein solcher Zug sähe aus, als spräche der Tisch.
+- **Einmal, nicht in jeder Runde.** Eine Warnung, die bei jedem Aufruf steht,
+  lernt das Modell zu überlesen. Nach einer Freigabe darf sie wieder greifen
+  (`gemahnt?` fällt zurück).
+- **Die harte Grenze bleibt** (`Kontext.voll?/3`). Ein Modell, das nie
+  freigibt, blockiert nichts — es wird trotzdem kompaktiert, nur ungünstiger.
+  Ohne das hinge der Lauf an einer Höflichkeit.
+
+**Ein Fund beim Testen:** Der Verlauf ist nicht das Protokoll. Die
+Kompaktierung schneidet ältere Nachrichten weg — also genau die Mahnung, die
+man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
+Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
+`mahnung`), nicht über `bericht.nachrichten`.
+
 #### Ehrliche Grenzen
 
 * **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
@@ -2382,6 +2419,11 @@ etwas Neues tat.
 * **`verschiebungen: 0`** — die Weltgeschichte steht in Erzählreihenfolge, die
   hier zufällig chronologisch ist. Ein Rückblick mitten in der Sitzung würde
   heute am falschen Platz landen.
+* **Ob die Mahnung ankommt, ist nicht gemessen.** Die 75 % sind gegriffen (ein
+  Viertel Fenster als Sicherungsreserve), und dass ein Modell auf die
+  Aufforderung tatsächlich sichert und `jetzt_kompaktieren()` ruft statt sie
+  zu überlesen, zeigt erst ein echter Lauf. Gebaut ist der Weg, nicht die
+  Wirkung.
 * **Ein abgebrochener Lauf hielt seine Ollama-Verbindung offen** — am 24.09.
   hing daran ein `llama-server` mit 12,5 GB über Stunden, obwohl `ollama ps`
   leer war, und eine andere Session wartete auf die Karte. Der Ollama-Client

@@ -691,7 +691,7 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
 
       # `hilfe` steht in JEDEM Lauf vorne und wird nicht in `namen/1` geführt —
       # es braucht keine Definition, es liest die der anderen (18.09.2026).
-      assert Enum.map(ws, & &1.name) == ["hilfe" | Werkzeuge.namen(stand())]
+      assert Enum.map(ws, & &1.name) == ["hilfe", "jetzt_kompaktieren" | Werkzeuge.namen(stand())]
       assert by["fakten"].parameter["required"] == ["bis", "von"]
       assert by["vorige_gedanken"].parameter["required"] == ["sitzung"]
       assert by["fertig"].parameter["required"] == ["fakten", "gliederung", "offen_geblieben"]

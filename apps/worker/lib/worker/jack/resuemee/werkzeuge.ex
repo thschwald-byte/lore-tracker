@@ -96,7 +96,53 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
     defs = Map.new(definitionen, &{&1.name, &1})
     gewaehlt = for name <- namen, do: Map.fetch!(defs, name)
 
-    [hilfe(gewaehlt) | for(d <- gewaehlt, do: werkzeug(d, halter))]
+    [hilfe(gewaehlt), freigabe() | for(d <- gewaehlt, do: werkzeug(d, halter))]
+  end
+
+  @doc """
+  Das Werkzeug `jetzt_kompaktieren` — die **Freigabe** für die Zusammenfassung
+  des Gesprächs.
+
+  **Warum es jeder Lauf bekommt** (Maintainer, 25.09.2026: „so dass er sammeln
+  kann bis es knapp wird und dann sagen wir — ‚jetzt aber mal schreiben' — und
+  ihm evtl ein Werkzeug geben ‚ich habe geschrieben, jetzt kompaktieren'"):
+
+  Die Laufzeit fasst den Verlauf zusammen, wenn er zu lang wird
+  (`Worker.Agent.Lauf`). Bis hierher passierte das **mitten in der Arbeit** —
+  auf seattleV5 S2 las der Zeit-Jack 3385 Zeilen, sicherte nichts, und die
+  Zusammenfassung nahm das Gelesene mit; er begann von vorn, 90 Leseaufrufe für
+  eine Notiz.
+
+  Jetzt mahnt die Laufzeit ab 75 % („sichere, was du im Kopf hast") und wartet.
+  Mit diesem Werkzeug sagt das Modell, dass es gesichert hat — und erst dann
+  wird zusammengefasst, an einer Stelle, die es selbst gewählt hat. Der Verlust
+  ist damit kalkuliert statt zufällig.
+
+  **`:frei`, und es ändert nichts am Bestand** — es ist eine Aussage über das
+  Gespräch, nicht über die Arbeit. Ruft es niemand, greift weiter die harte
+  Grenze; der Lauf hängt nicht an einer Höflichkeit.
+  """
+  @spec freigabe() :: Werkzeug.t()
+  def freigabe do
+    Werkzeug.neu(
+      name: Worker.Agent.Lauf.kompakt_werkzeug(),
+      beschreibung:
+        "Gibt die Zusammenfassung des Gesprächs frei. Ruf das, wenn ich dich " <>
+          "gemahnt habe und du gesichert hast, was du im Kopf hattest — Notizen, " <>
+          "Einordnungen, Anker. Ich fasse dann zusammen, was weiter zurückliegt: " <>
+          "Der Wortlaut des Gelesenen geht verloren, alles Eingetragene bleibt. " <>
+          "Danach hast du wieder Platz. Ohne diesen Aufruf fasse ich irgendwann " <>
+          "von selbst zusammen — dann aber an einer Stelle, die du nicht gewählt " <>
+          "hast.",
+      parameter: %{"type" => "object", "properties" => %{}, "required" => []},
+      wiederholung: :frei,
+      ausfuehren: fn _argumente ->
+        {:ok,
+         "Gut. Ich fasse das Gespräch bis hierher zusammen; was du eingetragen " <>
+           "hast, bleibt unberührt. Mach weiter, wo du warst — zahlen() und " <>
+           "notizen_lesen() zeigen dir deinen Stand, wenn du ihn brauchst."}
+      end
+    )
   end
 
   @doc """

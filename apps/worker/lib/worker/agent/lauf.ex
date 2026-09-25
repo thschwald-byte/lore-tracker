@@ -143,6 +143,7 @@ defmodule Worker.Agent.Lauf do
                 runde: 0,
                 ohne_aufruf: 0,
                 kompaktierungen: 0,
+                gemahnt?: false,
                 abbruch: nil,
                 # Wie oft ein Werkzeug an sich selbst gescheitert ist, je Name
                 # (`Worker.Agent.Aufruf`): ein innerer Fehler ist kein
@@ -275,7 +276,8 @@ defmodule Worker.Agent.Lauf do
   defp nach_antwort(s, %{aufrufe: aufrufe}) do
     s = %{s | ohne_aufruf: 0}
     {ergebnisse, s} = Enum.map_reduce(aufrufe, s, &ausfuehren_beobachtet/2)
-    s = ergebnisse_anhaengen(s, ergebnisse)
+    {s, ergebnisse} = vielleicht_mahnen(s, ergebnisse)
+    s = s |> ergebnisse_anhaengen(ergebnisse) |> nach_freigabe(aufrufe)
 
     cond do
       s.abbruch -> {s, {:abbruch, s.abbruch}}
@@ -437,6 +439,96 @@ defmodule Worker.Agent.Lauf do
     do: %{eingabe: summe.eingabe + e, ausgabe: summe.ausgabe + a}
 
   # ─── Kompaktierung ────────────────────────────────────────────────────
+
+  # ─── Sammeln, dann sichern, dann kompaktieren (#1247) ──────────────
+
+  # **Maintainer, 25.09.2026:** „so dass er sammeln kann bis es knapp wird und
+  # dann sagen wir — ‚jetzt aber mal schreiben' — und ihm evtl ein Werkzeug
+  # geben ‚ich habe geschrieben, jetzt kompaktieren'."
+  #
+  # Der Anlass: Auf seattleV5 S2 (3385 Zeilen) las der Zeit-Jack den ganzen
+  # Mitschnitt, ohne zu sichern; dann kompaktierte die Laufzeit **mitten in
+  # seiner Arbeit**, das Gelesene war fort, und er begann von vorn. 90
+  # Leseaufrufe, eine Notiz, zwei Kompaktierungen — und kein Fortschritt.
+  #
+  # Eine Regel im Auftrag („notiere unterwegs") hilft dagegen nur bedingt: Sie
+  # gilt immer, kostet also auch dann, wenn viel Platz ist, und sie wird
+  # ausgerechnet dann übersehen, wenn es eng wird. Die Laufzeit **weiss**
+  # dagegen, wie voll es ist. Also sagt sie es.
+  #
+  # Drei Teile, und der dritte ist der wichtige:
+  #
+  #   1. Ab `@mahnschwelle` hängt die Laufzeit eine Aufforderung an die letzte
+  #      Werkzeug-Antwort — einmal, nicht bei jeder Runde (sonst Rauschen, und
+  #      das Modell lernt, sie zu überlesen).
+  #   2. Das Modell sichert, was es im Kopf hat.
+  #   3. Mit `jetzt_kompaktieren()` sagt es, dass es fertig ist — und DANN
+  #      fasst die Laufzeit zusammen, an einer Stelle, die das Modell gewählt
+  #      hat. Der Verlust ist damit kalkuliert statt zufällig.
+  #
+  # **Die harte Grenze bleibt** (`Kontext.voll?/3`): Ein Modell, das nie meldet,
+  # blockiert nichts — es wird trotzdem kompaktiert, nur ungünstiger. Ohne das
+  # hinge der Lauf an einer Höflichkeit.
+  @mahnschwelle 0.75
+
+  @mahnung "Mein Gedächtnis für unser Gespräch füllt sich (%PROZENT%%). Sichere " <>
+             "jetzt, was du im Kopf hast, aber noch nicht eingetragen: Notizen, " <>
+             "Einordnungen, Anker. Was eingetragen ist, überlebt; was nur hier im " <>
+             "Gespräch steht, fasse ich bald zusammen und der Wortlaut ist dann " <>
+             "weg. Wenn du gesichert hast, ruf jetzt_kompaktieren() — dann fasse " <>
+             "ich an einer Stelle zusammen, die du gewählt hast."
+
+  @doc """
+  Der Name des Werkzeugs, mit dem ein Modell die Kompaktierung freigibt. Die
+  Werkzeug-Liste jedes Jack enthält es (`Worker.Jack.Resuemee.Werkzeuge`); die
+  Laufzeit erkennt es am Namen, damit kein neuer Rückgabetyp nötig ist.
+  """
+  @spec kompakt_werkzeug() :: String.t()
+  def kompakt_werkzeug, do: "jetzt_kompaktieren"
+
+  @doc false
+  def mahnschwelle, do: @mahnschwelle
+
+  # Die Mahnung reist am letzten Ergebnis der Runde mit — dort, wo das Modell
+  # ohnehin hinsieht. Ein eigener `:user`-Zug dazwischen wäre eine Nachricht,
+  # die aussieht wie der Tisch, der spricht.
+  defp vielleicht_mahnen(%{kontext: nil} = s, ergebnisse), do: {s, ergebnisse}
+  defp vielleicht_mahnen(%{gemahnt?: true} = s, ergebnisse), do: {s, ergebnisse}
+  defp vielleicht_mahnen(s, []), do: {s, []}
+
+  defp vielleicht_mahnen(%{kontext: k} = s, ergebnisse) do
+    tokens = Kontext.tokens(fest(s), s.verlauf, s.basis)
+    anteil = tokens / k.fenster
+
+    if anteil >= @mahnschwelle do
+      prozent = round(anteil * 100)
+      mahnung = String.replace(@mahnung, "%PROZENT%", to_string(prozent))
+
+      {vorne, [{aufruf, {art, text}}]} = Enum.split(ergebnisse, -1)
+
+      Protokoll.schreiben(s.protokoll, "mahnung", %{
+        "runde" => s.runde,
+        "tokens" => tokens,
+        "prozent" => prozent
+      })
+
+      {%{s | gemahnt?: true}, vorne ++ [{aufruf, {art, text <> "\n\n" <> mahnung}}]}
+    else
+      {s, ergebnisse}
+    end
+  end
+
+  # Nach einer Freigabe wird kompaktiert, unabhängig von der Schwelle — das ist
+  # der Sinn: Das Modell hat gerade gesichert, jetzt ist der günstige Moment.
+  # Und die Mahnung darf danach wieder greifen.
+  defp nach_freigabe(s, aufrufe) do
+    if Enum.any?(aufrufe, &(&1.name == kompakt_werkzeug())) do
+      tokens = Kontext.tokens(fest(s), s.verlauf, s.basis)
+      %{kompaktieren(s, tokens) | gemahnt?: false}
+    else
+      s
+    end
+  end
 
   defp vielleicht_kompaktieren(%{kontext: nil} = s), do: s
 

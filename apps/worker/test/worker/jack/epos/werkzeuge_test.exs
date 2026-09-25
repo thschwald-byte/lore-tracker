@@ -170,7 +170,7 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
       {:ok, h} = Halter.start_link(s)
       w = Map.new(Werkzeuge.fuer(h), &{&1.name, &1})
       # `hilfe` kommt aus `Resuemee.Werkzeuge.aus/3` und gilt für jeden Jack.
-      assert Enum.sort(Map.keys(w)) == Enum.sort(["hilfe" | Werkzeuge.namen(s)])
+      assert Enum.sort(Map.keys(w)) == Enum.sort(["hilfe", "jetzt_kompaktieren" | Werkzeuge.namen(s)])
 
       assert w["notiz"].parameter["required"] == ["eintraege"]
       items = w["notiz"].parameter["properties"]["eintraege"]["items"]

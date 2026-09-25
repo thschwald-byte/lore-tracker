@@ -114,6 +114,9 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   defp beispiel("haenge_an_kette"), do: %{"von" => 1, "bis" => 2}
   defp beispiel("unterhaenge_kettenglied"), do: %{"glied" => 1, "zeilen" => [3]}
 
+  # `jetzt_kompaktieren` ist die Freigabe für die Zusammenfassung (#1247) und
+  # steht in JEDEM Lauf jedes Jack — wie `hilfe`.
+  defp beispiel("jetzt_kompaktieren"), do: %{}
   defp beispiel("sitzungen"), do: %{}
   defp beispiel("lies_frueher"), do: %{"sitzung" => 9, "ab" => 1}
   defp beispiel("vorige_gedanken"), do: %{}
