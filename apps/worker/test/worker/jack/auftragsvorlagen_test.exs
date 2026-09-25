@@ -452,13 +452,17 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   end
 
+  # **Ohne Rücksicht auf Gross-/Kleinschreibung** (#850): Ein kleingeschriebenes
+  # Vorkommen in einem Beispiel-Schlüssel (`tod-<name>`) war unsichtbar, obwohl
+  # es derselbe echte Name ist — gefunden, als der Scan über das Verzeichnis
+  # (#1247) die Chronik-Vorlagen erstmals ansah.
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
     for datei <- File.ls!(@dir),
         String.ends_with?(datei, ".md"),
         datei != "LIES_MICH.md",
-        text = File.read!(Path.join(@dir, datei)),
+        text = File.read!(Path.join(@dir, datei)) |> String.downcase(),
         wort <- @verboten do
-      refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"
+      refute String.contains?(text, String.downcase(wort)), "#{datei} enthält „#{wort}“"
     end
   end
 
