@@ -1963,11 +1963,15 @@ vergeben verschiedene. Hinnehmbar, weil ein Glied in EINEM Lauf entsteht und
 dieser Lauf sein Autor ist — die Anker daneben bleiben content-adressiert und
 konvergieren weiterhin.
 
-**Die Kette beginnt LEER** (Maintainer: „jack soll bewusst einsortieren").
-Es gibt keine stillschweigende Übernahme der Sprechreihenfolge; jede Äußerung
-braucht eine Entscheidung. Mit einem Default hiesse „nicht angefasst"
-zweierlei zugleich: „die Reihenfolge stimmt hier" und „ich bin noch nicht
-hingekommen".
+**Die Äußerungen beginnen ohne Einordnung** (Maintainer: „jack soll bewusst
+einsortieren"). Es gibt keine stillschweigende Übernahme der
+Sprechreihenfolge; jede Äußerung braucht eine Entscheidung. Mit einem Default
+hiesse „nicht angefasst" zweierlei zugleich: „die Reihenfolge stimmt hier" und
+„ich bin noch nicht hingekommen".
+
+**Die Kette selbst beginnt nicht leer** — sie gehört der Kampagne und ist
+älter als der Lauf (s. „Die Kette ist persistent" unten). `Kette.neu/0` ist
+der Anfang einer Kampagne, nicht der eines Laufs.
 
 **Zwei Zeiten sind zwei Glieder.** Sobald in einem Abschnitt zwei
 verschiedene Zeitpunkte der Spielwelt vorkommen, sind es zwei Glieder — auch
@@ -2126,6 +2130,59 @@ eine Zeit, oder hält es fest, dass keine gesetzt wird?* —, nicht nach Zeilen:
 `kettenplatz_unklar` und `zweifel`. Der billige Schnitt (Definitionen gegen
 Ausführung) hätte zwei Hälften derselben Sache getrennt. Dass die drei zusammen
 knapp reichen, war Glück; dass sie zusammengehören, ist es nicht (#1097).
+
+#### Die Kette ist persistent — ein Lauf ergänzt sie
+
+Maintainer, 25.09.2026: „die kette ist ja persistent — jeder weitere lauf soll
+diese kette ergänzen — nicht jede session schreibt eine neue kette." Als Frage
+gestellt, und die Antwort war: **stimmte nicht**, an zwei Stellen.
+
+**Jeder Lauf begann leer.** `Worker.Jack.Zeit.Eingabe.aus_repo/1` lud die
+Kette nicht, `Stand.neu/3` fiel auf `Kette.neu/0` zurück — und weil
+`Kettenspeicher.veroeffentlichen/4` gegen den Bestand vergleicht, bekam alles
+Bestehende einen **Grabstein**. Ein Regenerate löschte damit die Kette der
+Sitzung, statt sie zu ergänzen; seit „speichern nach jedem Werkzeugaufruf"
+(derselbe Tag) passierte das schon beim **ersten** Aufruf, bevor der Lauf
+irgendetwas eingeordnet hatte.
+
+**Und über Sitzungsgrenzen gab es gar keine Ordnung.** Der Lauf sah die
+Glieder anderer Sitzungen nicht und konnte nicht sagen, wo seine liegt; die
+kampagnenweite Kette war eine Aneinanderreihung ohne verbindende Bezüge.
+
+Seitdem lädt die Eingabe `Worker.Repo.Zeit.kette(campaign.id)` — **die ganze
+Kampagne**, nicht die Sitzung, aus demselben Grund, aus dem die Chronik als
+einziger Jack alles sieht: Geschehen hört an der Sitzungsgrenze nicht auf. Der
+Stand erbt sie über `Zeit.erbe/1` (dieselbe eine Liste, aus der auch der
+Prüf-Lauf liest).
+
+**Drei Regeln im Speicher, und jede schliesst einen Verlustfall:**
+
+- **Verglichen wird kampagnenweit.** Sonst gelten die Glieder anderer
+  Sitzungen als neu, und der Lauf schreibt sie mit seiner `session_id` zurück.
+- **Grabsteine nur für die eigene Sitzung.** Ein fremdes Glied, das in dieser
+  Kette fehlt, ist kein gelöschtes — es ist eines, das dieser Lauf nicht
+  kennt. Es zu begraben hiesse, fremde Arbeit wegzuwerfen.
+- **Ein bestehendes Glied behält seine Sitzung** (`sitzung_fuer/3`, die Row
+  trägt sie seit diesem Cut lesbar mit). Ohne das wanderte ein Glied bei jeder
+  Änderung durch einen fremden Lauf mit, und `kette(cid, sid)` zählte es
+  plötzlich anders.
+
+Der Vergleich lässt `session_id` und `glied_id` aussen vor: Beide stehen in
+Row-Spalten, nicht im Blob — ohne das sähe jede bestehende Zeile geändert aus,
+und der Lauf schriebe die ganze Kette bei jedem Werkzeugaufruf neu.
+
+**Der Auftrag sagt es jetzt auch.** „Die Kette ist älter als dieser Lauf": Du
+ergänzt, du baust nicht neu; fremde Glieder darfst du erweitern und versetzen
+(mit Grund), löschen ist die Ausnahme; und wo deine Sitzung liegt, entscheidest
+du — meistens hinten, aber ein Rückblick am Sitzungsanfang gehört zwischen die
+alten Glieder. Ein bestehender Wächter (`auftragsvorlagen_test.exs`) hing an
+dem Satz „Die Kette beginnt leer" und hat den Widerspruch gefangen; er prüft
+jetzt die neue Aussage.
+
+**Ehrliche Grenze:** Ob Jack den Bestand tatsächlich nutzt — seine Sitzung
+relativ zu den alten Gliedern einordnet, statt sie zu ignorieren und hinten
+anzuhängen — ist **nicht gemessen**. In den bisherigen Läufen gab es keinen
+Bestand, den er hätte sehen können.
 
 #### Die Chronik sieht die Kette — als Angebot mit Prüfpflicht (Z3)
 

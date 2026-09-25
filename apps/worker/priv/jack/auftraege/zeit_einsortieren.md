@@ -8,9 +8,10 @@ du durch den **Mitschnitt** und bringst die Äußerungen in eine zeitliche Reihe
 **Die Sprechlinie** ist, was wann gesagt wurde. Sie steht fest, niemand fasst
 sie an; `lies_sprechlinie(ab: n)` zeigt sie dir.
 
-**Die Kette** ist, was wann *geschah*. Sie ist am Anfang **leer**, und sie zu
-bauen ist deine Arbeit in diesem Lauf. `lies_kette()` zeigt dir, was daraus
-bisher geworden ist.
+**Die Kette** ist, was wann *geschah*. Sie gehört der **Kampagne** und ist
+älter als dein Lauf: `lies_kette()` zeigt dir, was schon darin steht — aus
+früheren Sitzungen oder aus einem früheren Lauf über diese. Deine Arbeit ist,
+sie zu **ergänzen**; nur bei einer ganz neuen Kampagne ist sie leer.
 
 Für die meisten Äußerungen fällt beides zusammen: Es geschieht in der
 Reihenfolge, in der gesprochen wird. Für einen Rückblick nicht — er wird
@@ -277,9 +278,32 @@ wird:
 - **`kettenplatz_unklar`** — du kannst es nicht entscheiden. Die Zeile kommt
   in die Kette und ist vermerkt; ich leite keine Zeit aus ihr ab.
 
-**Warum das nicht optional ist:** Die Kette beginnt leer. Was niemand
-entschieden hat, ist offen — nicht „steht schon richtig". `fertig()` zählt
-genau diese Zeilen, und `offen()` sagt dir vorher, wo sie liegen.
+**Warum das nicht optional ist:** Deine Zeilen beginnen ohne Einordnung. Was
+niemand entschieden hat, ist offen — nicht „steht schon richtig". `fertig()`
+zählt genau diese Zeilen, und `offen()` sagt dir vorher, wo sie liegen.
+
+## Die Kette ist älter als dieser Lauf
+
+`lies_kette()` zeigt dir vielleicht schon **Glieder, die du nicht angelegt
+hast** — aus früheren Sitzungen derselben Kampagne oder aus einem früheren
+Lauf über diese. Die Kette ist persistent; sie gehört der Kampagne, nicht
+deinem Lauf.
+
+Das heißt für dich:
+
+- **Du ergänzt, du baust nicht neu.** Fremde Glieder bleiben, wo sie sind.
+  Deine neuen Zeilen hängen sich zwischen sie oder dahinter — `vor`, `nach`
+  und `anfang` beziehen sich auf die ganze Kette, nicht nur auf deinen Teil.
+- **Du kannst fremde Glieder anfassen**, wenn es nötig ist: erweitern, wenn
+  eine Szene früher anfing als bisher gedacht, versetzen, wenn sie zeitlich
+  falsch liegt. Tu es mit Grund; ein Glied aus einer anderen Sitzung hat
+  jemand bewusst dort eingehängt.
+- **Löschen ist die Ausnahme.** Ein Glied zu entfernen, das nicht aus deiner
+  Sitzung stammt, heißt, die Arbeit eines anderen Laufs wegzuwerfen. Wenn es
+  falsch liegt, versetze es.
+- **Wo deine Sitzung liegt, entscheidest du.** Meistens hinten — sie ist die
+  neueste. Aber alles, was am Anfang als Rückblick erzählt wird (s.u.), gehört
+  zwischen die alten Glieder, nicht dahinter.
 
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 

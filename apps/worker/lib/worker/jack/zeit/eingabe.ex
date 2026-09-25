@@ -43,6 +43,21 @@ defmodule Worker.Jack.Zeit.Eingabe do
          kampagne: Map.get(campaign, :name) || campaign.id,
          mitschnitt: mitschnitt,
          anker: Worker.Repo.Zeit.anker(campaign.id),
+         # **Die bestehende Kette der KAMPAGNE, nicht der Sitzung** (#1247,
+         # 25.09.2026). Maintainer: „die kette ist ja persistent — jeder
+         # weitere lauf soll diese kette ergänzen."
+         #
+         # Ohne das begann jeder Lauf leer, und weil der Speicher gegen den
+         # Bestand vergleicht, bekam alles Bestehende beim ersten
+         # Werkzeugaufruf einen Grabstein: Ein Regenerate löschte die Kette
+         # der Sitzung, statt sie zu ergänzen. Und über Sitzungsgrenzen war
+         # gar keine Ordnung möglich — der Lauf sah die Glieder der anderen
+         # Sitzungen nicht und konnte nicht sagen, wo seine liegt.
+         #
+         # Kampagnenweit, weil Geschehen an der Sitzungsgrenze nicht aufhört
+         # (dieselbe Begründung, aus der die Chronik als einziger Jack die
+         # ganze Kampagne sieht).
+         kette: Worker.Repo.Zeit.kette(campaign.id),
          kalender: Worker.Repo.get_campaign_calendar(campaign.id)
        }}
     end

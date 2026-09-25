@@ -220,7 +220,13 @@ defmodule Worker.Repo.Zeit do
   defp ketten_zeile(row) when tuple_size(row) >= 5 do
     with json when is_binary(json) <- elem(row, 4),
          {:ok, %{} = daten} <- Jason.decode(json) do
-      [Map.put(daten, "glied_id", elem(row, 1))]
+      # **Die Sitzung reist mit** (#1247, 25.09.2026). Ein Glied entsteht in
+      # EINEM Lauf, aber ein späterer Lauf einer ANDEREN Sitzung liest die
+      # Kette mit und schreibt geänderte Zeilen zurück. Ohne diese Spalte
+      # setzte er dabei seine eigene `session_id` ein, und das Glied wanderte
+      # in die falsche Sitzung — sichtbar erst daran, dass
+      # `ketten_zeilen(cid, sid)` es plötzlich mitzählt.
+      [daten |> Map.put("glied_id", elem(row, 1)) |> Map.put("session_id", elem(row, 3))]
     else
       _ ->
         Logger.warning("Zeit: Kettenglied #{inspect(elem(row, 1))} nicht lesbar — übersprungen")

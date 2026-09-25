@@ -60,13 +60,27 @@ defmodule Worker.Timeline.Kette do
   durch den ganzen Baum. Die Kennung ist die Identität, die Utterance der Weg
   dorthin — und sie ist die einzige Adresse, die ein Re-Smoothing überlebt.
 
-  ## Die Kette beginnt LEER
+  ## Die Kette beginnt leer — die Kampagne nur EINMAL
 
   Maintainer: „Default beim Start: Kette ist leer — jack soll bewusst
   einsortieren." Es gibt keine stillschweigende Übernahme der
   Sprechreihenfolge. Jede Äußerung braucht eine Entscheidung: in ein Glied,
   oder ausdrücklich hinaus (Tischgespräch). Was niemand entschieden hat, ist
   **offen** — und `fertig()` fragt danach.
+
+  **Das gilt für die Äußerungen, nicht für die Kette** (Maintainer,
+  25.09.2026: „die kette ist ja persistent — jeder weitere lauf soll diese
+  kette ergänzen"). Ein Lauf startet mit der bestehenden Kette der **ganzen
+  Kampagne** (`Worker.Jack.Zeit.Eingabe`), nicht mit einer leeren: Er hängt
+  seine Zeilen zwischen die vorhandenen Glieder und darf sie erweitern oder
+  versetzen. `Kette.neu/0` ist der Anfang einer Kampagne, nicht der Anfang
+  eines Laufs.
+
+  Vorher begann jeder Lauf leer, und weil `Kettenspeicher` gegen den Bestand
+  vergleicht, bekam alles Bestehende beim **ersten Werkzeugaufruf** einen
+  Grabstein: Ein Regenerate löschte die Kette der Sitzung, statt sie zu
+  ergänzen. Über Sitzungsgrenzen gab es zudem gar keine Ordnung — ein Lauf sah
+  die Glieder der anderen Sitzungen nicht.
 
   Der Unterschied ist keine Förmlichkeit. Mit einem Default hiesse „nicht
   angefasst" zweierlei zugleich: „die Reihenfolge stimmt hier" und „ich bin

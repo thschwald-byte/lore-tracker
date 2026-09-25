@@ -471,7 +471,10 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
   # für Menschen, kein Auftrag.)
   test "der Wächter sieht jede Vorlage im Verzeichnis an" do
     geprueft =
-      for datei <- File.ls!(@dir), String.ends_with?(datei, ".md"), datei != "LIES_MICH.md", do: datei
+      for datei <- File.ls!(@dir),
+          String.ends_with?(datei, ".md"),
+          datei != "LIES_MICH.md",
+          do: datei
 
     assert length(geprueft) >= 16
     assert "chronik_ueberblick.md" in geprueft
@@ -482,7 +485,15 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
   test "jeder Lauf des Zeit-Jack hat seine Vorlage, und sie ist gefüllt" do
     zeilen =
       for i <- 1..40 do
-        %{nr: i, utterance_id: "u#{i}", sprecher: "SL", text: "t", block_id: "b", block_text: nil, ooc?: false}
+        %{
+          nr: i,
+          utterance_id: "u#{i}",
+          sprecher: "SL",
+          text: "t",
+          block_id: "b",
+          block_text: nil,
+          ooc?: false
+        }
       end
 
     for lauf <- [:gedaechtnis, :einsortieren, :pruefen] do
@@ -542,12 +553,19 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert text =~ "`setz_frist`"
 
     # Seit dem Kettenumbau (20.09.2026) braucht JEDE Zeile eine Entscheidung:
-    # in ein Kettenglied oder ausdrücklich heraus. Die Kette beginnt leer —
-    # „nicht angefasst" heisst nicht mehr „steht schon richtig".
+    # in ein Kettenglied oder ausdrücklich heraus — „nicht angefasst" heisst
+    # nicht „steht schon richtig".
     assert text =~ "Jede Zeile braucht eine Entscheidung"
     assert text =~ "`haenge_an_kette`"
     assert text =~ "`nicht_in_die_kette`"
-    assert text =~ "Die Kette beginnt leer"
+    assert text =~ "Deine Zeilen beginnen ohne Einordnung"
+
+    # **Und die Kette selbst ist ÄLTER als der Lauf** (#1247, 25.09.2026).
+    # Der Auftrag sagte bis dahin „sie ist am Anfang leer" — das stimmte, als
+    # jeder Lauf leer begann, und war danach eine Aufforderung, den Bestand zu
+    # übersehen. Wer die Vorlage kürzt, muss diese Stelle mit ändern.
+    assert text =~ "älter als dein Lauf"
+    assert text =~ "Du ergänzt, du baust nicht neu"
 
     # Die zwei Achsen und die Reihenfolge der Arbeit.
     assert text =~ "Zwei Achsen"
