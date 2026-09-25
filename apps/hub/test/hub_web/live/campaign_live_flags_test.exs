@@ -3,7 +3,7 @@ defmodule HubWeb.CampaignLiveFlagsTest do
   Issue #915 (Epic #911, Cut 1): die Falsifikations-Flag-UI + das SERVERSEITIGE
   Permission-Gate. Gepinnt: (1) Melden = Member-Recht, Lösen = GM-only; (2) ein
   Member sieht den Melden-Button, ein geflaggtes Objekt zeigt den ⚠-Marker;
-  (3) die Kurator-Queue erscheint nur GM im Bearbeiten-Modus; (4) ein gecrafteter
+  (3) die Kurator-Queue erscheint jedem Mitglied im Bearbeiten-Modus; (4) ein gecrafteter
   flag_resolve ohne Berechtigung wird serverseitig geblockt (Flash, kein Publish).
 
   Issue #1082: `:resolve_flag` war in Cut 1 GM-only („Kurator == GM"). Es ist

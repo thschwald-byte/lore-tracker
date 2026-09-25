@@ -168,7 +168,10 @@ defmodule HubWeb.Permissions do
   # bleibt am Override sichtbar (`set_by`).
   # Issue #915 (Cut 1): `:flag_raise` (Falsifikations-Flag melden) ist der einzige
   # erlaubte Spieler-Signal-Pfad — Member-Recht (jeder Mitspieler darf „stimmt
-  # nicht" melden); das Lösen bleibt Kurator-Recht (`:resolve_flag`, GM-only).
+  # nicht" melden). **Das Lösen ist seit #1082 ebenfalls Member-Recht**
+  # (`:resolve_flag`, s. Liste unten); bis dahin war es GM-only. Wer hier eine
+  # GM-Schranke erwartet, liest einen Stand von vor #1082 — dieser Kommentar
+  # behauptete sie noch bis #1253.
   # Issue #916 (Cut 2): `:curate_facts` (direkte Fakt-Kuration — claim/character/
   # thread/verified/löschen) ist Member-Recht wie curate_threads/luecken: Overlay-
   # only, LWW, undo-bar, nie destruktiv (kollaborative L1-Wahrheitsbasis-Pflege).
