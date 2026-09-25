@@ -107,6 +107,12 @@ defmodule Worker.Application do
             # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
             # interne campaign_id.
             {Registry, keys: :unique, name: Worker.Discord.Registry},
+            # Issue #850: Registry der laufenden Frage-Läufe, Key = Lauf-ID des
+            # Hub. Ein Lauf ist ein Task; die Registry macht ihn zum Abbrechen
+            # wiederauffindbar und verhindert, dass dieselbe ID zweimal läuft.
+            {Registry, keys: :unique, name: Worker.Jack.Frage.Registry},
+            # Issue #850: die Verläufe der offenen Frage-Gespräche (Chat-Modus).
+            Worker.Jack.Frage.Gespraech,
             {DynamicSupervisor, name: Worker.Discord.BotSupervisor, strategy: :one_for_one},
             # Issue #866 (Slice F): Kuration → automatische Neuableitung
             # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.

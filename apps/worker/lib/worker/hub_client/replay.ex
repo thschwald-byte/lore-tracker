@@ -57,6 +57,78 @@ defmodule Worker.HubClient.Replay do
     {:ok, socket}
   end
 
+  @doc """
+  Issue #850: eine Frage an die Kampagne. Der Lauf startet sofort und meldet
+  sein Ergebnis über `publish_status` zurück — mit der **Lauf-ID**, an der der
+  Hub erkennt, wem die Antwort gehört (`HubWeb.PipelineStatus` routet darauf
+  auf einen eigenen Topic statt auf den der Kampagne; sonst läse die ganze
+  Runde mit, was einer gefragt hat).
+  """
+  def on_frage(
+        %{"lauf_id" => lauf_id, "campaign_id" => cid, "frage" => frage} = p,
+        socket
+      )
+      when is_binary(lauf_id) and is_binary(cid) and is_binary(frage) do
+    Logger.info("HubClient: Frage lauf=#{lauf_id} campaign=#{cid} by=#{p["discord_id"]}")
+
+    Worker.Jack.Frage.Dienst.starten(lauf_id, cid, frage, &melde_frage(cid, &1))
+
+    {:ok, socket}
+  end
+
+  def on_frage(payload, socket) do
+    Logger.warning("HubClient: start_frage ohne gültige Angaben: #{inspect(payload)}")
+    {:ok, socket}
+  end
+
+  @doc "Issue #850: Abbruch eines laufenden Frage-Laufs."
+  def on_frage_abbruch(%{"lauf_id" => lauf_id}, socket) when is_binary(lauf_id) do
+    Worker.Jack.Frage.Dienst.abbrechen(lauf_id)
+    {:ok, socket}
+  end
+
+  def on_frage_abbruch(payload, socket) do
+    Logger.warning("HubClient: abbrechen_frage ohne lauf_id: #{inspect(payload)}")
+    {:ok, socket}
+  end
+
+  # Die Meldung trägt `campaign_id` mit, damit der Hub sie ohne eigenen
+  # Zustand zuordnen kann, und `frage_lauf_id` als das, worauf er routet.
+  defp melde_frage(cid, {:frage_fertig, lauf_id, antwort}) do
+    Worker.HubClient.publish_status(%{
+      "kind" => "frage_antwort",
+      "campaign_id" => cid,
+      "frage_lauf_id" => lauf_id,
+      "text" => antwort.text,
+      "fakt_ids" => antwort.fakt_ids,
+      "kurze_ids" => antwort.kurze_ids,
+      "geprueft" => to_string(antwort.geprueft),
+      "grund" => Map.get(antwort, :grund),
+      "runden" => Map.get(antwort, :runden)
+    })
+  end
+
+  defp melde_frage(cid, {:frage_fehler, lauf_id, grund}) do
+    Worker.HubClient.publish_status(%{
+      "kind" => "frage_fehler",
+      "campaign_id" => cid,
+      "frage_lauf_id" => lauf_id,
+      "grund" => grund_text(grund)
+    })
+  end
+
+  defp grund_text({:belegt, label}),
+    do: "Der Worker rechnet gerade an etwas anderem (#{label}). Versuch es gleich noch einmal."
+
+  defp grund_text(:keine_sitzung), do: "Diese Kampagne hat noch keine aufgezeichnete Sitzung."
+  defp grund_text(:keine_fakten), do: "Zu dieser Kampagne gibt es noch keine geprüften Fakten."
+  defp grund_text(:laeuft_schon), do: "Diese Frage läuft bereits."
+
+  defp grund_text({:frage_ohne_abschluss, _}),
+    do: "Der Lauf hat keine Antwort abgeliefert — versuch es noch einmal."
+
+  defp grund_text(anderes), do: "Der Lauf ist gescheitert: #{inspect(anderes)}"
+
   def on_campaign_replay(%{"discord_id" => did, "campaign_id" => cid}, socket) do
     Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Recording.CampaignReplay.start(cid, did) do

@@ -221,6 +221,46 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #850: eine Frage an die Kampagne an einen Member-Worker schicken.
+
+  `lauf_id` vergibt der **Aufrufer** — er abonniert damit
+  `HubWeb.PipelineStatus.frage_topic/1`, bevor er fragt, und bekommt die
+  Antwort dorthin. Der Hub merkt sich nichts (er ist seit #164 zustandslos);
+  die ID ist zugleich Adresse und Abbruch-Handle.
+
+  Liefert die Zahl der erreichten Worker (0 = keiner online, dann kommt keine
+  Antwort und der Aufrufer muss das selbst anzeigen).
+  """
+  @spec request_frage(String.t(), String.t(), String.t(), String.t()) :: 0 | 1
+  def request_frage(discord_id, campaign_id, frage, lauf_id)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(frage) and
+             is_binary(lauf_id) do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_frage, discord_id, campaign_id, frage, lauf_id})
+        1
+    end
+  end
+
+  @doc """
+  Issue #850: einen laufenden Frage-Lauf abbrechen. Best-effort — ist der
+  Worker weg, ist der Lauf mit ihm gestorben.
+  """
+  @spec abbrechen_frage(String.t(), String.t(), String.t()) :: :ok
+  def abbrechen_frage(discord_id, campaign_id, lauf_id)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(lauf_id) do
+    case pick_leader(discord_id, campaign_id) do
+      nil -> :ok
+      {_id, %{channel_pid: pid}} -> send(pid, {:abbrechen_frage, lauf_id})
+    end
+
+    :ok
+  end
+
+  @doc """
   Issue #987: session-weite Aufnahme-Modus-Wahl (Discord | Browser) an den
   Recording-Leader-Worker. Best-effort wie `mic_leave/3` — kein Member-Worker
   connected → no-op (die 3 Start-Buttons bleiben dann einfach unwirksam

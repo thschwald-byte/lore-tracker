@@ -12,10 +12,18 @@ defmodule HubWeb.PipelineStatus do
   Broadcaster rufen `broadcast/1` (routet nach `payload["campaign_id"]`),
   Subscriber lauschen auf `topic/1`. Das Tuple ist `{:pipeline_status, payload}`.
 
-  Routing-Regel (`route/1`):
+  Routing-Regel (`route/1`), in dieser Reihenfolge:
 
+    * `frage_lauf_id` gesetzt → `frage:<lauf_id>` (Issue #850)
     * `campaign_id` gesetzt → `pipeline_status:<cid>`
-    * `campaign_id` fehlt → `nil`, `broadcast/1` verwirft die Meldung
+    * keins von beidem → `nil`, `broadcast/1` verwirft die Meldung
+
+  **Warum die Frage einen eigenen Topic hat.** Der Kampagnen-Topic ist für
+  Stufenmeldungen richtig — sie gehen alle an. Eine **Antwort** nicht: Fragt
+  der Spielleiter „was plant der Schurke", läsen sonst alle Spieler mit. Die
+  Lauf-ID vergibt der Frager selbst und abonniert damit einen Topic, den nur
+  er kennt; der Worker echot sie zurück. Das kommt ohne Hub-Zustand aus — eine
+  Karte Lauf-ID → pid wäre Zustand, den der Hub seit #164 nicht hält.
 
   Bis J4 (#1207) gab es daneben einen Sammel-Topic für den LLM-Probelauf
   (`/admin/probelauf`): kampagnenlose Sweep-Meldungen und die
@@ -29,6 +37,13 @@ defmodule HubWeb.PipelineStatus do
   @doc "Per-Campaign-PubSub-Topic für die gegebene campaign_id."
   @spec topic(String.t()) :: String.t()
   def topic(campaign_id) when is_binary(campaign_id), do: "pipeline_status:" <> campaign_id
+
+  @doc """
+  Issue #850: der Topic EINES Frage-Laufs. Nur wer die Lauf-ID hat, abonniert
+  ihn — und das ist der Frager, der sie erzeugt hat.
+  """
+  @spec frage_topic(String.t()) :: String.t()
+  def frage_topic(lauf_id) when is_binary(lauf_id), do: "frage:" <> lauf_id
 
   @doc """
   Broadcastet ein `pipeline_status`-Payload auf den kampagnen-spezifischen Topic
@@ -48,8 +63,9 @@ defmodule HubWeb.PipelineStatus do
   """
   @spec route(map()) :: String.t() | nil
   def route(payload) when is_map(payload) do
-    case payload["campaign_id"] do
-      cid when is_binary(cid) -> topic(cid)
+    case payload do
+      %{"frage_lauf_id" => id} when is_binary(id) -> frage_topic(id)
+      %{"campaign_id" => cid} when is_binary(cid) -> topic(cid)
       _ -> nil
     end
   end
