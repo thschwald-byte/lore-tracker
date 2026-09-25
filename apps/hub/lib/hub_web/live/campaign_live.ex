@@ -48,6 +48,7 @@ defmodule HubWeb.CampaignLive do
     Derive,
     Facts,
     Flags,
+    FragFenster,
     Layout,
     Members,
     Meta,
@@ -130,6 +131,9 @@ defmodule HubWeb.CampaignLive do
       socket
       |> assign(:current_user, user)
       |> assign(:campaign_id, campaign_id)
+      # #850: Zustand des Frag-Fensters aus EINER Stelle (#1005-Lehre —
+      # ein Feld, das eine Klausel später per Map-Update schreibt, muss hier stehen).
+      |> assign(:frag, FragFenster.initial())
       |> Snapshot.initial_assigns()
       |> Snapshot.mount_load()
 
@@ -484,6 +488,10 @@ defmodule HubWeb.CampaignLive do
     do: Members.revoke_invite(socket, token)
 
   def handle_event("shutdown_worker", _, socket), do: Meta.shutdown_worker(socket)
+
+  # #850 (erster Schnitt): das Frag-Fenster. Alles Weitere im Modul — diese
+  # Datei steht dicht an der God-Module-Grenze.
+  def handle_event("frag_" <> _ = e, params, socket), do: FragFenster.event(socket, e, params)
 
   # ─── Event stream ────────────────────────────────────────────────
 
@@ -861,6 +869,11 @@ defmodule HubWeb.CampaignLive do
     do: {:noreply, Snapshot.marke_gerendert(socket, kind)}
 
   # Issue #1200: nach dem Moduswechsel die schweren Teile stufenweise füllen.
+  # #850: ein Schritt der synthetischen Konsole. **Pflicht, nicht Kosmetik** —
+  # die CampaignLive hat keinen handle_info-Auffangzweig (#1149), jede
+  # unerwartete Nachricht bringt sie zum Absturz.
+  def handle_info({:frag_schritt, lauf_id}, socket), do: FragFenster.schritt(socket, lauf_id)
+
   def handle_info({:bearbeiten_fuellen, lauf, teile}, socket),
     do: {:noreply, ViewMode.fuellen(socket, lauf, teile)}
 

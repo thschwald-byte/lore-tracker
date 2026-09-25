@@ -1857,4 +1857,10 @@
         character_names={@character_names}
         assignments={@speaker_assignments}
       />
+
+      <%!-- #850 (erster Schnitt): „Frag die Runde" — schwebendes Fenster über
+           allen Spalten, nicht modal, beweglich. Liegt bewusst GANZ am Ende
+           und außerhalb der Spalten: Es gehört zu keiner von ihnen und muss
+           über jeder stehen können. --%>
+      <HubWeb.CampaignLive.FragFenster.fenster frag={@frag} campaign_id={@campaign_id} />
     </div>
