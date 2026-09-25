@@ -334,8 +334,9 @@
       </span>
 
       <%!-- #915 (Cut 1): Kurator-Queue der offenen Falsifikations-Flags. Nur im
-           Bearbeiten-Modus + GM (Lösen/Verwerfen = :resolve_flag, GM-only in
-           Cut 1). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
+           Bearbeiten-Modus, und dort für jedes Mitglied — `can_edit_meta?` ist
+           seit #1082 Mitglieder-Recht, ebenso `:resolve_flag` (bis dahin
+           GM-only). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
       <div
         :if={@view_mode == :bearbeiten and @can_edit_meta? and @flags != []}
         class="nur-bearbeiten px-6 py-2 border-b border-warning/40 bg-warning/5"

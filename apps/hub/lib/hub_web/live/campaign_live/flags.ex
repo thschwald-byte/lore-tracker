@@ -2,8 +2,10 @@ defmodule HubWeb.CampaignLive.Flags do
   @moduledoc """
   Issue #915 (Epic #911, Cut 1): der Publish-Pfad der Falsifikations-Flags —
   der einzige erlaubte Spieler-Signal-Pfad („stimmt nicht"). Melden = Member-
-  Recht (`:flag_raise`), Lösen/Verwerfen = Kurator-Recht (`:resolve_flag`,
-  GM-only in Cut 1).
+  Recht (`:flag_raise`), Lösen/Verwerfen = **ebenfalls Member-Recht**
+  (`:resolve_flag`) — seit #1082, das die GM-Liste auf das Unumkehrbare und die
+  Rollenverwaltung zusammengestrichen hat. In Cut 1 war es GM-only; dieser
+  Moduledoc behauptete das noch bis #1253.
 
   **Serverseitiges Gate** (never trust the client): jeder Pfad prüft sein
   `can?/3`-Recht + validiert `target_kind`, bevor das Event publisht wird — ein
