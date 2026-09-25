@@ -11,6 +11,13 @@ const MAX_ZEILEN = 60;
 export const FragStrom = {
   mounted() {
     this.handleEvent("frag_strom", ({ stuecke }) => this.anhaengen(stuecke));
+
+    // Der Strom bleibt nach der Antwort stehen — er zeigt, wie sie zustande
+    // kam. Geleert wird er erst, wenn die nächste Frage startet: Dann gehört
+    // er zur vorigen Antwort und wäre irreführend.
+    this.handleEvent("frag_strom_leeren", () => {
+      this.el.replaceChildren();
+    });
   },
 
   updated() {

@@ -252,7 +252,11 @@ defmodule HubWeb.CampaignLive.FragFenster do
         })
 
       _ ->
-        Phoenix.Component.assign(socket, :frag, %{
+        # Der Strom der vorigen Frage steht noch im DOM — er gehört zur
+        # vorigen Antwort, nicht zur neuen Frage.
+        socket
+        |> Phoenix.LiveView.push_event("frag_strom_leeren", %{})
+        |> Phoenix.Component.assign(:frag, %{
           frag
           | frage: "",
             verlauf: verlauf,
@@ -373,7 +377,14 @@ defmodule HubWeb.CampaignLive.FragFenster do
           <.eintrag eintrag={e} />
         </div>
 
-        <.konsole :if={@frag.lauf} lauf={@frag.lauf} />
+        <%!-- Der Denkstrom bleibt stehen, auch nachdem die Antwort da ist
+              (Maintainer, 25.09.2026: „das Denken soll bleiben"). Er hing
+              zuerst an `@frag.lauf` — dann flog das Element mit der Antwort
+              aus dem DOM, und weil der Strom IM DOM lebt und nicht in den
+              Assigns, war er weg. Geleert wird er jetzt beim Start der
+              nächsten Frage, vom Hook. --%>
+        <.strom />
+        <.warten :if={@frag.lauf} />
       </div>
 
       <form phx-submit="frag_senden" class="shrink-0 border-t border-ink-2/20 p-2">
@@ -510,34 +521,37 @@ defmodule HubWeb.CampaignLive.FragFenster do
     """
   end
 
-  attr(:lauf, :map, required: true)
-
-  defp konsole(assigns) do
+  # Der Denkstrom. Der Hook füllt ihn per push_event und deckelt die Zahl der
+  # Zeilen — hier steht bewusst nichts aus den Assigns, sonst wüchse er in den
+  # Socket (#1146). `phx-update="ignore"` schützt ihn davor, dass morphdom ihn
+  # beim nächsten Diff leert; genau deshalb überlebt er auch die Antwort.
+  defp strom(assigns) do
     ~H"""
-    <div class="mr-8 rounded-lg bg-bg-0/60 border border-ink-2/15 px-2 py-1.5">
-      <%!-- Der Denkstrom. Der Hook füllt ihn per push_event und deckelt die
-            Zahl der Zeilen — hier steht bewusst nichts aus den Assigns, sonst
-            wüchse der Strom in den Socket (#1146). `phx-update="ignore"`
-            schützt ihn davor, dass morphdom ihn beim nächsten Diff leert. --%>
-      <div
-        id="frag-strom"
-        phx-hook="FragStrom"
-        phx-update="ignore"
-        class="max-h-40 overflow-y-auto space-y-0.5 font-mono text-[10px] leading-snug empty:hidden"
-      >
-      </div>
-      <p
-        id="frag-warten"
-        phx-hook="FragWarten"
-        phx-update="ignore"
-        data-sprueche={Jason.encode!(Warten.sprueche())}
-        data-wechsel-ms={Warten.wechsel_ms()}
-        class="text-[11px] text-ink-2/50 flex items-center gap-1.5"
-      >
-        <span data-spinner class="font-mono text-primary">⠋</span>
-        <span data-spruch>Wälze Folianten …</span>
-      </p>
+    <div
+      id="frag-strom"
+      phx-hook="FragStrom"
+      phx-update="ignore"
+      class="mr-8 max-h-40 overflow-y-auto rounded-lg bg-bg-0/60 px-2 py-1.5 space-y-0.5 font-mono text-[10px] leading-snug empty:hidden empty:p-0"
+    >
     </div>
+    """
+  end
+
+  # Der Wartetext dreht im Browser und verschwindet mit dem Lauf — er sagt
+  # „es läuft noch", und das stimmt danach nicht mehr.
+  defp warten(assigns) do
+    ~H"""
+    <p
+      id="frag-warten"
+      phx-hook="FragWarten"
+      phx-update="ignore"
+      data-sprueche={Jason.encode!(Warten.sprueche())}
+      data-wechsel-ms={Warten.wechsel_ms()}
+      class="mr-8 text-[11px] text-ink-2/50 flex items-center gap-1.5 px-2"
+    >
+      <span data-spinner class="font-mono text-primary">⠋</span>
+      <span data-spruch>Wälze Folianten …</span>
+    </p>
     """
   end
 end

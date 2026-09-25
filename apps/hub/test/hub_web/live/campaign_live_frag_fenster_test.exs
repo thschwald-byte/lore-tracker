@@ -277,6 +277,22 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
              "ein Server-Timer je Textwechsel wären ~50 Diffs pro Lauf (#1200-Klasse)"
     end
 
+    test "der Denkstrom hängt NICHT am laufenden Lauf" do
+      # Hing er daran, flöge das Element mit der Antwort aus dem DOM — und mit
+      # ihm der Strom, der IM DOM lebt (Maintainer, 25.09.2026: „das Denken
+      # soll bleiben"). Geleert wird er beim Start der nächsten Frage.
+      code = nur_code(@fenster, "#")
+
+      refute code =~ "<.strom :if=",
+             "der Strom darf nicht an @frag.lauf hängen — sonst ist er nach der Antwort weg"
+
+      assert code =~ "<.warten :if={@frag.lauf}",
+             "der Wartetext dagegen schon: er sagt „es läuft noch\""
+
+      assert code =~ ~s|push_event("frag_strom_leeren"|,
+             "ohne das trüge der Strom der vorigen Frage in die neue hinein"
+    end
+
     test "der Denkstrom geht per push_event, nicht über die Assigns" do
       code = nur_code(@fenster, "#")
 
