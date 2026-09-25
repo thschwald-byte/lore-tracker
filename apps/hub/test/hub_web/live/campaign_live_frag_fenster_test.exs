@@ -82,10 +82,38 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     end
   end
 
+  describe "Wartetext" do
+    alias HubWeb.CampaignLive.FragFenster.Warten
+
+    test "fünfzig Sprüche, keiner doppelt" do
+      l = Warten.sprueche()
+      assert length(l) == 50
+      assert length(Enum.uniq(l)) == 50, "ein doppelter Spruch fällt beim Zusehen auf"
+    end
+
+    test "jeder Spruch sagt, was gerade geschieht — und keiner verspricht ein Ergebnis" do
+      for spruch <- Warten.sprueche() do
+        assert String.ends_with?(spruch, "…"), "#{spruch} — die Auslassung trägt das Laufende"
+
+        # Verboten ist, was ABSCHLUSS behauptet — das kann erst die Antwort
+        # einlösen. „Warte auf die Antwort der Schiffs-KI …" ist dagegen
+        # einwandfrei: Es beschreibt genau das Warten. (Der erste Wurf dieses
+        # Tests verbot „Antwort" und schlug auf diesen Spruch an.)
+        refute spruch =~ ~r/gefunden|fertig|erledigt|Treffer|abgeschlossen/iu, spruch
+      end
+    end
+
+    test "der Wechsel ist lang genug zum Lesen und kurz genug als Lebenszeichen" do
+      assert Warten.wechsel_ms() >= 1_500
+      assert Warten.wechsel_ms() <= 5_000
+    end
+  end
+
   describe "Quelltext-Wächter" do
     @fenster "lib/hub_web/live/campaign_live/frag_fenster.ex"
     @hook "assets/js/hooks/frag_fenster.js"
     @live "lib/hub_web/live/campaign_live.ex"
+    @warten "assets/js/hooks/frag_warten.js"
 
     test "der Dialog wird nicht-modal geöffnet — .show(), nie .showModal()" do
       js = nur_code(@hook, "//")
@@ -104,8 +132,12 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
       assert code =~ ~s|JS.ignore_attributes(["open", "style"])|,
              "beide Namen sind nötig: `open` hält das Fenster offen, `style` hält es an seinem Platz"
 
-      refute code =~ ~s|phx-update="ignore"|,
-             "das fröre den Inhalt ein — die Antwort erschiene nie"
+      # Am DIALOG wäre `phx-update="ignore"` falsch — es fröre den Inhalt ein
+      # und die Antwort erschiene nie. Am Wartetext ist es dagegen richtig
+      # (der Hook schreibt dort, und jeder Konsolen-Schritt ist ein Diff), also
+      # wird gezielt das Dialog-Tag geprüft, nicht die Datei.
+      refute dialog_tag(code) =~ ~s|phx-update="ignore"|,
+             "das fröre den Inhalt des Fensters ein — die Antwort erschiene nie"
     end
 
     test "die CampaignLive hat eine Klausel für den Timer-Tick (sie hat keinen Auffangzweig)" do
@@ -124,8 +156,35 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
              "ein Event je Tastendruck ist die #1200-Klasse — und jedes davon ein Diff am Fenster"
     end
 
+    test "der Spinner ist kein Würfel" do
+      # Ein Würfel sagt „Zufall" — das Gegenteil dessen, was die Fußzeile des
+      # Fensters verspricht (nur geprüfte Fakten, mit Beleg).
+      js = nur_code(@warten, "//")
+      assert js =~ "⠋", "der Braille-Spinner fehlt"
+      # Das `u` ist Pflicht: Ohne Unicode-Modus vergleicht die Zeichenklasse
+      # BYTES, und die UTF-8-Sequenzen von Würfeln (U+26xx) und Braille (U+28xx)
+      # teilen sich Präfixe — der Wächter schlug auf seinen eigenen Spinner an.
+      refute js =~ ~r/[⚀⚁⚂⚃⚄⚅]/u, "ein Würfel widerspricht der Zusage des Fensters"
+    end
+
+    test "der Wartetext dreht im Browser, nicht über den Server" do
+      assert nur_code(@warten, "//") =~ "setInterval"
+
+      refute nur_code(@fenster, "#") =~ "warte_tick",
+             "ein Server-Timer je Textwechsel wären ~50 Diffs pro Lauf (#1200-Klasse)"
+    end
+
     test "ein zweiter Lauf bricht den Timer des ersten ab" do
       assert nur_code(@fenster, "#") =~ "Process.cancel_timer"
+    end
+
+    # Der öffnende `<dialog …>`-Tag allein — Attribute, die nur dort falsch
+    # wären, lassen sich sonst nicht von denen der Kinder unterscheiden.
+    defp dialog_tag(code) do
+      case String.split(code, "<dialog", parts: 2) do
+        [_, rest] -> rest |> String.split(">", parts: 2) |> hd()
+        _ -> ""
+      end
     end
 
     # Ein Wächter, der seine eigene Begründung findet, ist wertlos: Die

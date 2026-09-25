@@ -3,6 +3,10 @@ defmodule HubWeb.CampaignLive.FragFenster do
   Issue #850, erster Schnitt: das Fenster „Frag die Runde" — Oberfläche mit
   synthetischen Läufen (`FragFenster.Synthetisch`), ohne Agent dahinter.
 
+  **Die Farben sind die des Hauses** (`panel`, `ink-*`) — neu ist allein ein
+  dünner Rand in `primary`, dem Cyan des Türkis-Schemas aus #194, damit das
+  Fenster über den Spalten auffällt.
+
   **Warum ein Fenster und kein Chat-Widget am Bildschirmrand.** Hinter dem
   üblichen Chatbot-Knopf liegt nichts, was man lesen müsste; hier liegt genau
   das, worum es geht. Ein Beleg zeigt auf eine Stelle in einer der sechs
@@ -51,7 +55,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
 
   use Phoenix.Component
 
-  alias HubWeb.CampaignLive.FragFenster.Synthetisch
+  alias HubWeb.CampaignLive.FragFenster.{Synthetisch, Warten}
   alias Phoenix.LiveView.JS
 
   @doc "Der Anfangszustand fürs Mount — eine Stelle, damit kein Feld vergessen wird (#1005)."
@@ -177,7 +181,6 @@ defmodule HubWeb.CampaignLive.FragFenster do
         "fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full shadow-lg",
         "bg-accent text-bg-0 text-2xl leading-none",
         "hover:scale-105 transition-transform",
-        "ring-1 ring-primary shadow-[0_0_20px_-4px_rgb(var(--color-primary)/0.6)]",
         @frag.offen? && "hidden"
       ]}
       aria-label="Frag die Runde öffnen"
@@ -200,12 +203,12 @@ defmodule HubWeb.CampaignLive.FragFenster do
       data-campaign-id={@campaign_id}
       aria-label="Frag die Runde"
       class={[
-        # Kein `panel`: dessen `border-border` ist der dezente Ton. Das Fenster
-        # soll auffallen (Maintainer, 25.09.2026) — dünner Cyan-Rand plus
-        # weicher Schein in derselben Farbe, damit es sich vom Türkis-Grund der
-        # Spalten löst, ohne breit zu werden.
-        "bg-surface rounded-lg border border-primary z-40 p-0 m-0 fixed",
-        "shadow-[0_0_28px_-6px_rgb(var(--color-primary)/0.5)]",
+        # `panel` bleibt — Fläche und Radius wie bei jedem anderen Panel. Neu
+        # ist allein die Randfarbe: `border-primary` überschreibt dessen
+        # `border-border`, damit das Fenster auffällt (Maintainer, 25.09.2026:
+        # „nur eine zusätzliche dünne Umrandung in Cyan"). Sonst ändert sich
+        # an den Farben nichts.
+        "panel border-primary z-40 p-0 m-0 fixed shadow-2xl",
         "w-[420px] h-[560px] min-w-[300px] min-h-[240px]",
         "max-w-[92vw] max-h-[85vh] resize overflow-hidden flex-col",
         "backdrop:bg-transparent open:flex"
@@ -213,10 +216,10 @@ defmodule HubWeb.CampaignLive.FragFenster do
     >
       <div
         data-frag-griff
-        class="flex items-center gap-2 px-3 py-2 border-b border-primary/30 bg-primary/5 cursor-move select-none shrink-0"
+        class="flex items-center gap-2 px-3 py-2 border-b border-ink-2/20 cursor-move select-none shrink-0"
       >
-        <span class="text-primary/50 text-xs">⣿</span>
-        <span class="font-display text-sm text-primary grow">Frag die Runde</span>
+        <span class="text-ink-2/40 text-xs">⣿</span>
+        <span class="font-display text-sm text-ink-0 grow">Frag die Runde</span>
         <button
           type="button"
           phx-click="frag_schliessen"
@@ -263,7 +266,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
         <.konsole :if={@frag.lauf} lauf={@frag.lauf} />
       </div>
 
-      <form phx-submit="frag_senden" class="shrink-0 border-t border-primary/30 p-2">
+      <form phx-submit="frag_senden" class="shrink-0 border-t border-ink-2/20 p-2">
         <div class="flex gap-2">
           <input
             type="text"
@@ -345,7 +348,17 @@ defmodule HubWeb.CampaignLive.FragFenster do
     ~H"""
     <div class="mr-8 rounded-lg bg-bg-0/60 border border-ink-2/15 px-2 py-1.5">
       <.zeilen zeilen={@lauf.zeilen} />
-      <p class="text-[11px] text-ink-2/40 animate-pulse mt-1">▏arbeitet…</p>
+      <p
+        id="frag-warten"
+        phx-hook="FragWarten"
+        phx-update="ignore"
+        data-sprueche={Jason.encode!(Warten.sprueche())}
+        data-wechsel-ms={Warten.wechsel_ms()}
+        class="text-[11px] text-ink-2/50 mt-1 flex items-center gap-1.5"
+      >
+        <span data-spinner class="font-mono text-primary">⠋</span>
+        <span data-spruch>Wälze Folianten …</span>
+      </p>
     </div>
     """
   end
