@@ -974,14 +974,58 @@ defmodule Worker.Timeline.Linie do
   # Der Riegel sitzt hier und nicht an einer Markierung des Ankers: Ob
   # erzählte Weltgeschichte oder eigener Rückblick, ob verschoben oder
   # nicht — entscheidend ist allein, wie fein die Angabe war.
+  # **Der Tag kommt nur von einem taggenauen Punkt, den nichts überholt hat.**
+  #
+  # `taggenau?/1` ist richtig und bleibt: Aus „2080" lässt sich kein Tag
+  # ableiten, und es als 1. Januar zu lesen war der #1092-Fehler. Die Lücke lag
+  # daneben — es wurde **nicht geprüft, ob der taggenaue Punkt inzwischen
+  # überholt ist**.
+  #
+  # Am echten Lauf aufgeschlagen (25.09.2026, seattleV5): Der einzige taggenaue
+  # Anker der ganzen Kampagne ist „am 24. Dezember 2011" (Ryumyo am Mount
+  # Fuji); alle übrigen sind Jahresangaben und damit zu grob. Jede Uhrzeit,
+  # überall, holte ihren Tag von dort — auch „nachts um halb zwei" in Sitzung 4,
+  # 69 Jahre später. Die Reihenfolge war korrekt (Position 1247 nach 843), die
+  # Linie lief trotzdem rückwärts: Glied 14 stand auf 2080, Glied 15 auf 2011.
+  #
+  # Jack hat den Widerspruch gefunden und richtig entschieden, ihn NICHT durch
+  # Erfinden zu überdecken: „If I remove it, I lose the date. If I change it to
+  # 2079 or 2080, that's inventing a date that wasn't stated."
+  #
+  # **Die Prüfung ist deshalb: Liegt ein späterer Punkt zeitlich weiter, ist der
+  # taggenaue veraltet.** Er beweist dann nicht mehr, an welchem Tag wir sind —
+  # nur noch, dass wir danach sind. Es gibt also keinen Tagesbezug, und die
+  # Uhrzeit bleibt eine Uhrzeit: Die Stelle erbt die Minute des letzten Punkts
+  # und heisst `:fortgeschrieben`. Ein grober, ehrlicher Wert statt eines
+  # präzisen falschen.
+  #
+  # **Der Preis ist benannt:** Eine Sitzung, deren einziger Datumsanker ein
+  # Jahr ist, bekommt keine Tagesangaben mehr — auch dort nicht, wo Uhrzeiten
+  # fallen. Das ist gewollt: Der Tag war vorher erfunden.
   defp vorlauf(feste, i) do
-    feste
-    |> Enum.filter(fn {j, p} -> j <= i and taggenau?(p) end)
-    |> Enum.max_by(fn {j, _} -> j end, fn -> nil end)
-    |> case do
-      {_, %{minute: m}} -> m
+    bis_hier = Enum.filter(feste, fn {j, _} -> j <= i end)
+
+    with {_, %{minute: tag_minute}} <- letzter(bis_hier, &taggenau?/1),
+         false <- ueberholt?(bis_hier, tag_minute) do
+      tag_minute
+    else
       _ -> nil
     end
+  end
+
+  # Überholt heisst: irgendein Punkt bis hierher liegt zeitlich WEITER als der
+  # taggenaue. Dann ist dessen Tag Vergangenheit, und aus ihm einen Tag für das
+  # Jetzt zu bauen ergibt eine Zeit, die rückwärts läuft.
+  defp ueberholt?(bis_hier, tag_minute) do
+    Enum.any?(bis_hier, fn {_, p} ->
+      is_integer(p[:minute]) and p[:minute] > tag_minute
+    end)
+  end
+
+  defp letzter(punkte, pruefen) do
+    punkte
+    |> Enum.filter(fn {_, p} -> pruefen.(p) end)
+    |> Enum.max_by(fn {j, _} -> j end, fn -> nil end)
   end
 
   # Tagesgenau heisst: Die Unschärfe des Ausdrucks liegt nicht über einem
