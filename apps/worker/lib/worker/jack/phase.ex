@@ -19,6 +19,19 @@ defmodule Worker.Jack.Phase do
   @nachhaken_text "Deine letzte Antwort enthielt keinen Werkzeugaufruf. " <>
                     "Setz die Arbeit fort; wenn du durch bist, ruf fertig() auf."
 
+  # #1247: nach einem Abbruch wegen wörtlicher Wiederholung
+  # (`Worker.Agent.Modell.Schleife`). Die Auskunft ist die wichtige Hälfte des
+  # Riegels: Am echten Lauf drehte das Modell dreissig Mal denselben Absatz,
+  # weil es eine Frage hatte, die die Angaben nicht beantworten — und es
+  # konnte nicht wissen, dass es nicht an ihm liegt. Dieselbe Lehre wie beim
+  # inneren Werkzeugfehler (#1211): sagen, dass der Weg nicht trägt, statt es
+  # noch einmal versuchen zu lassen.
+  @schleife_text "Deine Antwort hat sich wörtlich wiederholt — ich habe sie " <>
+                   "abgebrochen. Auf diesem Weg kommst du nicht weiter: Was du " <>
+                   "suchst, steht vielleicht nicht in den Angaben. Frag mit " <>
+                   "hilfe() nach einem Werkzeug, nimm einen anderen Weg, oder " <>
+                   "halte fest, was fehlt, und mach mit dem Rest weiter."
+
   # Kompaktierung wie in Reihe C (pi): ab `fenster − reserve` Token wird
   # zusammengefasst, danach bleiben die jüngsten `behalten` Token stehen. Das
   # Fenster ist einstellbar (`:kontext_fenster`; im Betrieb `ctx_jack`),
@@ -101,6 +114,10 @@ defmodule Worker.Jack.Phase do
   abgeschlossen).
   """
   @spec nachhaken(map()) :: :fertig | {:weiter, String.t()}
+  def nachhaken(%{stopp: :schleife, ohne_aufruf_in_folge: n})
+      when n <= @nachhaken_hoechstens,
+      do: {:weiter, @schleife_text}
+
   def nachhaken(%{ohne_aufruf_in_folge: n}) when n <= @nachhaken_hoechstens,
     do: {:weiter, @nachhaken_text}
 

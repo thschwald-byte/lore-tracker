@@ -41,7 +41,9 @@ defmodule Worker.Agent.Modell.Ollama do
 
   @behaviour Worker.Agent.Modell
 
-  alias Worker.Agent.Modell.Strom
+  require Logger
+
+  alias Worker.Agent.Modell.{Schleife, Strom}
   alias Worker.Agent.Werkzeug
 
   @pfad "/v1/chat/completions"
@@ -49,26 +51,7 @@ defmodule Worker.Agent.Modell.Ollama do
 
   @impl true
   def antworten(nachrichten, werkzeuge, opts) do
-    case Keyword.get(opts, :bei_delta) do
-      nil -> ganz(nachrichten, werkzeuge, opts)
-      melden -> gestreamt(nachrichten, werkzeuge, opts, melden)
-    end
-  end
-
-  defp ganz(nachrichten, werkzeuge, opts) do
-    opts
-    |> url()
-    |> Req.post(
-      json: anfrage(nachrichten, werkzeuge, opts),
-      receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
-      retry: false
-    )
-    |> case do
-      {:ok, %Req.Response{status: 200, body: %{} = body}} -> antwort(body)
-      {:ok, %Req.Response{status: 200, body: body}} -> {:error, {:antwortform, body}}
-      {:ok, %Req.Response{status: status, body: body}} -> {:error, {:http, status, body}}
-      {:error, fehler} -> {:error, {:netz, Exception.message(fehler)}}
-    end
+    gestreamt(nachrichten, werkzeuge, opts, Keyword.get(opts, :bei_delta))
   end
 
   defp gestreamt(nachrichten, werkzeuge, opts, melden) do
@@ -79,12 +62,40 @@ defmodule Worker.Agent.Modell.Ollama do
 
     # Der Zustand des Stroms reist im Response mit; gemeldet wird nur, was
     # zu einer erfolgreichen Antwort gehört.
+    #
+    # **Mitgelesen wird auch auf eine Schleife** (#1247,
+    # `Worker.Agent.Modell.Schleife`): Wiederholt sich das Modell wörtlich,
+    # wird der Strom hier abgebrochen — `{:halt, …}` beendet den Request, und
+    # `Strom.abbrechen/2` macht aus dem Bisherigen eine reguläre Antwort mit
+    # dem Stoppgrund `schleife`. Ohne den Abbruch läuft das Modell bis
+    # `max_tokens` (60 000) weiter; am echten Lauf waren das elf Minuten.
     into = fn {:data, bytes}, {req, resp} ->
       {strom, deltas} =
         resp |> Req.Response.get_private(:strom, Strom.neu()) |> Strom.einlesen(bytes)
 
-      if resp.status == 200, do: Enum.each(deltas, &melden_eins(melden, &1))
-      {:cont, {req, Req.Response.put_private(resp, :strom, strom)}}
+      if resp.status == 200 and melden, do: Enum.each(deltas, &melden_eins(melden, &1))
+
+      {schleife, befund} =
+        Enum.reduce(deltas, {Req.Response.get_private(resp, :schleife, Schleife.neu()), :weiter}, fn
+          {_art, text}, {z, :weiter} -> Schleife.dazu(z, text)
+          _delta, sonst -> sonst
+        end)
+
+      resp = resp |> Req.Response.put_private(:strom, strom) |> Req.Response.put_private(:schleife, schleife)
+
+      case befund do
+        {:schleife, block, n} when resp.status == 200 ->
+          Logger.warning(
+            "Agent: Modell wiederholt sich (#{n}x derselbe Block) — Strom abgebrochen. " <>
+              "Anfang: #{inspect(String.slice(block, 0, 120))}"
+          )
+
+          Worker.Telemetry.zaehle(:modell_schleife)
+          {:halt, {req, Req.Response.put_private(resp, :strom, Strom.abbrechen(strom, "schleife"))}}
+
+        _ ->
+          {:cont, {req, resp}}
+      end
     end
 
     opts
@@ -93,7 +104,9 @@ defmodule Worker.Agent.Modell.Ollama do
       json: body,
       into: into,
       receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
-      retry: false
+      retry: false,
+      # #1247: der eigene Pool mit Idle-Frist — s. `Worker.Agent.Modell.Pool`.
+      finch: Worker.Agent.Modell.Pool.name()
     )
     |> case do
       {:ok, %Req.Response{status: 200} = resp} ->
@@ -216,6 +229,8 @@ defmodule Worker.Agent.Modell.Ollama do
   # pi: mapStopReason. Ein Stopp mit Aufrufen ist ein Werkzeug-Stopp, egal
   # welchen Grund der Server meldet.
   defp stopp("length", _aufrufe), do: {:ok, :laenge}
+  # #1247: kein Grund des Servers, sondern unser eigener (s. `into` oben).
+  defp stopp("schleife", _aufrufe), do: {:ok, :schleife}
   defp stopp(grund, [_ | _]) when grund in [nil, "stop", "tool_calls"], do: {:ok, :werkzeuge}
   defp stopp(grund, []) when grund in [nil, "stop", "tool_calls"], do: {:ok, :stop}
   defp stopp(grund, _aufrufe), do: {:error, {:stoppgrund, grund}}

@@ -453,12 +453,164 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
   end
 
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
-    for datei <-
-          ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md
-             resuemee_durchsicht.md epos_ueberblick.md epos_schreiben.md epos_durchsicht.md),
+    for datei <- File.ls!(@dir),
+        String.ends_with?(datei, ".md"),
+        datei != "LIES_MICH.md",
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"
     end
+  end
+
+  # **Der Wächter zählt die Dateien NICHT mehr auf** (#1247). Die Liste war
+  # eine Aufzählung, und sie ist genau so gealtert, wie Aufzählungen altern:
+  # Die vier Chronik-Vorlagen (#1211) standen nie darin, und zwei von ihnen
+  # trugen Namen der gemessenen Runde — unbemerkt, weil der Wächter sie nicht
+  # ansah. Geprüft wird jetzt das Verzeichnis; wer eine Vorlage ergänzt,
+  # bekommt sie ohne Zutun mitgeprüft. (`LIES_MICH.md` ist die Herkunftsnotiz
+  # für Menschen, kein Auftrag.)
+  test "der Wächter sieht jede Vorlage im Verzeichnis an" do
+    geprueft =
+      for datei <- File.ls!(@dir),
+          String.ends_with?(datei, ".md"),
+          datei != "LIES_MICH.md",
+          do: datei
+
+    assert length(geprueft) >= 16
+    assert "chronik_ueberblick.md" in geprueft
+    assert "zeit_einsortieren.md" in geprueft
+  end
+
+  # #1247 (Z2): die drei Aufträge des Zeit-Jack.
+  test "jeder Lauf des Zeit-Jack hat seine Vorlage, und sie ist gefüllt" do
+    zeilen =
+      for i <- 1..40 do
+        %{
+          nr: i,
+          utterance_id: "u#{i}",
+          sprecher: "SL",
+          text: "t",
+          block_id: "b",
+          block_text: nil,
+          ooc?: false
+        }
+      end
+
+    for lauf <- [:gedaechtnis, :einsortieren, :pruefen] do
+      stand = Worker.Jack.Zeit.Stand.neu(lauf, zeilen)
+
+      assert {:ok, text} = Worker.Jack.Zeit.Auftrag.fuer(stand, "Testrunde", @dir)
+
+      refute text =~ "{{", "#{lauf}: ungefüllter Platzhalter"
+      assert text =~ "Testrunde"
+      assert text =~ "hilfe()"
+    end
+  end
+
+  # Eine unbekannte Laufart darf NICHT auf eine fremde Vorlage zurückfallen —
+  # das Modell läse einen Auftrag für eine andere Arbeit, und niemand sähe es
+  # (die Klasse, die am 18.09.2026 die Chronik-Abschnitte still durch die des
+  # Resümees ersetzte).
+  test "eine unbekannte Laufart wirft, statt eine fremde Vorlage zu nehmen" do
+    stand = %{Worker.Jack.Zeit.Stand.neu(:einsortieren, []) | lauf: :ausgedacht}
+
+    assert_raise ArgumentError, ~r/:ausgedacht/, fn ->
+      Worker.Jack.Zeit.Auftrag.fuer(stand, "Testrunde", @dir)
+    end
+  end
+
+  # Der Einsortier-Auftrag trägt die Befunde aus der handgelesenen Referenz —
+  # sie sind der Grund, warum er so aussieht, wie er aussieht.
+  test "der Einsortier-Auftrag nennt die Befunde, die ihn begründen" do
+    text = File.read!(Path.join(@dir, "zeit_einsortieren.md"))
+
+    # Die Welt-Frage ist fast ein Münzwurf, keine Ausnahmebehandlung.
+    assert text =~ "121"
+    assert text =~ "90"
+
+    # Zurücklesen BIS zur Frage, nicht einen Block zurück — und nicht bei der
+    # ersten plausiblen Antwort aufhören.
+    assert text =~ "lies zurück"
+    assert text =~ "ersten plausiblen Antwort"
+
+    # Beginn-Formen sind Zeitpunkte, keine Spannen; die Richtung zählt.
+    assert text =~ "„seit“"
+    assert text =~ "Richtung"
+
+    # Ein Anker braucht keinen Kalender.
+    assert text =~ "braucht keinen Kalender"
+
+    # Der Halbtag gehört der Kette — ausser er steht da.
+    assert text =~ "halbtag"
+
+    # Weltgeschichte ist Spielwelt und bekommt einen Anker — samt der Folge,
+    # dass die Zeile dorthin verschoben gehört (Maintainer, 19.09.2026).
+    assert text =~ "Vergangenheit gehört auf die Linie"
+    assert text =~ "Namibia", "auch die Vergangenheit der GRUPPE, nicht nur Weltgeschichte"
+    assert text =~ "verschieb"
+
+    # Die Frist zeigt nach vorn und verschiebt nichts.
+    assert text =~ "`setz_frist`"
+
+    # Seit dem Kettenumbau (20.09.2026) braucht JEDE Zeile eine Entscheidung:
+    # in ein Kettenglied oder ausdrücklich heraus — „nicht angefasst" heisst
+    # nicht „steht schon richtig".
+    assert text =~ "Jede Zeile braucht eine Entscheidung"
+    assert text =~ "`haenge_an_kette`"
+    assert text =~ "`nicht_in_die_kette`"
+    assert text =~ "Deine Zeilen beginnen ohne Einordnung"
+
+    # **Und die Kette selbst ist ÄLTER als der Lauf** (#1247, 25.09.2026).
+    # Der Auftrag sagte bis dahin „sie ist am Anfang leer" — das stimmte, als
+    # jeder Lauf leer begann, und war danach eine Aufforderung, den Bestand zu
+    # übersehen. Wer die Vorlage kürzt, muss diese Stelle mit ändern.
+    assert text =~ "älter als dein Lauf"
+    assert text =~ "Du ergänzt, du baust nicht neu"
+
+    # Die zwei Achsen und die Reihenfolge der Arbeit.
+    assert text =~ "Zwei Achsen"
+    assert text =~ "Erst einreihen, dann datieren"
+    assert text =~ "Ein Glied ist eine Zeiteinheit"
+
+    # Der Rückblick am Sitzungsanfang ist ein Ritual, kein Einzelfall — und
+    # der bösartige Fall steht dabei: Die neue Sitzung begänne sonst vor dem
+    # Ende der vorigen (dave, 19.09.2026).
+    assert text =~ "Rückblick"
+    assert text =~ "Ritual"
+
+    # Die Interpolation ist eine Warnung, keine Zusage: „je mehr Spannen, desto
+    # weniger muss ich raten." An einer Sitzung mit 1591 Blöcken ohne eine
+    # einzige Uhrzeit ist die lineare Verteilung nicht selten falsch, sondern
+    # sicher.
+    assert text =~ "desto weniger muss ich raten"
+  end
+
+  # Der Gedächtnis-Lauf liest seit dem 19.09.2026 die ÄUSSERUNGEN, nicht die
+  # Fakten (Maintainer: „wir stellen den jacklauf ganz auf die utts um").
+  test "der Gedächtnis-Auftrag liest den Mitschnitt und setzt nichts" do
+    text = File.read!(Path.join(@dir, "zeit_gedaechtnis.md"))
+
+    assert text =~ "Mitschnitt"
+    refute text =~ "Fakten", "der Lauf hat keine Fakten-Werkzeuge mehr"
+
+    # Er setzt nichts — das ist der Zweck der Trennung.
+    assert text =~ "setzt in diesem Lauf **nichts**"
+
+    # Die ZEITEN-Notizen tragen die Zeilennummer, sonst sucht der nächste Lauf
+    # noch einmal.
+    assert text =~ "mit der Zeilennummer"
+
+    # `fertig()` verlangt gelesen, nicht notiert.
+    assert text =~ "jede Zeile **gelesen**"
+  end
+
+  # Das sechste Symptom des Prüf-Laufs: läuft die Linie über eine
+  # Sitzungsgrenze rückwärts, steckt fast immer ein nicht verschobener Recap
+  # dahinter.
+  test "der Prüf-Auftrag kennt die rückwärts laufende Sitzungsgrenze" do
+    text = File.read!(Path.join(@dir, "zeit_pruefen.md"))
+
+    assert text =~ "Sitzungsgrenze rückwärts"
+    assert text =~ "Rückblick am Sitzungsanfang"
   end
 end

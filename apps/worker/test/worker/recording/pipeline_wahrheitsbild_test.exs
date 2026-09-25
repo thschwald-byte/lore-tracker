@@ -110,7 +110,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ -> {:ok, rendered("prosa.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
   end
 
@@ -142,7 +146,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     capture_log(fn ->
@@ -168,7 +176,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     capture_log(fn ->
@@ -196,7 +208,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     log =
@@ -219,7 +235,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     capture_log(fn ->
@@ -247,7 +267,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     capture_log(fn ->
@@ -302,7 +326,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ -> {:ok, rendered("nie.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
       # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-      chronik_jack: fn -> {:ok, []} end
+      chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
     }
 
     capture_log(fn ->
@@ -353,7 +381,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         render: fn _ -> {:ok, rendered("nie.")} end,
         render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
         # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
-        chronik_jack: fn -> {:ok, []} end
+        chronik_jack: fn -> {:ok, []} end,
+      # #1247: ebenso der Zeit-Jack — ohne Modell scheiterte er und schriebe
+      # einen Fehler in /admin/errors, der die Stage-Prüfungen dieser Tests
+      # verfälscht.
+      zeit: :aus
       }
 
       capture_log(fn ->

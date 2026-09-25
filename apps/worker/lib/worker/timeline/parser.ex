@@ -270,6 +270,33 @@ defmodule Worker.Timeline.Parser do
       ~r/^(ab|seit|nach|vor|bis)\s+(?:dem|der|den|das|etwa|rund|circa|ca\.?)\s+/u,
       "\\1 "
     )
+    # **„kurz vor 2080" ist ein Jahr, „kurz vor sieben" eine Uhrzeit.** Das
+    # Füllwort steht vor beidem; entfernt wird es nur, wenn eine drei- bis
+    # fünfstellige Zahl folgt — eine Uhrzeit hat höchstens zwei Stellen und
+    # wird ohnehin von `Worker.Timeline.Ausdruck` gelesen, bevor der Parser
+    # drankommt.
+    #
+    # Gefunden am Lauf vom 20.09.2026: Der Auftrag verlangt „sag es, wie es
+    # gesagt wurde" — und genau dann verstand der Parser es nicht. „2080"
+    # und „im Jahr 2080" gingen, „kurz vor 2080" nicht.
+    #
+    # **Ehrliche Grenze:** Das ist eine Liste von Füllwörtern, keine
+    # Bedeutungserkennung (#1109/#1213-Lehre). Sie fängt, was am Tisch
+    # üblich ist; „so etwa im Bereich von 2080 herum" fängt sie nicht.
+    |> String.replace(
+      ~r/^(?:kurz|knapp|gut|grob|gegen)\s+(?=(?:ab|seit|nach|vor|bis)\s+-?\d{3,5}\b)/u,
+      ""
+    )
+    # **„um 2010" ist ein Jahr, „um sieben" eine Uhrzeit** — dieselbe
+    # Unterscheidung wie eine Zeile höher, deshalb dieselbe Schranke: `um`
+    # fällt nur vor einer drei- bis fünfstelligen Zahl.
+    #
+    # Gefunden am Lauf vom 24.09.2026: Jack setzte „um 2010 (erste
+    # Metamenschen)" als Zeitpunkt. „2010" allein liest der Parser, „um
+    # 2010" nicht — das Wort stand in keiner der Listen darüber, obwohl
+    # „im 2010" und „am 2010" gehen. Von zehn Ankern dieses Laufs ergab
+    # keiner eine Minute; dieser war einer davon.
+    |> String.replace(~r/^um\s+(?=-?\d{3,5}\b)/u, "")
     |> String.trim()
   end
 
@@ -498,6 +525,28 @@ defmodule Worker.Timeline.Parser do
   # Die Spanne einer erkannten Dauer: `{menge, einheit}` oder `nil`, wenn sich
   # keine eindeutige Menge findet („seit mehreren tausend Jahren" — das ist
   # keine Zahl, sondern eine Geste).
+  @doc """
+  Liest einen Ausdruck als **Dauer**, wenn die Art schon feststeht:
+  `{menge, einheit}` oder `nil`.
+
+  **Ohne das Nachwort** („lang", „später", „hindurch"), das `parse/2`
+  verlangt. Der Unterschied ist der Kontext: In freiem Text ist „zwei
+  Stunden" mehrdeutig — es könnte eine Wirkdauer, eine Entfernung in Zeit
+  oder gar keine Zeitangabe sein, und deshalb ist das Nachwort dort die
+  Absicherung. Hat jemand den Ausdruck bereits als Spanne oder Frist
+  benannt (`Worker.Jack.Zeit`), ist diese Frage entschieden, und das
+  Nachwort zu verlangen hiesse, die Antwort zu ignorieren.
+
+  Das ist kein Randfall: Am Tisch sagt niemand „zwei Stunden lang" — gesagt
+  wird „das dauert gut zwei Stunden", und was Jack einträgt, ist das
+  Gesagte. Ohne diesen Weg ergaben die allermeisten Spannen **keine Zahl**,
+  und die Spanne ist der einzige Mechanismus für vergehende Spielzeit ohne
+  Uhr (#1247).
+  """
+  @spec dauer(String.t()) :: {integer(), atom()} | nil
+  def dauer(roh) when is_binary(roh), do: spanne_von(String.downcase(roh))
+  def dauer(_), do: nil
+
   defp spanne_von(s) do
     with [_, menge_roh, einheit_roh] <-
            Regex.run(~r/\b(#{@mengenwort}|die|der|das|den)\s+(#{@zeiteinheit})\b/iu, s),

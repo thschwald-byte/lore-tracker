@@ -38,16 +38,17 @@ flowchart TD
     C11["11 · Jack (Stufe 2, lokal)<br/>Gedächtnis → Extraktion → Verifikation<br/>→ SessionFactsExtracted + JackStandAbgelegt"]
     C12["12 · Registry: Guise + Bogen<br/>(best-effort, auf Jacks Modell)"]
     C13["13 · Bestand zurücklesen<br/>(keine Stufe, kein zweites Modell)"]
+    C13b["13b · Zeit-Jack (#1247)<br/>Gedächtnis → Einsortieren → Prüfen<br/>→ ZeitKettengliedSet je Glied + ZeitAnkerSet"]
   end
   subgraph OUT["Ausgabe · Geschwister aus den geprüften Fakten"]
     O1["Resümee-Jack<br/>Überblick → Schreiben → Durchsicht<br/>SessionSummaryGenerated + JackResuemeeStandAbgelegt"]
-    O2["Chronik<br/>ChronikEntryChanged · deterministisch"]
+    O2["Chronik-Jack<br/>Überblick → Schreiben → Durchsicht<br/>ChronikEntryChanged"]
     O3["Epos-Jack<br/>Überblick → Schreiben → Durchsicht<br/>EposEntryEdited + JackEposStandAbgelegt"]
   end
   A1 --> A2 --> A3 --> B4
   B4 --> B5 --> B6 --> B7 --> C8
-  C8 --> C9 --> C10 --> C11 --> C12 --> C13
-  C13 --> O1
+  C8 --> C9 --> C10 --> C11 --> C12 --> C13 --> C13b
+  C13b --> O1
   O1 --> O2
   O2 --> O3
 ```
@@ -70,7 +71,8 @@ flowchart TD
 | 12 | Registry: Guise-Merging (#714) + Bogen-Clustering (#832), best-effort, auf Jacks Modell ohne eigenes `num_ctx` | `pipeline.ex:547/551` | `ThreadRegistryComputed` | — |
 | 13 | Bestand nach den Registries zurücklesen (`Jack.Pipeline.geprueft/1`) — an der Stelle des Verify-Gates (Stufe 3, mit J4 entfernt) | `pipeline.ex:580` (`bestand_lesen`) | — | — |
 | 14a | **Resümee** — der Resümee-Jack (J5 #1209) in drei Läufen: Überblick (Fakten lesen, Form aus der Überschrift, Gliederung), Schreiben (jeder Satz nennt seine Fakten), Durchsicht (gnädig gegen die Fakten, best-effort). Scheitert Überblick oder Schreiben, endet der Lauf hier | `pipeline.ex` (`render`-Schritt) → `jack/resuemee/pipeline.ex` (`schreiben/3`, `veroeffentlichen/4`) | `SessionSummaryGenerated` (+ `satzquellen`, `zaehlwerte`, genaue `source_refs`), `JackResuemeeStandAbgelegt` | `resuemee_jack_model` (leer = `model_stage2_local`), sonst Jacks Endpunkt, Regler, `ctx_jack` |
-| 14b | **Chronik** — deterministische Datierung (kein LLM) | `pipeline.ex:596` (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline`) | `ChronikEntryChanged` | — |
+| 13b | **Zeit-Jack** (#1247) in drei Läufen: Gedächtnis (Ablauf verstehen) → Einsortieren (jede Äußerung in ein Kettenglied oder ausdrücklich heraus) → Prüfen (die gerechnete Linie geraderücken). Die **Kette** ist ein Zeitstrahl, auf dem Bäume stehen; sie beginnt leer, und Tischgespräch kommt nie hinein. Best-effort; gespeichert wird nach JEDEM Werkzeugaufruf | `pipeline.ex:730` (`zeit_jack/4`) → `jack/zeit/pipeline.ex` (`einordnen/3`) | `ZeitKettengliedSet` (eine Row je Glied), `ZeitAnkerSet`, `JackZeitStandAbgelegt` | `zeit_jack_model` (leer = `model_stage2_local`) |
+| 14b | **Chronik** — der Chronik-Jack (J7 #1211) in drei Läufen: Überblick (Phasen und Schlüsselszenen), Schreiben, Durchsicht. Jack urteilt über Reihenfolge und Bündelung, Elixir rechnet Ordnung und Datum (`Chronik.Ordnung`, `Chronik.Datierung`). **Seit Z3 (#1247) sieht er die Zeitlinie der Kette** — je Fakt, mit Beleg, neben dessen eigenem Datum: ein Angebot mit Prüfpflicht, dem er begründet widersprechen darf | `pipeline.ex` (`timeline`-Schritt) → `jack/chronik/pipeline.ex` | `ChronikEntryChanged` | `chronik_jack_model` (leer = `model_stage2_local`) |
 | 14c | **Epos** — der Epos-Jack (J6 #1210) in drei Läufen, alle best-effort: Überblick (Weg aus dem Resümee-Stand prüfen, Form aus der Überschrift, eigene Szenen), Schreiben (frei erzählt, Absatz für Absatz, optional mit Szene), Durchsicht (stilistisch und gegen grobe Schnitzer). Kapitelkopf deterministisch (#752); scheitert Überblick oder Schreiben, bleibt das bisherige Kapitel, der Lauf geht weiter | `pipeline.ex` (`render_epos`) → `jack/epos/pipeline.ex` (`schreiben/3`, `kapitel/6`, `veroeffentlichen/5`) | `EposEntryEdited` (+ `quellen`, `zaehlwerte`, `source_refs` aus den Szenen, `epos_backend: "jack"`), `JackEposStandAbgelegt` | `epos_jack_model` (leer = `model_stage2_local`), sonst Jacks Endpunkt, Regler, `ctx_jack` |
 
 ## Was man wissen muss
@@ -98,6 +100,11 @@ flowchart TD
   (daraus kommt der Weg) und läuft deshalb nach Resümee und Chronik.
 - **Jacks Stand bleibt liegen** (`JackStandAbgelegt`): darauf baut der Knopf
   „noch N Iterationen“ — nur Verifikationen, ohne neue Glättung.
-- **Chronik ist deterministisch** (kein LLM) — sie datiert die Fakten über
-  Anker + Offset (`Timeline.Graph.resolve`), Resümee (Resümee-Jack) und Epos
-  (Epos-Jack) sind die LLM-Texte.
+- **Alle vier Ausgaben schreibt inzwischen ein Jack**: Resümee (J5 #1209),
+  Chronik (J7 #1211), Epos (J6 #1210) und die Zeitlinie (#1247). Die Angabe
+  „Chronik ist deterministisch (kein LLM)" galt bis #1211 und stand hier zu
+  lange; der deterministische Pfad (`Timeline.Graph.resolve` über Anker +
+  Offset an den Fakten) ist abgelöst. Deterministisch geblieben sind die
+  **Rechnungen**, die die Jacks füttern: Ordnung und Datierung der Chronik
+  (`Chronik.Ordnung`, `Chronik.Datierung`), die Minuten der Zeitlinie
+  (`Timeline.Linie`) und der Epos-Kapitelkopf (#752).

@@ -129,6 +129,7 @@ defmodule Worker.Settings do
     # Jack. Leser: `Worker.Jack.Chronik.Pipeline.modell_name/0`. Ersetzt den
     # deterministischen Zeitstrahl, der kein Modell brauchte.
     chronik_jack_model: :no_default,
+    zeit_jack_model: :no_default,
 
     # J6 (#1210, E4): das Modell des Epos-Jack, der das Epos-Kapitel schreibt.
     # Leer (oder ungesetzt) = Jacks Modell (`model_stage2_local`); Endpunkt,

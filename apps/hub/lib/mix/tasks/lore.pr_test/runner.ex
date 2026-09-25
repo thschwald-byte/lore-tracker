@@ -554,13 +554,19 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       # in `ps`/`pgrep` ihrem Issue zuordenbar sind (Worker.Sidecar liest ihn).
       {"LORE_PRTEST_TAG", tag},
       # Laufsicht je Stage statt des geteilten 8099 (#1211): Stage-Port + 10,
-      # je weiterer Worker eine Dekade darueber (4001 -> 4011/4021). Der
-      # Versatz von 10 haelt Abstand zu den Stage-Ports selbst (4001..4007),
-      # die Dekade haelt zwei Worker DERSELBEN Stage auseinander, ohne in den
-      # Bereich der Nachbar-Stage zu laufen. Ohne das teilen sich Stage und
-      # worker_prod den Port 8099 — der Verlierer laeuft ohne Laufsicht
-      # weiter, und sein Denken ist weg (s. runtime.exs).
-      {"LORE_JACK_SICHT_PORT", "#{port + 10 + idx * 10}"}
+      # je weiterer Worker ZWEI Dekaden darueber. Der Versatz von 10 haelt
+      # Abstand zu den Stage-Ports selbst (4001..4009), die Endziffer haelt
+      # die Stages auseinander. Ohne das teilen sich Stage und worker_prod den
+      # Port 8099 — der Verlierer laeuft ohne Laufsicht weiter, und sein
+      # Denken ist weg (s. runtime.exs).
+      #
+      # **Zwei Dekaden je Worker, nicht eine (#1247):** der Zeit-Jack hat eine
+      # eigene Sicht auf Stage-Port + 20. Bliebe der Worker-Versatz bei 10,
+      # bekaeme Worker 1 seine Jack-Sicht auf genau diesen Port (4001 -> beide
+      # 4021). Die Paarung ist damit: Worker 0 → 4011/4021, Worker 1 →
+      # 4031/4041. Bei bis zu 9 Stages bleibt jede Endziffer eindeutig.
+      {"LORE_JACK_SICHT_PORT", "#{port + 10 + idx * 20}"},
+      {"LORE_ZEIT_SICHT_PORT", "#{port + 20 + idx * 20}"}
     ] ++ if(discord?, do: [], else: [{"DISCORD_BOT_TOKEN", @sentinel_token}])
   end
 

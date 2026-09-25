@@ -50,7 +50,7 @@ defmodule Worker.Status.LageTest do
 
     test "und die Gruppen stehen trotzdem alle da, in Laufreihenfolge" do
       spalten = Lage.baue([], false)["gruppen"] |> Enum.map(& &1["spalte"])
-      assert spalten == ["glatt", "fakten", "summaries", "chronik", "epos", "boegen"]
+      assert spalten == ["glatt", "fakten", "zeit", "summaries", "chronik", "epos", "boegen"]
     end
   end
 

@@ -292,6 +292,14 @@
           <div class="refs">pipeline.ex<span>:580 bestand_lesen</span></div>
         </div>
       </div>
+      <div class="stage">
+        <div class="card">
+          <div class="top"><span class="step">13b</span><h3>Zeit-Jack — die Kette</h3></div>
+          <p><b>Die Zeit hängt an den Äußerungen</b> (#1247), nicht mehr am Fakt. Drei Läufe: Gedächtnis (Ablauf verstehen) → Einsortieren (jede Äußerung kommt in ein Kettenglied oder ausdrücklich heraus) → Prüfen (die gerechnete Linie geraderücken). Die <em>Kette</em> ist ein Zeitstrahl, auf dem Bäume stehen: ein Glied ist ein zusammenhängender Kontext und kann Unterglieder tragen. Sie beginnt leer; Tischgespräch kommt nie hinein. Gespeichert wird nach <em>jedem</em> Werkzeugaufruf — eine Row je Glied, damit ein abgebrochener Lauf seine Arbeit behält. Best-effort.</p>
+          <div class="chips"><span class="chip evt">ZeitKettengliedSet</span><span class="chip evt">ZeitAnkerSet</span><span class="chip evt">JackZeitStandAbgelegt</span><span class="chip"><span class="k">Modell:</span> zeit_jack_model (leer = Jacks)</span></div>
+          <div class="refs">pipeline.ex<span>:730 zeit_jack</span>jack/zeit/pipeline.ex<span>einordnen/3</span></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -309,8 +317,8 @@
       <div class="out-card">
         <h3>Chronik</h3>
         <div class="evt">ChronikEntryChanged</div>
-        <p><b>Deterministisch</b>, kein LLM: <code>Timeline.Graph.resolve</code> datiert die Fakten (Anker + Offset), <code>Render.timeline</code> schreibt die Einträge.</p>
-        <div class="chips"><span class="chip det">det. · kein LLM</span></div>
+        <p><b>Chronik-Jack</b> (J7 #1211) in drei Läufen: Überblick (Phasen und Schlüsselszenen), Schreiben, Durchsicht. Jack urteilt über Reihenfolge und Bündelung, <em>Elixir rechnet</em> Ordnung und Datum (<code>Chronik.Ordnung</code>, <code>Chronik.Datierung</code>) — ein Sprachmodell addiert keine Tage. Der frühere deterministische Pfad (<code>Timeline.Graph.resolve</code> über Anker am Fakt) ist damit abgelöst. <b>Seit Z3 (#1247)</b> sieht er zusätzlich die <em>Zeitlinie</em> der Kette — je Fakt, mit dem Zitat, aus dem sie gelesen wurde, und neben dem eigenen Datum des Fakts. Ein Angebot mit Prüfpflicht: Er darf begründet abweichen, und wo etwas verdächtig aussieht, liest er selbst im Mitschnitt nach.</p>
+        <div class="chips"><span class="chip"><span class="k">Modell:</span> chronik_jack_model (leer = Jacks)</span></div>
       </div>
       <div class="out-card">
         <h3>Epos</h3>

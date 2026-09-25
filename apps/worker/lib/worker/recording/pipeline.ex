@@ -563,6 +563,7 @@ defmodule Worker.Recording.Pipeline do
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
            {:ok, verified} <- bestand_lesen(campaign.id, session.id, verify),
+           _ = zeit_jack(session, campaign, run_id, deps),
            {:ok, rendered} <- tag_error(render.(verified), :render) do
         Worker.Jack.Resuemee.Pipeline.veroeffentlichen(session, campaign, verified, rendered)
 
@@ -706,6 +707,52 @@ defmodule Worker.Recording.Pipeline do
   # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
   # weder die anderen Artefakte noch den Gesamtlauf. Liefert den {:ok, value}-
   # Wert des Schritts oder nil.
+  # #1247 (Z4): der Zeit-Jack ordnet die Äußerungen dieser Sitzung in die
+  # kampagnenweite Linie ein — NACH dem Bestand (er liest die Fakten für sein
+  # Gedächtnis) und VOR dem Resümee (die Linie ist Wahrheitsbasis, keine
+  # Prosa, und der Chronik-Jack muss sie lesen können).
+  #
+  # **Best effort, und zwar so, dass der Lauf weiterläuft.** Er liefert
+  # immer `:ok` — eine Linie ist eine Verbesserung, keine Vorbedingung, und
+  # was ein abgebrochener Lauf gesetzt hat, bleibt gesetzt (jeder Anker ist
+  # einzeln geprüft). Das `rescue` fängt auch einen Raise: dieselbe Lehre wie
+  # bei der Chronik-Durchsicht (#1211), wo eine Ausnahme in der letzten Stufe
+  # den Prozess mitnahm und die Arbeit von 31 Minuten nie veröffentlicht
+  # wurde.
+  #
+  # **Er steht als schlichtes Match in der Kette, nicht als `:ok <- …`**
+  # (bob, 19.09.2026). Die Stelle im Ablauf soll an der Kette selbst sichtbar
+  # sein — dafür braucht es aber kein `<-`, und ein `<-` bedeutet genau
+  # eines: hier kann die Kette enden. Wer die Zeile läse, suchte danach den
+  # `else`-Zweig und fände die Antwort „nichts, kann er nicht" nur im
+  # Kommentar. Die Form verspräche einen Ausgang, den es nicht gibt.
+  # (`einhaengen_test.exs` hält Position und Ausgangslosigkeit fest.)
+  defp zeit_jack(session, campaign, run_id, deps) do
+    case Map.get(deps, :zeit, :standard) do
+      :aus ->
+        :ok
+
+      :standard ->
+        Worker.Jack.Zeit.Pipeline.einordnen(session, campaign,
+          melde_stufe: stufen_melder(campaign.id, session.id, run_id)
+        )
+
+        :ok
+
+      fun when is_function(fun, 2) ->
+        fun.(session, campaign)
+        :ok
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "Pipeline[wahrheitsbild]: Zeit-Jack mit Ausnahme beendet, der Lauf geht " <>
+          "weiter: #{Exception.message(e)}"
+      )
+
+      :ok
+  end
+
   # J7 (#1211): der Chronik-Jack. Wie der Epos-Jack ohne `with_status` — er
   # meldet seine Stufen selbst (`chronik_ueberblick`, `timeline`,
   # `chronik_durchsicht`). Ein Fehlschlag reisst den Lauf nicht mit und lässt

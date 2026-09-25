@@ -45,7 +45,7 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
   **Zwei Bestandsdateien laufen über eine Ratsche statt über eine Ausnahme** (`bestand:`-Param in `.credo.exs`): `einstellungen_live.ex` (659) und `dashboard_live.ex` (690). Angefangen hat die Liste mit vier Einträgen (775/691/611/602); `snapshots.ex` fiel mit #1152 unter die Grenze, `artifacts.ex` mit J4 (#1207, der Probelauf nahm seine vier Leser mit), und beide Einträge sind ersatzlos gestrichen — genau der Weg, den die Ratsche vorzeichnet. Sie dürfen ihren heutigen Stand halten, aber **nicht wachsen** — eine Zeile mehr rötet den Check; sinkt eine unter 600, greift wieder die reguläre Grenze und ihr Eintrag gehört ersatzlos raus. Der Unterschied zur Ausnahme ist der Punkt: eine Ausnahme ist unsichtbar und wächst mit, eine Ratsche schrumpft von selbst. Zwei Test-Wächter halten die Liste ehrlich (`module_too_long_test.exs`): kein Eintrag darf auf eine geschrumpfte Datei zeigen (sonst Altlast, die wie eine Regel aussieht), und kein Eintrag darf über dem Ist-Stand liegen (sonst gäbe er stillschweigend Wachstum frei) — beide gegengeprüft.
 
   **Der Schnitt dieser Dateien ist bewusst NICHT Teil davon.** Genau das ist der Anlass von #1097: die letzten beiden Schnitte (`Pipeline.Zeit` aus `pipeline.ex`, `AudioBuffer.Recovery` aus `audio_buffer.ex`) entstanden am Merge-Tor, weil Credo rot war — nicht, weil jemand das Modul zu groß fand. Dass sie trotzdem kohäsiv ausfielen, war Glück, kein Verfahren. **Ehrliche Grenzen des Checks, unverändert:** Zeilenzahl bleibt ein Proxy — ein Modul mit 400 Code-Zeilen und sechs Zuständigkeiten sieht er nicht, ein generierter 700-Zeilen-Mapper wird geflaggt, obwohl er keins ist. Er misst den **Zwischenstand** einer Datei, nicht das Ergebnis einer Änderung (real: `audio_buffer.ex` lief 981 → 1157 → 959, der PR verkleinerte die Datei und riss die Grenze trotzdem). Und zwei parallele Branches, von denen keiner allein die Grenze reißt, können sie zusammen reißen — rot wird dann master, nicht der PR (#1090-Klasse).
-- `mix dialyzer` — Typ-Analyse (Issue #540). Fängt Spec-Drift / unmögliche Guards / dead `{:error,_}`-Pfade. Erster Lauf baut den PLT (`priv/plts/`, ~2,5 min, gitignored); danach ~1 min. **Findings-Cleanup ist durch (Issue #589: 80 → 0 actionable Findings über 4 Cuts).** `mix dialyzer` läuft sauber durch (`done (passed successfully)`). Die `.dialyzer_ignore.exs`-Baseline hält **genau einen** bestätigten Dep-FP (`Phoenix.Tracker.update/5`-Success-Typing, Cut 2); alle anderen Suppressions sind co-lokierte `@dialyzer {:nowarn_function}`/`{:no_opaque}`-Attribute mit Begründung am Code (intentionale Boundary-Defense, anon halt-Closures, dev-Tooling-Confusion). CI-Step läuft **auf PRs + master-Push** und ist seit #619 **blockend** (kein `failure: ignore` mehr) — ein neues actionable Dialyzer-Finding rotet den PR-Check und blockt den Merge (echtes Merge-Gate; der #603-warn-Soak ist gelaufen, #557-Lesson erfüllt: erst beobachten, dann blockieren). Neue Dep-FPs gehören **vor** dem Merge mit Begründung in `.dialyzer_ignore.exs`. Kein PLT-Cross-Pipeline-Cache auf Codeberg, daher ~3,5 min/PR (sequenziell **nach** `test`, seit Issue #668 — die frühere `depends_on: [compile]`-Parallelität sprengte den Codeberg-Runner-RAM, weil zwei Dep-Compiles in unterschiedlichen MIX_ENVs gleichzeitig liefen → graceful-stop ohne echten Fehler).
+- `mix dialyzer` — Typ-Analyse (Issue #540). Fängt Spec-Drift / unmögliche Guards / dead `{:error,_}`-Pfade — und, seit #1247 belegt, **eine Schlüsselform, die kein Test sieht**: Ein Match auf `%{"blocks" => …}` gegen eine Map mit Atom-Schlüsseln traf nie, der betroffene Schritt meldete in jedem Lauf „fehlt", und weil er best-effort war, fiel es niemandem auf. Ein Test hätte das nicht gefangen — er baut die Eingabe mit derselben Annahme, die der Code trifft (dieselbe Falle wie bei den Wächtern, s. „Ein Wächter, der nie anschlägt"). Der Dialyzer ist an dieser Stelle das einzige Gate, das eine Annahme gegen die Wirklichkeit prüft statt gegen sich selbst. Erster Lauf baut den PLT (`priv/plts/`, ~2,5 min, gitignored); danach ~1 min. **Findings-Cleanup ist durch (Issue #589: 80 → 0 actionable Findings über 4 Cuts).** `mix dialyzer` läuft sauber durch (`done (passed successfully)`). Die `.dialyzer_ignore.exs`-Baseline hält **genau einen** bestätigten Dep-FP (`Phoenix.Tracker.update/5`-Success-Typing, Cut 2); alle anderen Suppressions sind co-lokierte `@dialyzer {:nowarn_function}`/`{:no_opaque}`-Attribute mit Begründung am Code (intentionale Boundary-Defense, anon halt-Closures, dev-Tooling-Confusion). CI-Step läuft **auf PRs + master-Push** und ist seit #619 **blockend** (kein `failure: ignore` mehr) — ein neues actionable Dialyzer-Finding rotet den PR-Check und blockt den Merge (echtes Merge-Gate; der #603-warn-Soak ist gelaufen, #557-Lesson erfüllt: erst beobachten, dann blockieren). Neue Dep-FPs gehören **vor** dem Merge mit Begründung in `.dialyzer_ignore.exs`. Kein PLT-Cross-Pipeline-Cache auf Codeberg, daher ~3,5 min/PR (sequenziell **nach** `test`, seit Issue #668 — die frühere `depends_on: [compile]`-Parallelität sprengte den Codeberg-Runner-RAM, weil zwei Dep-Compiles in unterschiedlichen MIX_ENVs gleichzeitig liefen → graceful-stop ohne echten Fehler).
 - `mix lore.coverage_floor` — Per-Modul-Coverage-Floors (Issue #537; ExCoveralls kennt nur einen globalen `minimum_coverage`). Ratchet auf dem heutigen Stand pro kritischem Modul (Permissions 80 %, EventBridge 88 %, Commands 30 %, Materializer 70 %, Pipeline 35 %, Repo 68 %, CloudHelper 60 %). Braucht vorher `mix coveralls.json` pro App. CI-Step **seit #658 blockend** (vorher `failure: ignore`-Warn-Soak, der einen CloudHelper-Breach still durchließ — `failure: ignore` entfernt, analog Dialyzer #619). Deterministisch (kein LLM) → kein Flaky-Risiko; ein Floor-Unterschritt rotet den PR-Check.
 - `iex -S mix` — start all apps in an IEx session
 
@@ -1901,7 +1901,704 @@ Datum, wo keiner einen Tag trägt. **Und vor allem: ob die Flughöhe auf echten
 Daten stimmt, ist nicht gemessen** — das zeigt erst ein Lauf mit dem echten
 Modell.
 
+**Seit Z3 (#1247) sieht der Chronik-Jack die Zeitlinie der Kette** — je Fakt,
+mit dem Zitat, aus dem sie gelesen wurde, und **neben** dessen eigenem
+`in_game_date`. Es ist ein Angebot mit Prüfpflicht: Er darf begründet
+abweichen, soll nichts ungeprüft übernehmen, und wo etwas verdächtig aussieht,
+liest er selbst im Mitschnitt nach. Details im Abschnitt „Die Zeit hängt an den
+Äußerungen" weiter unten; der Session-Anker-Fallback in `feste_punkte/3` bleibt
+davon unberührt, weil eine Chronik auch ohne Kette datieren können muss.
+
 **Einstellung:** `chronik_jack_model`, leer = Jacks Modell.
+
+### Die Zeit hängt an den Äußerungen: der Zeit-Jack und die Kette (Issue #1247)
+
+Bis hierher trug der **Fakt** die Zeit, in Feldern, die die Extraktion
+nebenbei ausfüllte. Das hat nicht getragen, und zwar belegt: 543 von 544
+Chronik-Einträgen einer echten Kampagne lagen auf demselben Tag (#1092), der
+deterministische Zeit-Vorlauf war gemessen wirkungslos und ist wieder
+entfernt (#1213), und zwei der drei Ankerformen kamen in echten Daten **null
+Mal** vor (#1109). Ein Fakt ist auch der falsche Träger: Er entsteht bei
+jeder Extraktion neu, seine ID hängt am Wortlaut, und eine Zeitangabe an ihm
+ist nach dem nächsten Regenerate weg.
+
+**Seit #1247 hängt die Zeit an den Utterances** — der stabilsten Schicht des
+Systems; sie werden nie neu erstellt.
+
+#### Zwei Achsen
+
+Maintainer, 20.09.2026: „es gibt 2 achsen — 1: die kette: in zeitlicher
+reihenfolge, 2: die sprechlinie: was wann gesprochen wurde. 2 bleibt
+unverändert, 1 wird komplett neu aufgebaut."
+
+Vorher gab es nur eine: `Worker.Timeline.Linie` nahm die Sprechreihenfolge
+und **mutierte** sie mit Verschiebungen. Was gesprochen wurde und wann es
+geschah war dasselbe Ding — für eine Uhrzeit im Spiel fällt beides zusammen,
+für einen Rückblick nicht. Am echten Lauf aufgeschlagen: Der Weltbau-Block am
+Sitzungsanfang erzählt die Jahre 2000 bis 2011, die Sitzung spielt 2080; die
+eine Achse las das als Folge und rechnete rückwärts.
+
+#### Die Kette: ein Zeitstrahl, auf dem Bäume stehen
+
+    Zeitstrahl:  [ Glied ]──[ Glied ]────────────[ Glied ]
+                                │
+                      ┌─────────┴─────────┐
+                   [ Glied ]          [ Glied ]
+
+Ein **Glied** ist ein zusammenhängender Kontext — eine Szene, ein Auftrag,
+ein Abend. Es trägt die Äußerungen, die unmittelbar dazugehören, **und** kann
+feinere Kontexte als Unterglieder enthalten. Ein Glied hängt **entweder am
+Zeitstrahl oder an einem Glied**, nie an beidem; die Glieder an einem Glied
+sind wieder eine Kette, mit denselben Wörtern (`vor`, `nach`, `anfang`).
+Daraus folgt die Regel beim Versetzen: Ein Glied bewegt sich unter seinen
+Geschwistern, nicht aus seinem Kontext heraus.
+
+**Jedes Glied hat eine eigene Kennung, auf jeder Tiefe**, vergeben beim
+Anlegen und **stabil über jede Änderung**: Wächst eine Szene um eine Zeile,
+bleibt sie dieselbe Szene. Eine content-adressierte Kennung (Muster
+`Linie.anker_id/3`) wäre hier falsch — sie änderte sich mit dem Schnitt, und
+jeder Bezug zeigte danach ins Leere. **Der Preis ist benannt:** Eine
+zufällige ID konvergiert nicht; zwei Worker, die dasselbe Glied bilden,
+vergeben verschiedene. Hinnehmbar, weil ein Glied in EINEM Lauf entsteht und
+dieser Lauf sein Autor ist — die Anker daneben bleiben content-adressiert und
+konvergieren weiterhin.
+
+**Die Äußerungen beginnen ohne Einordnung** (Maintainer: „jack soll bewusst
+einsortieren"). Es gibt keine stillschweigende Übernahme der
+Sprechreihenfolge; jede Äußerung braucht eine Entscheidung. Mit einem Default
+hiesse „nicht angefasst" zweierlei zugleich: „die Reihenfolge stimmt hier" und
+„ich bin noch nicht hingekommen".
+
+**Die Kette selbst beginnt nicht leer** — sie gehört der Kampagne und ist
+älter als der Lauf (s. „Die Kette ist persistent" unten). `Kette.neu/0` ist
+der Anfang einer Kampagne, nicht der eines Laufs.
+
+**Zwei Zeiten sind zwei Glieder.** Sobald in einem Abschnitt zwei
+verschiedene Zeitpunkte der Spielwelt vorkommen, sind es zwei Glieder — auch
+wenn derselbe Sprecher ohne Pause durchredet. Der Anlass war ein Lauf, in dem
+ein Glied „Welteinleitung" über 127 Zeilen die Vitas-Plage (frühe 2000er),
+die ersten Metamenschen (2010) **und** Ryumyo am Mount Fuji (24.12.2011)
+trug: elf Jahre in einem Glied, das genau eine Zeit tragen kann. Der
+Sprechabschnitt bleibt einer; die Kette ist nicht die Sprechlinie.
+
+**Was hineingehört, entscheidet sich zweistufig** (Maintainer, 20.09.2026:
+„tisch gehört nicht in die kette — die kette ist die timeline der
+spielwelt"): Tisch fliegt immer heraus, auch wenn eine Uhrzeit darin vorkommt
+(„es ist schon zehn, ich muss um vier aufstehen"); was in der **Spielwelt**
+liegt, gehört hinein und an seinen zeitlichen Platz — auch Weltgeschichte,
+die nie jemand gespielt hat.
+
+Die Rechnung liegt pur in `Worker.Timeline.Kette` (`anhaengen/3`,
+`unterhaengen/4`, `erweitern/4`, `versetzen/3`, `loeschen/2`, `draussen/3`).
+Alle halten den Zeitstrahl **durchgehend**, und jede eingereihte Äußerung
+steht **genau einmal** im ganzen Baum — das prüft `kette_test.exs` nach jeder
+Operation als MENGE, nicht als Länge.
+
+#### Die drei Läufe
+
+    :gedaechtnis   den Ablauf verstehen, nichts setzen
+    :einsortieren  durch den Mitschnitt gehen und einordnen
+    :pruefen       die entstandene Linie lesen und geraderücken
+
+Anders als die Extraktion **sieht dieser Jack sein Ergebnis**: `lies_kette()`
+zeigt nicht die Eingaben, sondern die gerechnete Linie. Ein einzelner Anker
+kann für sich richtig sein und die Reihe trotzdem falsch — das ist nur am
+Ergebnis zu sehen.
+
+**Der Prüf-Lauf erbt, was der Einsortier-Lauf getan hat** — Anker, Notizen,
+Leseabdeckung, Einordnung, Kette und Konflikte, aus **einer** Liste
+(`Zeit.erbe/1`), aus der beide Seiten lesen. Vorher stand sie an zwei
+Stellen, und genau das ging schief: `kette` wurde übergeben und nie
+ausgepackt. Der Prüf-Lauf startete vor einer leeren Kette, baute keine — sein
+Auftrag sagt ihm, er solle von den Befunden ausgehen — und sein Stand gewinnt
+am Ende. Die ganze Einsortier-Arbeit war weg, sichtbar nur an einem
+Widerspruch in den Zahlen: 2168 Zeilen eingeordnet, null in der Kette.
+
+#### Gespeichert wird nach JEDEM Werkzeugaufruf
+
+Maintainer, 24.09.2026: „jeder werkzeugaufruf speichert in db" — und, auf den
+Einwand „der Stand ist mehr als die Kette", geht der ganze Stand mit.
+
+Der Anlass sind zwei Totalverluste an einem Tag: ein Lauf über 56 Minuten
+(Wiederholungsschleife) und einer über 62 Minuten (2168 Zeilen gelesen, 1992
+eingeordnet, 25 Glieder gebaut, dann Wiederholungssperre). Beide endeten mit
+**null** Zeilen in der Datenbank, weil erst nach `Zeit.laufen/2`
+veröffentlicht wurde — und dorthin kam keiner von beiden.
+
+`Halter.start_link/2` nimmt dafür `:nach_aufruf` (`fn stand -> stand end`),
+`aufrufen/3` ruft es nach jedem Werkzeug. **Der Halter weiss nichts vom
+Speichern** — er ist geteilt (Resümee, Epos, Chronik, Zeit), und ein
+Jack-spezifischer Schreibpfad dort wäre die Auffangzweig-Klasse aus #1211.
+`Worker.Jack.Zeit.Speicher` schreibt drei Dinge und vergleicht jedes gegen
+den Bestand, damit nur die Differenz als Ereignis rausgeht; ein Fehler dabei
+wird laut geloggt und beendet den Lauf nicht.
+
+#### Datenmodell
+
+| Tabelle | Inhalt |
+|---|---|
+| `worker_zeit_kette` | **eine Row je Glied** (`ZeitKettengliedSet`). Schlüssel ist die Glied-Kennung; der Platz steht als Bezug auf die Kennung des linken Nachbarn (`vorher`) und des Elterngliedes (`eltern`). Gelöste Äußerungen liegen in derselben Tabelle mit `art: "draussen"` und der Utterance-ID als Schlüssel — die Schlüsselräume sind disjunkt. |
+| `worker_zeit_anker` | eine Row je Anker (`ZeitAnkerSet`), content-adressiert über die sortierten Utterance-IDs. Eine menschlich abgesegnete Zeile überschreibt kein Lauf. |
+| `worker_jack_zeit_staende` | der übrige Stand je Sitzung (`JackZeitStandAbgelegt`): Leseabdeckung, Einordnung, Notizen, Konflikte. |
+
+Alle drei: LWW über `event_id`, **nie ein `:mnesia.delete`** — ein entferntes
+Glied bekommt einen Grabstein (`entfernt: true`). Cascade bei `SessionDeleted`
+und `CampaignDeleted`. `Worker.Timeline.Kette.zu_zeilen/1` und
+`aus_zeilen/1` sind die Umkehrung voneinander; ein gerissener Bezug hängt das
+Glied hinten an und **wird gemeldet**, statt es zu verlieren.
+
+**Der Platz als Nachbar-Kennung war eine Entscheidung gegen zwei
+Alternativen** (Maintainer, 20.09.2026): ein Bezug auf eine Äußerung des
+Nachbarn (stabiler, aber die Reihenfolge müsste zur Lesezeit aufgelöst
+werden) und ein Rang als Zahl (trivial zu sortieren, aber jedes Einfügen
+schreibt die Nachbarn um).
+
+#### Im Lauf
+
+Eingehängt in `run_wahrheitsbild` als `zeit_gedaechtnis` und `zeit` (Gruppe
+`zeit`, **best-effort**, keine Spalte) — nach Jacks Verifikation, vor dem
+Resümee. Der Prüf-Lauf hat bewusst **keine** eigene Stufe: Er ist derselbe
+Gegenstand wie das Einsortieren, und zwei Balken für eine Arbeit wären
+irreführend. Ein Fehlschlag reisst Resümee, Chronik und Epos nicht mit; ein
+`rescue` in `Pipeline.zeit_jack/4` fängt auch eine Ausnahme ab.
+
+**Modell:** `zeit_jack_model`, leer = Jacks Modell. Eigene lokale Laufsicht
+neben der von Jack: `LORE_ZEIT_SICHT_PORT`, sonst die Jack-Sicht **+ 10**
+(Default also 8109 gegen 8099). `mix lore.pr_test` vergibt Stage-Port + 20 je
+Worker — Stage 4005 bekommt 4025, ihr zweiter Worker 4045. Wie bei der
+Jack-Sicht gilt: **im Worker-Log nachsehen, auf welchem Port sie wirklich
+läuft**, statt einen anzunehmen; ein belegter Port ist eine Warnung, kein
+Startfehler, und der Denkstrom eines Laufs existiert nur dort.
+
+#### Gemessen am echten Lauf (seattleV5 S1, 2168 Äußerungen)
+
+Der erste durchgelaufene Lauf (24.09.2026, 37 Minuten): **27 Glieder**, 1164
+Zeilen eingereiht, 1004 draussen — alles entschieden, ein einziger Befund.
+Die Weltgeschichte ist nach Zeitpunkten zerlegt (bis 2000 / 2010+2011 / nach
+2011 / Gegenwart 2080 / Matrix-Crash 2060er), das Gelöste trägt brauchbare
+Gründe (Charaktererstellung 389 Zeilen, Foundry-Technik 119, Regelklärung 75).
+
+**Und trotzdem undatiert: alle zehn gesetzten Anker hatten `minute: nil`.**
+Drei Ursachen, alle an genau diesen Werten gemessen:
+
+* **Erläuterung im Wert** (fünfmal): „2070 (Konzernkriege, Fuji zerbricht)".
+  Ohne den Klammerzusatz lesbar.
+* **Zwei Ausdrücke mit Schrägstrich** (zweimal): „Ende 2011 / am 24. Dezember
+  2011". Jeder für sich lesbar.
+* **Dauer als Zeitpunkt** (dreimal): „60 Jahre her". Das lehnt der Parser zu
+  Recht ab.
+
+Dazu ein Parser-Mangel: „um 2010" war nicht lesbar, obwohl „2010" und „im
+Jahr 2010" es sind — das Füllwort stand in keiner Liste. Es fällt jetzt, mit
+derselben Schranke wie „kurz vor 2080": nur vor einer drei- bis fünfstelligen
+Zahl, damit „um sieben" eine Uhrzeit bleibt.
+
+**Jeder Hinweis nennt den Weg** (am laufenden Lauf gesehen, 25.09.2026). Jack
+bekam „als Zeit lesbar ist er nicht — so ginge es: …", verstand es richtig und
+wollte den Anker korrigieren — nur sieht kein Werkzeug nach „korrigieren" aus.
+Er nahm `anker_ersetzen` (das eine Kennung aus einer **Rückfrage** braucht),
+scheiterte an der leeren Kennung und benannte den Widerspruch selbst: „The
+system accepted the anchor without asking for clarification, even though it
+flagged that it couldn't read it clearly." Der Widerspruch ist echt — der
+Anker GILT (er ordnet, er datiert nur nicht), und daneben steht „nicht
+lesbar". Zwei Runden gingen verloren, dann fand er `nimm_anker_zurueck`
+selbst. Seitdem sagt jeder Vorschlag beides: dass der Anker gilt, und dass
+Ersetzen über `nimm_anker_zurueck` läuft; `anker_ersetzen` nennt in seiner
+Beschreibung die Kennungspflicht und die Alternative.
+
+**Die Antwort fragt jetzt, statt zu raten** (Maintainer, 24.09.2026: „man
+muss den context auswerten — ‚um 7' kann beides sein"). Den Kontext hat genau
+einer: Jack. Also probiert die Antwort beide Lesarten durch denselben Parser
+und nennt nur, was aufgeht — „um 7" bekommt „sag es eindeutig, ‚7 Uhr' oder
+‚im Jahr 7'", „um 70" nur „im Jahr 70" (70 ist keine Stunde). Das ist
+ausdrücklich **keine** Bedeutungserkennung (#1109/#1213: zweimal gescheitert,
+zweimal abgeschaltet), sondern eine Umformung mit anschliessender Prüfung.
+
+#### Zurücknehmen können, ohne Ersatz
+
+Ein Anker, der nicht trägt, muss weg — und das war bis zum 24.09. nicht
+möglich. Im Denkstrom des Laufs steht fünfzehnmal derselbe Gedanke: die
+Spanne „60 Jahre her" zieht die Linie auf 2055 zurück, sie braucht einen
+Bezugspunkt, den es nicht gibt, *„the cleanest solution is to remove this span
+entirely"*. Sechs Minuten, fachlich richtig erkannt — und `anker_ersetzen`
+verlangt einen Ersatz, „nichts" ist keiner. Die Spanne stand am Ende des Laufs
+unverändert da.
+
+**Die Mechanik war längst gebaut**: `Setzen.loesche_kettenplatz/2` schreibt
+die Rücknahme unter derselben Adresse mit Art `geloest`, samt der Begründung,
+warum sie die Content-Adressierung dabei bewusst bricht — mit **null
+Aufrufern**. Die Klasse „Apparat ohne Producer", zum dritten Mal in diesem
+Repo (#724, #1109).
+
+`nimm_anker_zurueck(zeilen, art, grund)` ist dieser Aufrufer. Das `art`-Feld
+ist Pflicht, weil an einer Zeile mehrere Anker hängen dürfen (Spanne und
+Zeitpunkt ergänzen sich, `Stand.an/3`); abgesegnetes bleibt, und die Absage
+nennt Datum, Wortlaut und `melde_konflikt` als Weg. Der Grund steht danach an
+der Stelle — ohne ihn wäre nicht nachvollziehbar, was Jack gesehen hat.
+
+**Nebenwirkung: `anker.ex` riss die 600-Code-Zeilen-Grenze** (648).
+Geschnitten ist nach der Frage, die ein Leser stellt — *setzt dieses Werkzeug
+eine Zeit, oder hält es fest, dass keine gesetzt wird?* —, nicht nach Zeilen:
+`Worker.Jack.Zeit.Vorbehalte` trägt `melde_konflikt`,
+`kettenplatz_unklar` und `zweifel`. Der billige Schnitt (Definitionen gegen
+Ausführung) hätte zwei Hälften derselben Sache getrennt. Dass die drei zusammen
+knapp reichen, war Glück; dass sie zusammengehören, ist es nicht (#1097).
+
+#### Die Kette ist persistent — ein Lauf ergänzt sie
+
+Maintainer, 25.09.2026: „die kette ist ja persistent — jeder weitere lauf soll
+diese kette ergänzen — nicht jede session schreibt eine neue kette." Als Frage
+gestellt, und die Antwort war: **stimmte nicht**, an zwei Stellen.
+
+**Jeder Lauf begann leer.** `Worker.Jack.Zeit.Eingabe.aus_repo/1` lud die
+Kette nicht, `Stand.neu/3` fiel auf `Kette.neu/0` zurück — und weil
+`Kettenspeicher.veroeffentlichen/4` gegen den Bestand vergleicht, bekam alles
+Bestehende einen **Grabstein**. Ein Regenerate löschte damit die Kette der
+Sitzung, statt sie zu ergänzen; seit „speichern nach jedem Werkzeugaufruf"
+(derselbe Tag) passierte das schon beim **ersten** Aufruf, bevor der Lauf
+irgendetwas eingeordnet hatte.
+
+**Und über Sitzungsgrenzen gab es gar keine Ordnung.** Der Lauf sah die
+Glieder anderer Sitzungen nicht und konnte nicht sagen, wo seine liegt; die
+kampagnenweite Kette war eine Aneinanderreihung ohne verbindende Bezüge.
+
+Seitdem lädt die Eingabe `Worker.Repo.Zeit.kette(campaign.id)` — **die ganze
+Kampagne**, nicht die Sitzung, aus demselben Grund, aus dem die Chronik als
+einziger Jack alles sieht: Geschehen hört an der Sitzungsgrenze nicht auf. Der
+Stand erbt sie über `Zeit.erbe/1` (dieselbe eine Liste, aus der auch der
+Prüf-Lauf liest).
+
+**Drei Regeln im Speicher, und jede schliesst einen Verlustfall:**
+
+- **Verglichen wird kampagnenweit.** Sonst gelten die Glieder anderer
+  Sitzungen als neu, und der Lauf schreibt sie mit seiner `session_id` zurück.
+- **Grabsteine nur für die eigene Sitzung.** Ein fremdes Glied, das in dieser
+  Kette fehlt, ist kein gelöschtes — es ist eines, das dieser Lauf nicht
+  kennt. Es zu begraben hiesse, fremde Arbeit wegzuwerfen.
+- **Ein bestehendes Glied behält seine Sitzung** (`sitzung_fuer/3`, die Row
+  trägt sie seit diesem Cut lesbar mit). Ohne das wanderte ein Glied bei jeder
+  Änderung durch einen fremden Lauf mit, und `kette(cid, sid)` zählte es
+  plötzlich anders.
+
+Der Vergleich lässt `session_id` und `glied_id` aussen vor: Beide stehen in
+Row-Spalten, nicht im Blob — ohne das sähe jede bestehende Zeile geändert aus,
+und der Lauf schriebe die ganze Kette bei jedem Werkzeugaufruf neu.
+
+**Der Auftrag sagt es jetzt auch.** „Die Kette ist älter als dieser Lauf": Du
+ergänzt, du baust nicht neu; fremde Glieder darfst du erweitern und versetzen
+(mit Grund), löschen ist die Ausnahme; und wo deine Sitzung liegt, entscheidest
+du — meistens hinten, aber ein Rückblick am Sitzungsanfang gehört zwischen die
+alten Glieder. Ein bestehender Wächter (`auftragsvorlagen_test.exs`) hing an
+dem Satz „Die Kette beginnt leer" und hat den Widerspruch gefangen; er prüft
+jetzt die neue Aussage.
+
+**Die Einordnung kommt aus der geladenen Kette** (Maintainer, 25.09.2026: „ich
+will den ersten Lauf nicht noch mal machen müssen, bevor wir den Lauf mit
+Kette testen"). Ohne das war die Persistenz **halb**: Die Glieder überlebten,
+die Einordnung nicht. Ein zweiter Lauf startete mit vollständiger Kette und
+leerer `einordnung` — und weil `Stand.ohne_einordnung/1` genau die prüft,
+verlangte `fertig()` eine Entscheidung für jede der 2168 Zeilen, die längst in
+einem Glied liegen. Eine Stunde Modellzeit, um zu einem Zustand zurückzukehren,
+der schon da war.
+
+Abgeleitet, nicht erfunden: Eine Zeile in einem Glied ist `:ingame`, eine in
+`draussen` ist `:tisch` — beides steht in der Kette und wird nur gelesen. Ein
+ausdrücklich übergebenes `einordnung:` gewinnt, weil der Prüf-Lauf sie samt
+Zweifeln erbt und **`:zweifel` aus der Kette allein nicht ableitbar** ist: Eine
+unklare Zeile liegt darin wie eine sichere.
+
+**Ein Lauf ohne geladene Kette begräbt nichts.** Der Speicher kann zwei
+Zustände nicht am Zustand unterscheiden — „Jack hat das Glied gelöscht" und
+„dieser Lauf hat die Kette nie geladen"; in beiden Fällen fehlen eigene
+Glieder. Der Produktionspfad lädt sie (`Eingabe.aus_repo/1` liefert immer eine,
+bei frischer Kampagne eine leere), aber `Zeit.laufen/2` ist öffentlich und
+nimmt eine Eingabe-Map: Ein Test, ein Messlauf oder ein RPC von Hand mit
+`session_id` und `campaign_id`, aber ohne `kette:`, hätte am 25.09.2026 die 13
+Glieder der Teststage beerdigt — beim **ersten** Werkzeugaufruf, lautlos.
+
+Unterschieden wird deshalb an der **Herkunft** (`Stand.kette_geladen?`), nicht
+am Zustand. Der erste Anlauf prüfte den Zustand und traf damit auch den
+legitimen Fall „Jack löscht sein letztes Glied" — ein bestehender Test hat das
+gefangen. Der Riegel loggt laut; ein stiller Riegel erzeugte dieselbe Klasse
+wie die Lücke, die er schliesst.
+
+**Er liest auch die früheren Sitzungen** (Maintainer, 25.09.2026: „er muss die
+Sachen, die vor vorherigen Sessions erarbeitet wurden, lesen/bearbeiten
+können"). Seit die Kette kampagnenweit lädt, **sah** er fremde Glieder — aber
+nur deren Titel; sein Mitschnitt ist die eigene Sitzung, und `suche_bisher`,
+`fakten` und `vorige_gedanken` der anderen Jacks hat er nicht. Für den
+einfachen Fall reicht das; erzählt die Runde am Anfang einen **Rückblick**,
+muss er erkennen, WELCHES alte Glied gemeint ist, und dafür braucht er dessen
+Inhalt.
+
+`Worker.Jack.Zeit.Frueher` gibt ihm drei Werkzeuge, in **allen drei Läufen**
+(auch im Gedächtnis-Lauf, der gerade dort den Ablauf verstehen soll):
+`sitzungen()` (Nummer, Zeilen, Glieder, ob Notizen da sind), `lies_frueher`
+(Mitschnitt einer anderen Sitzung) und `vorige_gedanken` (die Notizen früherer
+Zeit-Läufe).
+
+**Die Nummern bleiben getrennt, und das ist die wichtigste Entscheidung
+dabei.** Jacks Zeilennummer n ist Position n in **seiner** Liste — nur so zeigt
+sie auf die richtige Utterance. Eine fremde Zeile mit derselben Nummer setzte
+einen Anker an die falsche Stelle, lautlos. Fremde Zeilen tragen deshalb ein
+Präfix (`S1/45`) und sind über die setzenden Werkzeuge nicht erreichbar; die
+eigene Sitzung wird von `lies_frueher` abgewiesen, mit dem Verweis auf
+`lies_sprechlinie`. **Fremde Glieder kann er MELDEN, nicht bearbeiten** — und diese Doku hat
+zwischenzeitlich das Gegenteil behauptet. Die Ketten-Werkzeuge adressieren ein
+Glied über eine **Zeilennummer des eigenen Mitschnitts**
+(`Mitschnitt.aufloesen` → Utterance → Glied); für ein fremdes Glied gibt es
+keine solche Zeile, es ist damit nicht ansprechbar. Gefunden hat es Jack im
+Prüf-Lauf, als er einen falschen Anker in S1 fand — „um 10" als Uhrzeit
+gelesen, gemeint war das Jahr 2010 — und fragte: „But I can't anchor in S1. So
+what can I do?" Die Antwort war: nichts.
+
+Seitdem nimmt `melde_konflikt` eine **Glied-Nummer** aus `lies_kette()`
+(`Kettenwerkzeuge.glied_nach_nummer/2`) — die einzige Adresse, die auch für ein
+fremdes Glied trägt. Melden ja, ändern nein: Die Begründung für die Sperre
+bleibt richtig, ein falscher Anker ist aber kein Entscheid des anderen Laufs,
+sondern ein Fehler, und er verbiegt die Linie kampagnenweit. Fremde Glieder
+tatsächlich zu bearbeiten wäre eigene Arbeit.
+
+**Und `lies_kette()` zeigt sie überhaupt erst seit diesem Fund.** Der Filter
+verglich die höchste Zeilennummer eines Gliedes mit `ab`, und `max_nr/2`
+liefert 0, wenn keine seiner Äußerungen im eigenen Mitschnitt steht — für ein
+fremdes Glied immer. Jack sah nur seine eigene Hälfte und benannte es selbst:
+„Ich sehe nur Glieder 15-34, aber die Befunde beziehen sich auf frühere Glieder
+1-14 aus S1, die ich noch nicht gesehen habe." Er konnte die Befunde nicht
+prüfen, weil ihre Glieder unsichtbar waren. Fremde Glieder gelten jetzt
+unabhängig von `ab` und tragen „andere Sitzung" statt eines Strichs — ein
+Strich sagt nicht, warum keine Nummern dastehen.
+
+Ebenfalls von ihm gefunden: `sitzungen()` nennt Gliederzahlen vom **Beginn des
+Laufs** (sie entstehen beim Bau der Eingabe). Nach 86 Runden stand dort 0,
+während die Kette 34 hatte, und Jack hielt es für einen Datenfehler — „the
+session shows 2660 lines with 34 chain elements, but the earlier output
+indicated zero". Die Antwort sagt es jetzt und verweist für den aktuellen Stand
+auf `lies_kette()`.
+
+Geladen wird **beim Zugriff** (Muster `Resuemee.Mitschnitte`, #1210): Die
+Übersicht reist vorgeladen mit (vier Zahlen je Sitzung), die Mitschnitte nicht
+— bei seattleV5 wären das rund 12.000 Zeilen im Stand, die ein Lauf meist nie
+ansieht. Der Prüf-Lauf erbt Übersicht, Lader und schon Geladenes über
+`Zeit.erbe/1`, sonst lüde er jeden fremden Mitschnitt ein zweites Mal.
+
+**Dabei bekam `worker_jack_zeit_staende` seinen ersten Leser**
+(`Worker.Repo.Zeit.jack_stand/1`): Die Tabelle wurde nach jedem Werkzeugaufruf
+geschrieben und nie gelesen — dieselbe Klasse wie `loesche_kettenplatz/2` in
+diesem Ticket, zum zweiten Mal.
+
+**Gemessen am ersten Lauf mit Bestand** (25.09.2026, seattleV5 S1, 14 Glieder
+standen):
+
+```
+zeilen=2168 gelesen=2168 -> anker=11  kette=14 Glieder
+(geschrieben=0 grabsteine=0)  geprueft=true  runden=9  ms=170815
+```
+
+**`grabsteine=0`** ist die Zeile, auf die es ankam — vorher hätte dort 13
+gestanden. Der Einsortier-Lauf brauchte 9 Runden und 2,8 Minuten statt einer
+Stunde: Er sah alle 2168 Zeilen als eingeordnet und ergänzte ein Glied, statt
+alles neu zu entscheiden. `geschrieben=0` beim Abschluss, weil die
+Zwischenstände nach jedem Werkzeugaufruf längst geschrieben hatten.
+
+**Ehrliche Grenze:** Dass ein zweiter Lauf **derselben** Sitzung den Bestand
+respektiert, ist gemessen (s.o.). Offen bleibt der Fall, um den es eigentlich
+geht: ob er seine Sitzung relativ zu den Gliedern einer **anderen** einordnet,
+statt sie hinten anzuhängen. Dafür hat er seit diesem Cut die Werkzeuge; ob er
+sie nutzt, zeigt der Lauf auf einer Sitzung ohne eigene Kette.
+
+#### Die Chronik sieht die Kette — als Angebot mit Prüfpflicht (Z3)
+
+Maintainer, 25.09.2026: „die chronik soll sich entscheiden können die kette zu
+benutzen — aber soll sich auch dagegen entscheiden dürfen", und schärfer: „er
+kann und darf abweichen — und er soll nicht ungeprüft übernehmen."
+
+`Chronik.Eingabe.mit_zeitlinie/2` hängt an jeden Fakt die Zeit, die die Kette
+für seine Äußerungen kennt — **neben** dessen `in_game_date`, nicht statt
+dessen. `Lesen.zeit_text/1` zeigt beides; wo sie sich widersprechen, sieht das
+Modell den Widerspruch. Würde eines das andere ersetzen, gäbe es nichts zu
+prüfen, und ein falscher Anker verbiegt die Chronik lautlos.
+
+**Jede Angabe trägt ihren Beleg** — das wörtliche Zitat, aus dem die Zeit
+gelesen wurde; ohne das wäre die Prüfpflicht nicht erfüllbar. Und **belegt und
+gerechnet sind unterschieden**: Ein interpolierter Wert heisst „(gerechnet)",
+und der Auftrag sagt, dass er für die Reihenfolge taugt, nicht für ein Datum —
+genau der Fehler, der die Chronik einmal auf einen einzigen Tag gelegt hat
+(#1092).
+
+**Der Rang ist benannt, nicht dem Gefühl überlassen:** Die Zeitlinie ist
+*meistens* die bessere Angabe (am gesprochenen Wort gelesen, von einem Lauf,
+der nichts anderes tut), das Fakt-Datum ist ein Nebenprodukt der Extraktion.
+Und wo etwas verdächtig aussieht, **liest Jack selbst nach** — `block(n)`,
+`bloecke`, `suche_sitzung`, `fakt(id)`. Der Satz, um den es geht: zwei Angaben
+gegeneinander abwägen ist ein Münzwurf, im Mitschnitt nachlesen ist eine
+Prüfung. „Verdächtig" ist mit Beispielen unterlegt (Zitat aus einer anderen
+Szene, Zeiten Jahre auseinander im selben Abschnitt, Datum gegen die gelesene
+Reihenfolge, Zeitrede am Tisch).
+
+**Der Befund, ohne den Z3 wirkungslos geblieben wäre:** `Linie.aus_kette/3`
+rechnet auf **Gliedern**, und `auf_glieder/2` ersetzt dafür die
+`utterance_ids` eines Ankers durch Glied-IDs. Damit lag `anker_an` unter
+Glied-IDs, und `anker_fuer/2` fand für eine Äußerung **nie** einen Anker — es
+lieferte nur die gerechnete Stelle, ohne Ausdruck und ohne Beleg. Unsichtbar,
+solange niemand die Details braucht. Gefunden hat es der Test, weil er den
+Beleg **einforderte**; ein Test auf „das Feld ist gesetzt" wäre grün gewesen.
+
+**Best-effort auf beiden Seiten:** Läuft der Zeit-Jack nicht, fehlt das Feld,
+und die Chronik arbeitet wie vor #1247. Ein Fehler beim Lesen der Kette wird
+laut geloggt und lässt die Fakten unverändert — still wäre er nicht von „die
+Kette hatte eben nichts" zu unterscheiden. Der Session-Anker-Fallback in
+`Datierung.feste_punkte/3` bleibt bewusst stehen: Wer sich gegen die Kette
+entscheiden darf, muss auch ohne sie datieren können.
+
+#### Die Kompaktierung frisst das Gelesene, nicht die Notizen
+
+Am Lauf auf seattleV5 S2 gesehen (25.09.2026, 3385 Zeilen): Jack las den
+ganzen Mitschnitt, ohne eine Notiz zu schreiben — dann fasste die Laufzeit den
+Verlauf zusammen (`kompaktierungen: 1`), das Gelesene war fort, und er begann
+wieder bei Zeile 81. Rund vierzig Leseaufrufe für nichts. Sein Satz dazu: „Ich
+habe die Notizen verloren und muss den mittleren Abschnitt neu lesen."
+
+**Der Fehler liegt im Ablauf, nicht in der Kompaktierung.** Notizen liegen im
+**Stand** und überleben sie; das Gespräch nicht. Wer erst alles liest und dann
+notiert, verliert bei einer langen Sitzung genau dazwischen. Beide Aufträge
+sagen jetzt: nach jedem Abschnitt notieren beziehungsweise sofort eintragen,
+nicht am Ende.
+
+Bemerkenswert an dem Lauf ist, was er **richtig** machte: `notizen_lesen()`
+gerufen, nichts gefunden, neu gelesen — kein Raten, keine
+Wiederholungsschleife. Die Sperre hat nicht gegriffen, weil er tatsächlich
+etwas Neues tat.
+
+#### Die Laufzeit sagt, wann es knapp wird — und das Modell gibt frei
+
+Maintainer, 25.09.2026: „können wir Jack nicht sagen, wann er schreiben soll —
+wir wissen doch, wie voll der Context ist? … so dass er sammeln kann bis es
+knapp wird und dann sagen wir ‚jetzt aber mal schreiben' — und ihm evtl ein
+Werkzeug geben ‚ich habe geschrieben, jetzt kompaktieren'."
+
+Die Auftragsregel oben („notiere unterwegs") hilft nur bedingt: Sie gilt immer,
+kostet also auch dann, wenn viel Platz ist, und sie wird ausgerechnet dann
+übersehen, wenn es eng wird. Die Laufzeit **weiss** dagegen, wie voll es ist.
+Drei Teile, in `Worker.Agent.Lauf` für **alle** Jacks:
+
+1. Ab **75 %** des Fensters (`@mahnschwelle`) hängt die Laufzeit eine
+   Aufforderung an die letzte Werkzeug-Antwort der Runde: sichere jetzt, was du
+   im Kopf hast; was eingetragen ist, überlebt.
+2. Das Modell sichert.
+3. Mit **`jetzt_kompaktieren()`** sagt es, dass es fertig ist — und **dann**
+   fasst die Laufzeit zusammen, an einer Stelle, die das Modell gewählt hat.
+   Der Verlust ist damit kalkuliert statt zufällig.
+
+Drei Entscheidungen daran:
+
+- **Die Mahnung reist am Werkzeug-Ergebnis**, nicht als eigener `:user`-Zug —
+  ein solcher Zug sähe aus, als spräche der Tisch.
+- **Einmal, nicht in jeder Runde.** Eine Warnung, die bei jedem Aufruf steht,
+  lernt das Modell zu überlesen. Nach einer Freigabe darf sie wieder greifen
+  (`gemahnt?` fällt zurück).
+- **Die harte Grenze bleibt** (`Kontext.voll?/3`). Ein Modell, das nie
+  freigibt, blockiert nichts — es wird trotzdem kompaktiert, nur ungünstiger.
+  Ohne das hinge der Lauf an einer Höflichkeit.
+
+**Ein Fund beim Testen:** Der Verlauf ist nicht das Protokoll. Die
+Kompaktierung schneidet ältere Nachrichten weg — also genau die Mahnung, die
+man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
+Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
+`mahnung`), nicht über `bericht.nachrichten`.
+
+#### Was ein Werkzeug sagt, muss wahr sein — zwei Etiketten
+
+Beide am Chronik- und Zeit-Lauf vom 25.09.2026 gefunden, beide dieselbe
+Klasse: Eine Auskunft, die eine Sitzung nennt, wo die Kampagne gemeint ist.
+
+**`fakten(sitzung: N)` beim Chronik-Jack** (Maintainer: „chronik ist die ganze
+kampagne → das Etikett muss weg"). `s.fakten` trägt bei ihm **alle** Fakten
+aller Sitzungen (`Chronik.Eingabe.alle_fakten/1`), bei jedem anderen Jack nur
+die eigene. Die Klausel „die Nummer ist meine eigene → gib `s.fakten`" stammt
+aus der Resümee-Welt und war für ihn falsch: `fakten(sitzung: 2)` lieferte die
+ganze Kampagne, der Kopf behauptete „Sitzung 2, Fakten 1 bis 208", und im
+Bereich 1..40 standen S1-Fakten. Jack hat es sofort bemerkt („*the IDs are
+labeled as S1-F1 through S1-F40*"). Seitdem: ohne `sitzung` die Kampagne, und
+der Kopf sagt das („Alle Fakten der Kampagne"); mit `sitzung` genau diese
+Sitzung — **auch die eigene**, denn beim Chronik-Jack ist sie eine unter
+vielen. Die Absage nennt die Sitzungen, die Fakten haben (er kennt kein
+„früher").
+
+**Die Klammer von `lies_kette()`** (Maintainer: „muss über die ganze kampagne
+gehen"). Sie mischte drei kampagnenweite Zahlen mit einer eigenen, ohne
+Kennzeichnung: „41 Glieder, 6.235 Zeilen drin, 1.978 draussen, 0
+unentschieden" — während Jack an 3.385 Zeilen arbeitete. In zwei Läufen hat er
+darüber gerätselt. Seitdem stehen sie getrennt („Kampagne: … Deine Sitzung:
+…"). `unentschieden` bleibt die eigene Zahl, weil sie es sein **muss**: Jack
+entscheidet nur die Zeilen seiner Sitzung.
+
+**Zwei Wörter für zwei Satzstellungen** (`umfang_wort/1` vor einem Komma,
+`umfang_subjekt/1` vor einem Verb). Eines für beides läse sich in einem der
+Fälle hölzern — und die Meldungen sind das, was das Modell liest.
+
+#### Die Einordnung zählt nur die eigenen Zeilen
+
+Ein Folgefehler des Kette-Erbes (s. „Die Kette ist persistent"), am laufenden
+Lauf aufgeschlagen: `aus_kette/1` leitete die Einordnung aus der
+**kampagnenweiten** Kette ab, `utterances` meint die **eine Sitzung**. An
+seattleV5 S2 trug `einordnung` damit 8.213 Einträge bei 3.385 eigenen Zeilen,
+und `zahlen()` meldete „eingeordnet 8213, ohne Einordnung **-4828**".
+
+**Die Schranke von `fertig()` blieb dabei richtig** — `ohne_einordnung/1`
+rechnet über eine Liste, nicht über die Zahl. Kaputt war der **Hinweis**:
+`anker.ex` prüft `> 0` und zeigte deshalb nie etwas, `lesen.ex` zeigte eine
+negative Zahl. Also genau die Führung, die Jack beim Einsortieren braucht, und
+zwar still.
+
+Seitdem filtert `aus_kette/2` auf die Utterances des Mitschnitts. Fremde Zeilen
+gehören ohnehin nicht in Jacks Entscheidungsbuch: Er darf sie nicht
+entscheiden. Der Test von zuvor pinnte das Gegenteil (`einordnung["v1"] ==
+:ingame`) — das war die Folge der Implementierung, nicht die Absicht des Tests
+(„stört nicht"); er prüft jetzt die Abwesenheit und zusätzlich, dass die Zahlen
+möglich bleiben (`eingeordnet <= utterances`, `ohne_einordnung >= 0`).
+
+**Offen geblieben:** Die Klammer von `lies_kette()` mischt weiterhin drei
+kampagnenweite Zahlen mit einer eigenen („41 Glieder, 6.235 Zeilen drin, 1.978
+draussen, 0 unentschieden"). Jack hat in zwei Läufen darüber gerätselt, welche
+Zahl seine ist.
+
+#### Eine Schleife im Denken — und was ein Befund verschweigt
+
+Am 25.09.2026 lief der Prüf-Lauf auf seattleV5 S2 in eine Schleife, die
+**keine der bestehenden Sperren sehen konnte**: 52.962 Zeichen Denktext in
+EINER Runde, darin dreissigmal wörtlich derselbe Absatz, elf Minuten
+Rechenzeit — und `wiederholungen: 0`. Die Wiederholungssperre zählt gleiche
+**Werkzeugaufrufe**, der Rundendeckel zählt Runden, und hier war es eine
+Runde ohne einen einzigen wiederholten Aufruf.
+
+**Die Ursache war ein Werkzeug, nicht das Modell.** Jack hatte sechs Befunde
+vor sich und keine Möglichkeit, einen davon einem Anker zuzuordnen; er hat es
+aus den Zahlen zurückzurechnen versucht („*The Befunde list doesn't indicate
+positions … seems to be global and constant*") und dabei geraten. Drei
+Korrekturen, alle aus diesem einen Lauf:
+
+**1. Ein Befund nennt seine Stelle** (`Befunde.mit_stellen/2`,
+`Zeit.Lesen.befund_zeile/2`). Die Adresse war die ganze Zeit da — jeder Befund
+trägt `anker_id`, die Anzeige gab nur `text` aus. Genannt wird jetzt, was für
+das Modell eine Adresse IST: die **Zeilennummer** (fremd als „andere
+Sitzung") und der gesetzte Ausdruck, nicht die `anker_id`, die für ihn ein
+Hash ist. Der Spannen-Überlauf gilt einer Strecke und hat keinen eigenen
+Anker — er trägt seitdem `anker_ids` mit beiden Endpunkten, ohne die er
+unauflösbar ist.
+
+**Dabei dieselbe Falle ein zweites Mal:** `Befunde.aus/1` läuft in `bauen/2`,
+sieht also die von `auf_glieder/2` umgeschriebenen Anker — die Stellen trügen
+Glied-IDs, und jede hiesse „andere Sitzung". `aus_kette/3` setzt sie deshalb
+mit den echten Ankern neu, genau wie schon `anker_an`. Gefunden hat es der
+Test, weil er die **Zeilennummer** einforderte; ein Test auf „das Feld ist
+gesetzt" wäre grün gewesen.
+
+**2. `sitzungen()` zählt die eigene Gliederzahl live**
+(`Stand.eigene_glieder/1`). Die Zahlen entstehen beim Bau der Eingabe, und der
+Prüf-Lauf erbt sie — dort stand „S2: 2 Kettenglied(er)", während Jack sieben
+vor sich hatte. Er hat drei Absätze gerätselt und erwogen, seine Sitzung sei
+eine andere. Für **fremde** Sitzungen bleibt es der Stand vom Lauf-Beginn: Ihr
+Mitschnitt liegt nicht im Stand, und dieser Lauf ändert sie nicht.
+
+**3. Die Wiederholung wird erkannt und der Strom abgebrochen**
+(`Worker.Agent.Modell.Schleife`, pur). Alle 2.000 Zeichen wird geprüft, ob der
+letzte 300-Zeichen-Block im Text davor schon dreimal vorkommt; dann `{:halt,
+…}` auf den Req-Strom, `Strom.abbrechen/2` macht aus dem Bisherigen eine
+Antwort mit dem Stoppgrund `:schleife`, und `Lauf` behandelt sie wie eine
+ohne Werkzeugaufruf — Aufrufe darin werden **verworfen** (ein abgebrochener
+Strom garantiert kein vollständiges Argument-JSON). Das Nachhaken sagt dann,
+worauf es ankommt: **dass es nicht an den Angaben liegt** (dieselbe Lehre wie
+beim inneren Werkzeugfehler, #1211). Nach drei Anläufen endet der Lauf.
+
+Vier Entscheidungen daran:
+
+- **Der Client streamt seitdem IMMER.** Der Strom hing an `:bei_delta`, und
+  das setzt `Lauf` nur bei vorhandenem Beobachter (Laufsicht, #1202) — eine
+  Erkennung, die daran hängt, wäre genau die #1163-Klasse: ein Wächter, der
+  nur anschlägt, wenn ohnehin jemand hinsieht. `ganz/3` ist damit toter Code
+  und entfernt (der Pool-Wächter aus #1247 zählt seitdem eine Aufrufstelle
+  statt zwei).
+- **Abgebrochen wird wegen Wiederholung, nie wegen Länge.** Ein langer
+  Denkstrom ist legitim; ein Token-Deckel auf die Denkphase träfe ihn mit.
+- **Nur wörtliche Wiederholung**, kein Ähnlichkeitsmaß — „exakt" ist nichts,
+  worüber man streiten kann. Die benannte Grenze: Ein Modell, das dieselbe
+  Überlegung in anderen Worten dreht, läuft weiter.
+- **Sichtbar** als `modell_schleife` in `Worker.Telemetry`, ab dem ersten Mal
+  laut. Ohne das sieht der nächste Loop wieder aus wie „dauert eben lange" —
+  dieser fiel nur auf, weil gerade jemand in die Laufsicht sah.
+
+**Nicht gemacht:** `jack_frequency_penalty` hochziehen. Der Regler wirkt auf
+Token-, nicht auf Absatz-Ebene, hätte hier kaum geholfen, und er verstellt die
+gemessenen Defaults der Messreihe C ohne neue Messung.
+
+#### Eine String-Whitelist erzeugt keine Atome
+
+Beim Neustart der Teststage am 25.09.2026 warf `Worker.Repo.Zeit.anker/1`
+`:badarg` in `binary_to_existing_atom("beleg")` — und damit fiel der **einzige**
+Leser der Anker aus, für den Zeit-Jack und für die Zeitlinie der Chronik (Z3).
+
+Die Absicherung trug sich selbst nicht: Die erlaubten Schlüssel standen als
+**Strings** in `@bekannt`, und `String.to_existing_atom/1` gelingt nur, wenn
+irgendein **geladenes** Modul dasselbe Atom literal nennt. Nach einem Neustart
+ist das Zufall — genau die Klasse, die #646 (Materializer, „beim ersten
+`UserRoleSet` u.U. noch nicht geladen") und #611 (Hub-Icons) im selben Repo
+schon je einmal notiert haben. Seitdem steht die Liste als `~w(…)a` da und die
+Übersetzung geht über eine Map; `Chronik.Datierung.prec_atom/1` hatte dieselbe
+Stelle und hat jetzt drei Klauseln.
+
+**Ein Verhaltenstest kann das nicht fangen** — in der Testumgebung ist alles
+geladen, also existieren die Atome. `speicher_test.exs` liest seit dem 24.09.
+einen Anker samt `beleg` zurück und war grün. Der Nachweis ist deshalb ein
+Quelltext-Wächter (`repo/zeit_schluessel_test.exs`, gegengeprüft): kein
+`to_existing_atom` im Code dieser Datei. Dieselbe Lehre wie bei den Wächtern
+(s. „Ein Wächter, der nie anschlägt, ist unbewiesen").
+
+#### Ehrliche Grenzen
+
+* **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
+  bisherigen Hinweis („er ordnet, datiert aber nicht") hat das Modell zehnmal
+  bekommen und zehnmal übergangen; ob ein konkreter Vorschlag es ändert,
+  zeigt erst der nächste Lauf.
+* **Die Bäume sind ungenutzt.** In drei echten Läufen kam
+  `unterhaenge_kettenglied` **null Mal** vor, ebenso `versetze_kettenglied`.
+  Ob die Sitzungen flach sind oder die Werkzeuge nicht ankommen, ist offen.
+* **`verschiebungen: 0`** — die Weltgeschichte steht in Erzählreihenfolge, die
+  hier zufällig chronologisch ist. Ein Rückblick mitten in der Sitzung würde
+  heute am falschen Platz landen.
+* **Ob die Schleifen-Erkennung im Betrieb greift, ist nicht gemessen.** Die
+  Schwelle (dreimal derselbe 300-Zeichen-Block) ist gegriffen; am echten Fall
+  hätte sie nach wenigen Runden gegriffen, nicht nach dreissig Absätzen, weil
+  Jack zwischen den identischen Blöcken variierte. Und sie rettet die Runde
+  nicht, nur die Zeit — der Anlass war die fehlende Befund-Adresse.
+* **Ob die Mahnung ankommt, ist nicht gemessen.** Die 75 % sind gegriffen (ein
+  Viertel Fenster als Sicherungsreserve), und dass ein Modell auf die
+  Aufforderung tatsächlich sichert und `jetzt_kompaktieren()` ruft statt sie
+  zu überlesen, zeigt erst ein echter Lauf. Gebaut ist der Weg, nicht die
+  Wirkung.
+* **Ein abgebrochener Lauf hielt seine Ollama-Verbindung offen** — am 24.09.
+  hing daran ein `llama-server` mit 12,5 GB über Stunden, obwohl `ollama ps`
+  leer war, und eine andere Session wartete auf die Karte. Der Ollama-Client
+  hat seitdem einen **eigenen** HTTP-Pool mit Idle-Frist
+  (`Worker.Agent.Modell.Pool`, eine Minute) statt Reqs geteiltem Default-Pool,
+  dessen Verbindungen ohne Frist offen bleiben. **Die Kausalität ist dabei
+  nicht belegt:** dass die offene Verbindung den Runner gehalten hat, ist
+  plausibel und nicht gemessen — ob mit der Frist auch der Speicher fällt,
+  zeigt der nächste Lauf. Diagnose weiterhin über `ss -tnp | grep 11434`; ein
+  `beam.smp` als Halter bei leerem `ollama ps` ist der Fall.
+* **Z3 ist eingelöst** (s. Abschnitt darüber) — mit einer Einschränkung, die
+  bleibt: Ob das Modell die Prüfpflicht tatsächlich erfüllt, statt die
+  Zeitlinie zu schlucken, ist **nicht gemessen**. Die Regeln stehen im
+  Auftrag, die Wirkung zeigt ein Lauf. Dazu kostet der Aufbau der Linie samt
+  Block-Index je Chronik-Lauf einen vollen Kampagnen-Read.
+* **Z5 bleibt bewusst liegen** (Maintainer, 25.09.2026: „lass es drin"): Die
+  Zeitfelder stehen weiterhin in Jacks Extraktionsschema
+  (`Worker.Jack.Felder`). Mein Einwand dagegen — ohne sie könne die Chronik
+  nur zustimmen oder schweigen — war falsch, und die Korrektur steht im
+  Abschnitt darüber: Jack kann in den Mitschnitt sehen, und das ist die
+  bessere Prüfung. Die Felder bleiben trotzdem, solange die Kette nur einen
+  gemessenen Lauf hinter sich hat.
+
 
 **Zeitstrahl / Datums-Auflösung (#724) — HISTORIE, mit #1211 ersetzt.** Der folgende Absatz beschreibt den deterministischen Pfad, den der Chronik-Jack abgelöst hat (s. Abschnitt darüber). Er bleibt stehen, weil Kalender, Session-Anker und die Tageszähler-Rechnung weiterleben — nur der Weg von den Fakten zur Chronik ist ein anderer. Der Timeline-Publish war verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (primärer Sort-Schlüssel) + `precision` + seit #1092 `source_pos` (Zweitschlüssel innerhalb eines Tages, s.u.). UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Seit #911/#958 filtert der Timeline-Publish VOR `Graph.resolve` Vorstufen weg** (zwei damals, seit #1068 E3 drei — der Typ-Filter `Graph.datierbar?/2` kam dazu), die die Chronik sonst zum Fakten-Dump machten (Free-Seattle-Befund: 544 von 548 verifizierten Fakten wurden Chronik-Einträge): `Graph.time_signal?/1` (pure) verlangt ein EIGENES Zeit-Signal des Fakts (Anker/Offset/`in_game_date`-Bridge #676/#729) statt des reinen Präsens-Fallbacks (`narration_time == "present"` ohne jedes Signal sitzt sonst automatisch am Session-Anker-Tag), und `Repo.filter_arc_kind/2` lässt nur `kind == "arc"`-Fakten durch (gleiche Zuordnung wie Resümee/Epos seit #909, `fact_render_assignments/2`) — die Chronik ist ein Bogen-Zeitstrahl, kein Protokoll-Abzug.
 

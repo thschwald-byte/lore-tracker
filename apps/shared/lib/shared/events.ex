@@ -351,6 +351,47 @@ defmodule Shared.Events do
   # `JackStandAbgelegt`. KEINE Dirty-Kante.
   def jack_epos_stand_abgelegt, do: "JackEposStandAbgelegt"
 
+  # #1247 (Z1): ein Zeit-Anker an einer MENGE von Utterances — die Zeit hängt
+  # seitdem nicht mehr am Fakt (der entsteht bei jeder Extraktion neu), sondern
+  # an der stabilsten Schicht des Systems: Utterances werden nie neu erstellt.
+  # Payload: `%{anker_id, campaign_id, session_id, daten: %{utterance_ids, art,
+  # wert, welt, zweifel, beleg, quelle, abgesegnet_von, abgesegnet_am}}`.
+  #
+  # `anker_id` ist content-adressiert über die sortierten `utterance_ids`,
+  # die `art` UND den `wert` (`z_<hash>`, Muster `Parsing.fact_content_id/2`,
+  # gebildet von `Worker.Timeline.Linie.anker_id/3`) — dieselbe Aussage an
+  # derselben Stelle ergibt denselben Anker, egal welcher Worker sie schreibt.
+  # Art und Wert müssen mit hinein: „eine Stunde vergangen, dann ist es kurz
+  # nach zwölf" sind zwei Anker an EINER Utterance, und über die Menge allein
+  # hätte der zweite den ersten stumm überschrieben. 1 Row/Anker,
+  # LWW-by-event_id. NIE ein Delete: ein zurückgenommener Anker schreibt eine
+  # reguläre Row mit `art: "geloest"` (#698-Klasse — ein vertauschtes
+  # Setzen/Zurücknehmen darf zwischen zwei Workern nicht divergieren).
+  #
+  # `abgesegnet_am` gesetzt heisst: ein Mensch hat entschieden. Die Stelle ist
+  # dann unveränderlich, auch für einen Jack-Lauf.
+  def zeit_anker_set, do: "ZeitAnkerSet"
+
+  # #1247: ein Glied der KETTE — des Zeitstrahls, auf dem das Geschehen liegt.
+  # Payload: `%{glied_id, campaign_id, session_id, daten: %{art, utts, vorher,
+  # eltern, grund, entfernt}}`.
+  #
+  # Eine Row je Glied, nicht ein Blob je Lauf: Ein Blob ist LWW über die ganze
+  # Kette — zwei Worker, die verschiedene Teile bauen, löschten sich
+  # gegenseitig aus (#698-Klasse). Und die Chronik muss die Kette lesen
+  # können, ohne einen Jack-Stand zu dekodieren.
+  #
+  # `vorher` und `eltern` tragen den Platz als Bezug auf die Kennung des
+  # Nachbarn bzw. des Elterngliedes (Maintainer, 20.09.2026). `entfernt`
+  # ist ein Grabstein — gelöscht wird nie, sonst divergieren zwei Worker bei
+  # vertauschter Zustellung.
+  def zeit_kettenglied_set, do: "ZeitKettengliedSet"
+
+  # #1247 (Z2): der Stand des Zeit-Jack einer Sitzung nach seinem letzten Lauf.
+  # Payload wie die drei Geschwister: `%{session_id, campaign_id, stand: %{...}}`.
+  # 1 Row/Session, LWW-by-event_id. KEINE Dirty-Kante.
+  def jack_zeit_stand_abgelegt, do: "JackZeitStandAbgelegt"
+
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
   # block_id (Content-ID), status, bestaetigter_text | nil,

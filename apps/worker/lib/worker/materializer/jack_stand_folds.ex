@@ -20,6 +20,11 @@ defmodule Worker.Materializer.JackStandFolds do
   (`worker_jack_epos_staende`), wieder dieselbe Form und Regel. Seine Notizen
   (FORM, SZENEN, ABWEICHUNG, OFFEN) lesen spätere Sitzungen ebenfalls als
   „vorige Gedanken“.
+
+  #1247 (Z2): `JackZeitStandAbgelegt` — der Stand des Zeit-Jack
+  (`worker_jack_zeit_staende`), dieselbe Form und Regel. Die **Anker** selbst
+  liegen nicht hier, sondern in `Worker.Materializer.ZeitAnkerFolds`: sie sind
+  je Anker adressiert und überleben den Stand.
   """
 
   require Logger
@@ -39,6 +44,10 @@ defmodule Worker.Materializer.JackStandFolds do
   @doc false
   def jack_epos_stand_abgelegt(payload, ts, meta),
     do: ablegen(S.jack_epos_staende(), "JackEposStandAbgelegt", payload, ts, meta)
+
+  @doc false
+  def jack_zeit_stand_abgelegt(payload, ts, meta),
+    do: ablegen(S.jack_zeit_staende(), "JackZeitStandAbgelegt", payload, ts, meta)
 
   defp ablegen(tabelle, kind, payload, ts, meta) do
     sid = payload["session_id"]

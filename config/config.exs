@@ -11,7 +11,22 @@ config :worker,
   # J4 (#1207): Port der Laufsicht für Jack-Läufe der Pipeline, nur auf
   # 127.0.0.1 (`Worker.Jack.Sicht.betrieb/2`). 8097/8098 nutzen Referenz- und
   # Messläufe; `nil` schaltet sie ab.
-  jack_sicht_port: 8099
+  jack_sicht_port: 8099,
+  # #1247: die Laufsicht des Zeit-Jack, eine Dekade über der von Jack.
+  #
+  # **Der Default hier ist Pflicht, nicht Bequemlichkeit.** Die Ableitung in
+  # `runtime.exs` hängt an `LORE_JACK_SICHT_PORT` — und die ist auf
+  # `worker_prod` NICHT gesetzt (am laufenden Daemon nachgesehen, 19.09.2026:
+  # nur HUB_BASE_URL, LORE_MNESIA_DIR, LORE_WORKER_AUTOUPDATE,
+  # LORE_WORKER_DEPLOY_REPO). Prod nimmt den Default von oben; ohne einen
+  # zweiten hier bliebe `zeit_sicht_port` dort `nil`, und nach der Regel in
+  # `application.ex` („ohne Port kein Prozess") entstünde die Zeit-Laufsicht
+  # in Prod gar nicht — dauerhaft, nicht nur bei einer Port-Kollision.
+  #
+  # Auf der Teststage fiele das nie auf, weil `lore.pr_test` die Variable
+  # setzt: derselbe Asymmetrie-Fall wie bei den Migrationen — was in Prod
+  # gilt, fährt die Stage nie (Review-Fund, 19.09.2026).
+  zeit_sicht_port: 8109
 
 config :hub, HubWeb.Endpoint,
   url: [host: "localhost"],

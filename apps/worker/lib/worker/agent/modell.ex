@@ -16,8 +16,11 @@ defmodule Worker.Agent.Modell do
 
   ## Antwort
 
-  `stopp` ist `:stop` (fertig), `:werkzeuge` (Aufrufe angefordert) oder
-  `:laenge` (an der Ausgabegrenze abgeschnitten). `denken` ist die Denkspur,
+  `stopp` ist `:stop` (fertig), `:werkzeuge` (Aufrufe angefordert),
+  `:laenge` (an der Ausgabegrenze abgeschnitten) oder `:schleife` — der
+  einzige Grund, den **nicht der Server** nennt, sondern die Laufzeit selbst:
+  Das Modell hat sich wörtlich wiederholt, und der Strom wurde abgebrochen
+  (#1247, `Worker.Agent.Modell.Schleife`). `denken` ist die Denkspur,
   falls das Modell eine liefert; sie geht ins Protokoll und nur mit
   `denken_zurueck` zurück an das Modell. `argumente` ist `{:ok, map}` oder `{:error, roh}`, wenn das Modell
   kein JSON-Objekt geschickt hat — der Lauf antwortet dann mit einem
@@ -36,7 +39,7 @@ defmodule Worker.Agent.Modell do
           text: String.t() | nil,
           denken: String.t() | nil,
           aufrufe: [aufruf()],
-          stopp: :stop | :werkzeuge | :laenge,
+          stopp: :stop | :werkzeuge | :laenge | :schleife,
           nutzung: nutzung() | nil
         }
 

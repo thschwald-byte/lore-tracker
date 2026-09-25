@@ -58,14 +58,23 @@ defmodule Worker.Telemetry do
   use GenServer
   require Logger
 
-  @signale [:task_crash, :unbekannter_event_kind, :pipeline_fehler]
+  @signale [:task_crash, :unbekannter_event_kind, :pipeline_fehler, :modell_schleife]
 
   # Ab wie vielen Vorfällen im Fenster die Zeile zur Warnung wird. Ein
   # abgestürzter Task und ein unbekannter Event-Kind sind Einzelfälle, die
   # niemand erwartet — beide ab dem ersten Mal laut. Pipeline-Fehler stehen
   # ohnehin einzeln in `/admin/errors` (#716) und sind bei langen Läufen
   # nicht ungewöhnlich; sie werden erst in Häufung zur Warnung.
-  @schwellen %{task_crash: 1, unbekannter_event_kind: 1, pipeline_fehler: 5}
+  # `modell_schleife` (#1247) ist ab dem ersten Mal laut: Ein Modell, das sich
+  # wörtlich wiederholt, verbrennt Minuten und kommt nicht weiter — und der
+  # Vorfall war vorher nur zu sehen, wenn gerade jemand in die Laufsicht
+  # schaute.
+  @schwellen %{
+    task_crash: 1,
+    unbekannter_event_kind: 1,
+    pipeline_fehler: 5,
+    modell_schleife: 1
+  }
 
   @doc "Signale dieses Moduls — auch die Quelle für Tests."
   @spec signale() :: [atom()]

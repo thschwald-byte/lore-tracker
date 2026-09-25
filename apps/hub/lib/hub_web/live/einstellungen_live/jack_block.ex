@@ -22,6 +22,8 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
       `Options.normalize_settings_params/1` den Leerstring durch. Leser:
       `Worker.Jack.Resuemee.Pipeline.modell_name/0`. Endpunkt, Regler und
       Kontextfenster teilt der Resümee-Jack mit Jack.
+    * `zeit_jack_model` (#1247) — das Modell des Zeit-Jack, der die Äußerungen
+      in eine zeitliche Reihe bringt. Leer heisst Jacks Modell.
     * `chronik_jack_model` (J7, #1211) — das Modell des Chronik-Jack, der die
       Zeitleiste der Kampagne schreibt (ersetzt den deterministischen
       Zeitstrahl, der kein Modell brauchte). Dieselbe Form.
@@ -139,6 +141,26 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
             Zeitleiste der Kampagne — gebündelte Phasen statt Einzelereignisse. Er sieht als
             einziger Jack die ganze Kampagne; Endpunkt, Regler und Kontextfenster teilt er
             mit Jack.
+          </p>
+        </div>
+
+        <div class="block">
+          <label for="zeit-jack-model" class="text-xs text-ink-2">
+            Modell des Zeit-Jack (<code>zeit_jack_model</code>)
+          </label>
+          <input
+            id="zeit-jack-model"
+            type="text"
+            name="settings[zeit_jack_model]"
+            value={@settings["zeit_jack_model"] || ""}
+            list="resuemee-jack-modelle"
+            placeholder="leer = Jacks Modell"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          />
+          <p class="text-[10px] text-ink-2/70 mt-1">
+            Leer = Jacks Modell (<code>model_stage2_local</code>). Der Zeit-Jack bringt die
+            Äußerungen in eine zeitliche Reihe — er setzt Anker dort, wo im Spiel über Zeit
+            gesprochen wird; Endpunkt, Regler und Kontextfenster teilt er mit Jack.
           </p>
         </div>
 

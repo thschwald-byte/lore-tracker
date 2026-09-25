@@ -19,16 +19,59 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
     for stufe <- PipelineStufen.alle() do
       case stufe.spalte do
         nil ->
-          # Nur die Bogen-Progressionen dürfen spaltenlos sein — ihr Ergebnis
-          # steht in der Nachlese, nicht in einer Spalte.
-          assert stufe.name == "render_arc_progressions",
+          # Spaltenlos sein dürfen die Bogen-Progressionen (ihr Ergebnis steht
+          # in der Nachlese) und die beiden Stufen der Zeitlinie (#1247 — sie
+          # hat in der CampaignLive noch keine eigene Spalte; das wäre #1243).
+          assert stufe.name in ~w(render_arc_progressions zeit_gedaechtnis zeit),
                  "#{stufe.name} hat keine Spalte — Absicht? Dann hier eintragen."
+
+          # **Und sie muss ihre Gruppe selbst nennen.** Der Statusendpunkt
+          # (#1218) gruppiert darüber; bis #1247 hiess jede spaltenlose Stufe
+          # dort „boegen", und die Zeitlinie wäre zu einer Bogen-Progression
+          # geworden.
+          assert is_binary(Map.get(stufe, :gruppe)),
+                 "#{stufe.name} ist spaltenlos und nennt keine :gruppe — im " <>
+                   "Statusendpunkt wäre sie nicht zuzuordnen."
 
         spalte ->
           assert spalte in @col_names,
                  "Stufe #{stufe.name} zeigt auf Spalte #{inspect(spalte)}, die es nicht gibt"
       end
     end
+  end
+
+  # **Die zweite Hälfte der Falle** (bob, 19.09.2026): Der Wächter oben
+  # verlangt eine Gruppe von SPALTENLOSEN Stufen. Eine Stufe *mit* Spalte,
+  # deren Gruppe eine andere sein müsste, fiele still auf die Spalte zurück —
+  # genau der Fall, der zu diesem Umbau geführt hat, eine Ebene versetzt. Und
+  # ein Tippfehler in `:gruppe` erzeugte eine Gruppe, die niemand erwartet:
+  # Der Statusendpunkt zeigte sie an, und niemand fragte, woher sie kommt.
+  @gruppen @col_names ++ ~w(zeit boegen)
+
+  test "jede Gruppe ist eine bekannte — ein Tippfehler erfindet keine neue" do
+    for stufe <- PipelineStufen.alle() do
+      gruppe = Map.get(stufe, :gruppe) || stufe.spalte
+
+      assert gruppe in @gruppen,
+             "Stufe #{stufe.name} gehört zur Gruppe #{inspect(gruppe)}, die es nicht " <>
+               "gibt. Absicht? Dann hier eintragen — sonst ist es ein Tippfehler, " <>
+               "den nur der Statusendpunkt zeigt."
+    end
+  end
+
+  test "eine Stufe MIT Spalte trägt keine abweichende Gruppe — ausser bewusst" do
+    abweichend =
+      for stufe <- PipelineStufen.alle(),
+          g = Map.get(stufe, :gruppe),
+          not is_nil(stufe.spalte),
+          g != stufe.spalte,
+          do: {stufe.name, stufe.spalte, g}
+
+    # Heute gibt es keine. Wer die erste einträgt, soll hier begründen, warum
+    # die Oberfläche sie anders gruppiert als der Statusendpunkt — sonst ist
+    # es ein Versehen, das an beiden Orten Verschiedenes anzeigt.
+    assert abweichend == [],
+           "Spalte und Gruppe fallen auseinander: #{inspect(abweichend)}"
   end
 
   test "die Protokoll-Spalte gehört keiner Stufe — sie ist die Quelle" do

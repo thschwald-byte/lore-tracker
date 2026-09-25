@@ -119,8 +119,28 @@ defmodule Worker.Schema.Mnesia do
   # gleiche LWW-Regel wie `@jack_staende`.
   @jack_resuemee_staende :worker_jack_resuemee_staende
   # J6 (#1210, E4): der Stand des Epos-Jack je Sitzung — gleiche Form und
-  # gleiche LWW-Regel. Angelegt werden alle drei in `Worker.Schema.JackTabellen`.
+  # gleiche LWW-Regel. Angelegt werden alle vier in `Worker.Schema.JackTabellen`.
   @jack_epos_staende :worker_jack_epos_staende
+  # #1247 (Z2): der Stand des Zeit-Jack je Sitzung — gleiche Form, gleiche Regel.
+  @jack_zeit_staende :worker_jack_zeit_staende
+  # #1247 (Z1): die Zeit-Anker der Linie — 1 Row je Anker, Key = content-
+  # adressierte `anker_id` über die sortierten Utterance-IDs. Die Nutzdaten
+  # liegen als EIN JSON-Feld, nicht als Spalten: `ensure_table!` baut eine
+  # bestehende Tabelle nicht um, jedes spätere Feld wäre sonst eine Migration
+  # (und positional gelesene Spaltenlisten sind die #1211-Falle). LWW-by-
+  # event_id, nie ein :mnesia.delete — eine Rücknahme ist eine reguläre Row
+  # mit art "geloest" (#698-Klasse).
+  @zeit_anker :worker_zeit_anker
+  # #1247: die KETTE — 1 Row je Glied, Key = die Kennung des Gliedes (eine
+  # UUID, vergeben beim Anlegen und stabil über jede Änderung). Der Platz
+  # steht in den Nutzdaten als Bezug auf die Kennung des linken Nachbarn
+  # (`vorher`) und des Elterngliedes (`eltern`) — Maintainer-Entscheidung,
+  # 20.09.2026. Gelöste Äußerungen liegen in derselben Tabelle mit
+  # `art: "draussen"` und der Utterance-ID als Key; die Schlüsselräume sind
+  # disjunkt (`g_…` gegen Utterance-UUID). Nutzdaten als EIN JSON-Feld und nie
+  # ein :mnesia.delete — beides aus denselben Gründen wie bei den Ankern
+  # darüber; ein entferntes Glied bekommt einen Grabstein (`entfernt`).
+  @zeit_kette :worker_zeit_kette
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -224,6 +244,9 @@ defmodule Worker.Schema.Mnesia do
   def jack_staende, do: @jack_staende
   def jack_resuemee_staende, do: @jack_resuemee_staende
   def jack_epos_staende, do: @jack_epos_staende
+  def jack_zeit_staende, do: @jack_zeit_staende
+  def zeit_anker, do: @zeit_anker
+  def zeit_kette, do: @zeit_kette
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones

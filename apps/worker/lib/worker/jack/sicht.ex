@@ -81,13 +81,19 @@ defmodule Worker.Jack.Sicht do
   def betrieb(nil, _opts), do: :ignore
 
   def betrieb(port, opts) do
+    # Der Titel steht im Log, weil seit #1247 zwei Sichten laufen (Jack und
+    # der Zeit-Jack, eine Stelle darüber). „Jack-Laufsicht: …8099" zweimal
+    # untereinander wäre genau die Verwechslung, die am 18.09. einen ganzen
+    # Lauf blind laufen liess.
+    titel = Keyword.get(opts, :titel, "Jack-Laufsicht")
+
     case start_link(port: port, name: Keyword.get(opts, :name, __MODULE__)) do
       {:ok, pid} ->
-        Logger.info("Jack-Laufsicht: http://127.0.0.1:#{port(pid)}")
+        Logger.info("#{titel}: http://127.0.0.1:#{port(pid)}")
         {:ok, pid}
 
       {:error, grund} ->
-        Logger.warning("Jack-Laufsicht startet nicht (#{inspect(grund)}) — Pipeline läuft ohne")
+        Logger.warning("#{titel} startet nicht (#{inspect(grund)}) — Pipeline läuft ohne")
         :ignore
     end
   end

@@ -91,8 +91,10 @@ defmodule Worker.Status.Lage do
   Die Spaltengruppen in Laufreihenfolge, jede mit ihrem Zustand.
 
   Die Gruppen kommen aus `Shared.PipelineStufen`, nicht aus einer zweiten Liste:
-  eine Stufe, die dort dazukommt, taucht hier von selbst auf. Stufen ohne Spalte
-  (die Bogen-Progressionen) bilden die Gruppe `"boegen"`.
+  eine Stufe, die dort dazukommt, taucht hier von selbst auf. Eine Stufe ohne
+  eigene Spalte in der Oberfläche nennt ihre Gruppe selbst (`:gruppe`) — bis
+  #1247 hiess jede von ihnen `"boegen"`, was genau so lange trug, wie es eine
+  einzige gab.
 
   Vorrang der Zustände: eine gescheiterte **Pflichtstufe** schlägt alles, dann
   „läuft", dann eine gescheiterte **Zugabe**, dann „fertig", sonst „offen". Die
@@ -118,8 +120,14 @@ defmodule Worker.Status.Lage do
     end)
   end
 
-  defp spalte(%{spalte: nil}), do: "boegen"
-  defp spalte(%{spalte: s}), do: s
+  defp spalte(stufe) do
+    Map.get(stufe, :gruppe) || stufe.spalte ||
+      raise(
+        ArgumentError,
+        "Stufe #{stufe.name} hat weder :spalte noch :gruppe — sie wäre im " <>
+          "Statusendpunkt nicht zuzuordnen."
+      )
+  end
 
   defp gruppenzustand(stufen) do
     status = Enum.map(stufen, & &1["status"])

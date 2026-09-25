@@ -37,7 +37,11 @@ defmodule Worker.Jack.Chronik.Eingabe do
   Gespräch mit dem Modell.
   """
 
+  require Logger
+
   alias Worker.Jack.Resuemee.Eingabe, as: Basis
+  alias Worker.Repo.GlattQuellen
+  alias Worker.Timeline.Linie
 
   @doc """
   Die Eingabe für eine Sitzung. Die Lesebasis kommt aus dem Resümee-Jack
@@ -68,12 +72,134 @@ defmodule Worker.Jack.Chronik.Eingabe do
       ueberschrift: ueberschrift(campaign),
       # Alle Fakten der Kampagne, nicht die einer Sitzung — der Unterschied
       # zu allen anderen Jacks (Moduledoc).
-      fakten: alle_fakten(basis),
+      fakten: basis |> alle_fakten() |> mit_zeitlinie(campaign.id),
       chronik: bestand,
       eintraege: aus_bestand(bestand),
       betriebsart: betriebsart(bestand)
     })
   end
+
+  @doc ~S'''
+  Hängt an jeden Fakt die Zeit, die die **Kette** (#1247) für seine
+  Äußerungen kennt — als `zeit_linie`, neben dem, was der Fakt selbst trägt.
+
+  ## Ein Angebot mit Prüfpflicht
+
+  Maintainer, 25.09.2026: „die chronik soll sich entscheiden können die kette
+  zu benutzen — aber soll sich auch dagegen entscheiden dürfen", und
+  schärfer: „er kann und darf abweichen — und er soll nicht ungeprüft
+  übernehmen."
+
+  Daraus folgen drei Dinge, und alle drei stecken in der Form:
+
+    * **Nichts wird überschrieben.** Die Angabe der Kette steht NEBEN dem
+      `in_game_date` des Fakts. Wo beide etwas sagen, sieht Jack beides.
+    * **Jede Angabe trägt ihren Beleg** — das wörtliche Zitat, aus dem die
+      Zeit gelesen wurde. Ohne das könnte Jack die Prüfpflicht nicht
+      erfüllen, sondern nur glauben; deshalb reicht `Linie.anker_fuer/2` den
+      Beleg seit diesem Cut mit.
+    * **Belegt und gerechnet sind unterschieden.** Ein interpolierter Wert ist
+      eine Schätzung zwischen zwei Ankern und heisst hier „gerechnet". Ihn wie
+      eine Fundstelle zu zeigen, hiesse über die Belastbarkeit täuschen.
+
+  Der Grund ist nicht Höflichkeit, sondern Erfahrung: Die Kette entsteht in
+  einem Lauf, der Zeitangaben aus dem Gesprochenen liest — und ob er sie
+  zuverlässig findet, ist **nicht gemessen** (die ehrliche Grenze von Z2). Ein
+  falscher Anker würde, hart durchgesetzt, die ganze Chronik verbiegen; als
+  geprüftes Angebot kostet er nichts. Läuft der Zeit-Jack gar nicht (er ist
+  best-effort und darf scheitern), fehlt das Feld, und alles bleibt wie zuvor.
+
+  ## Leer heisst leer
+
+  Ein Fakt ohne Zeit in der Kette bekommt **kein** Feld, keinen Platzhalter.
+  Eine leere Angabe wäre eine Aussage über eine Zeit, die es nicht gibt —
+  dieselbe Regel, nach der `Linie.anker_fuer/2` eine gelöste Stelle gar nicht
+  erst nennt.
+
+  **Ehrliche Grenze:** Das kostet je Chronik-Lauf einen Aufbau der Linie und
+  einen Block-Index, beides über die ganze Kampagne. Der Chronik-Jack liest
+  ohnehin alles, aber umsonst ist es nicht.
+  '''
+  @spec mit_zeitlinie([map()], String.t()) :: [map()]
+  def mit_zeitlinie(fakten, campaign_id) do
+    # Kampagnenweit, ohne Sitzungsgrenze — die Chronik ist der einzige Jack,
+    # der die ganze Kampagne sieht, und Geschehen hört an der Sitzungsgrenze
+    # nicht auf.
+    linie =
+      Linie.aus_kette(
+        Worker.Repo.Zeit.kette(campaign_id),
+        Worker.Repo.Zeit.anker(campaign_id),
+        Worker.Repo.Zeit.stellen(campaign_id)
+      )
+
+    blockindex = GlattQuellen.block_index(campaign_id)
+
+    Enum.map(fakten, fn f ->
+      case zeit_der_kette(f, linie, blockindex) do
+        nil -> f
+        text -> Map.put(f, :zeit_linie, text)
+      end
+    end)
+  rescue
+    e ->
+      # Best-effort wie der Zeit-Jack selbst: Ohne die Kette arbeitet die
+      # Chronik wie vor #1247 weiter. Laut, damit ein Ausfall nicht als
+      # „die Kette hatte eben nichts" durchgeht.
+      Logger.warning("Chronik: Zeitlinie nicht lesbar, Fakten ohne sie: #{Exception.message(e)}")
+      fakten
+  end
+
+  # Die Anker der Äußerungen eines Fakts, zu einer Zeile zusammengefasst.
+  # **Mehrere verschiedene Zeiten bleiben mehrere** — sie zu einem Mittelwert
+  # zu verrechnen wäre genau die Erfindung, die `anker_fuer/2` vermeidet.
+  defp zeit_der_kette(f, linie, blockindex) do
+    utts =
+      f
+      |> Map.get(:refs, [])
+      |> GlattQuellen.aufloesen(blockindex)
+
+    linie
+    |> Linie.anker_fuer(utts)
+    |> Enum.map(&anker_wort/1)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
+    |> case do
+      [] -> nil
+      teile -> Enum.join(teile, " · ")
+    end
+  end
+
+  defp anker_wort(%{} = a) do
+    zeit = to_string(Map.get(a, :wert) || "")
+    belegt? = Map.get(a, :herkunft) == :belegt
+    beleg = to_string(Map.get(a, :beleg) || "")
+    zweifel = to_string(Map.get(a, :zweifel) || "")
+
+    cond do
+      zeit == "" and not belegt? ->
+        nil
+
+      zeit == "" ->
+        nil
+
+      true ->
+        [
+          zeit,
+          if(belegt?, do: nil, else: "(gerechnet)"),
+          if(beleg == "", do: nil, else: "belegt mit „#{kurz(beleg)}“"),
+          if(zweifel == "", do: nil, else: "⚠ #{zweifel}")
+        ]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.join(" ")
+    end
+  end
+
+  defp anker_wort(_), do: nil
+
+  # Ein Zitat soll prüfbar sein, nicht die Zeile sprengen: Wer mehr braucht,
+  # liest den Block.
+  defp kurz(text) when byte_size(text) <= 90, do: text
+  defp kurz(text), do: String.slice(text, 0, 87) <> "…"
 
   @doc """
   `:aufbau`, solange die Chronik der Kampagne leer ist — sonst
