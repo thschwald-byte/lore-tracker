@@ -61,7 +61,9 @@ defmodule Worker.Agent.Modell.Ollama do
     |> Req.post(
       json: anfrage(nachrichten, werkzeuge, opts),
       receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
-      retry: false
+      retry: false,
+      # #1247: der eigene Pool mit Idle-Frist — s. `Worker.Agent.Modell.Pool`.
+      finch: Worker.Agent.Modell.Pool.name()
     )
     |> case do
       {:ok, %Req.Response{status: 200, body: %{} = body}} -> antwort(body)
@@ -93,7 +95,9 @@ defmodule Worker.Agent.Modell.Ollama do
       json: body,
       into: into,
       receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
-      retry: false
+      retry: false,
+      # #1247: der eigene Pool mit Idle-Frist — s. `Worker.Agent.Modell.Pool`.
+      finch: Worker.Agent.Modell.Pool.name()
     )
     |> case do
       {:ok, %Req.Response{status: 200} = resp} ->

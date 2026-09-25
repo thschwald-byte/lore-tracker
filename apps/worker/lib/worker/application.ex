@@ -22,124 +22,134 @@ defmodule Worker.Application do
     # dann im Log stehen, wenn der Start danach scheitert.
     Worker.Telemetry.melde_vorherigen_abgang()
 
+    # #1247: der HTTP-Pool für die Modell-Aufrufe steht VOR dem Pairing-Gate.
+    # Er ist Infrastruktur, nicht Feature: Er hat keine Abhängigkeit, kostet im
+    # Leerlauf nichts, und ein Aufruf ohne laufenden Pool wirft
+    # (`unknown registry`). Genau das ist beim ersten Anlauf passiert — drei
+    # Tests, die echte HTTP-Aufrufe gegen einen lokalen Stub fahren, fielen um,
+    # weil der Pool nur im gepaarten Zweig stand. Ein Rückfall auf Reqs
+    # Default-Pool wäre die stillere, aber schlechtere Antwort gewesen: Dann
+    # liefe ein Teil der Aufrufe wieder ohne Frist, und niemand sähe es.
     children =
-      if paired?() do
-        migrate_legacy_mock_settings!()
-        warn_stale_legacy_model_settings!()
-        migrate_stage2_to_stage4_if_unset!()
-        heal_campaign_stores_best_effort!()
+      [Worker.Agent.Modell.Pool.kind()] ++
+        if paired?() do
+          migrate_legacy_mock_settings!()
+          warn_stale_legacy_model_settings!()
+          migrate_stage2_to_stage4_if_unset!()
+          heal_campaign_stores_best_effort!()
 
-        Logger.info(
-          "Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording."
-        )
+          Logger.info(
+            "Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording."
+          )
 
-        [
-          # Issue #512: systemd-Watchdog ganz vorne — pingt WATCHDOG=1, solange
-          # der Worker-Tree lebt. Stoppt die App (Self-Update-Zombie), stirbt der
-          # Pinger → systemd killt + restartet den BEAM. No-op (`:ignore`) ohne
-          # systemd-Notify-Env (Dev-/PR-Test-Worker).
-          Worker.SystemdWatchdog,
-          # Issue #542: die Vorfall-Zählung gehört weit nach vorn — sie soll
-          # auch die Abstürze der Kinder sehen, die nach ihr starten. Der
-          # Logger-Handler für Task-Abstürze hängt an ihrem `init/1`; ohne
-          # laufenden Reporter verfallen Zählrufe still, ein Fehlstart hier
-          # legt also nichts lahm.
-          Worker.Telemetry,
-          {Phoenix.PubSub, name: Worker.PubSub},
-          # Issue #233: supervisor für asynchrone Tasks (Stage-1-Transcribe etc.) —
-          # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace
-          # erscheinen statt silent unter `Task.start` zu verschwinden.
-          {Task.Supervisor, name: Worker.TaskSupervisor},
-          # Issue #292: strikt-serielle GPU/CPU-Queue. AudioBuffer + Pipeline
-          # routen ihre schweren Jobs durch dieses GenServer, damit Whisper,
-          # pyannote-Diarisierung und Ollama-Inference sich nicht mehr
-          # gegenseitig die GPU/VRAM zerschießen.
-          Worker.GpuQueue,
-          Worker.Materializer,
-          Worker.HubClient,
-          Worker.Recording.AudioBuffer,
-          Worker.Recording.Pipeline,
-          # Issue #1122: Gedächtnis des laufenden Durchgangs (Stufe, Einheiten,
-          # Zeiten). Eigener Prozess, damit die Fortschritts-Casts einer
-          # Gap-Fill-Schleife (bis zu einige hundert) sich nicht vor den
-          # `run_for_session`-Call der Pipeline legen — und weil er später die
-          # Koordinator-Rolle für auf mehrere Worker verteilte Batches trägt.
-          Worker.Recording.Pipeline.Fortschritt,
-          # J4 (#1207): die Laufsicht für Jack-Läufe der Pipeline, nur auf
-          # Loopback (Tom, 11.09.2026). Ohne Port (Tests) kein Prozess; ein
-          # belegter Port — ein zweiter Worker auf derselben Maschine — ist
-          # eine Warnung, kein Startfehler.
-          %{
-            id: Worker.Jack.Sicht,
-            start: {Worker.Jack.Sicht, :betrieb, [Application.get_env(:worker, :jack_sicht_port)]}
-          },
-          # #1247: die Laufsicht des Zeit-Jack, eine Stelle über der von Jack
-          # (Maintainer, 19.09.2026). Eigener Prozess, eigener Port, eigener
-          # Name — zwei Läufe teilen sich sonst eine Seite, und wer den einen
-          # beobachtet, verliert den anderen. Dieselbe Zurückhaltung beim
-          # Start: ohne Port kein Prozess, ein belegter Port ist eine Warnung.
-          %{
-            id: Worker.Jack.Zeit.Sicht,
-            start:
-              {Worker.Jack.Sicht, :betrieb,
-               [
-                 Application.get_env(:worker, :zeit_sicht_port),
-                 [name: Worker.Jack.Zeit.Sicht, titel: "Zeit-Laufsicht"]
-               ]}
-          },
-          # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
-          # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
-          # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse
-          # sind Singleton-GenServer mit interner State-Map). Genuin variable
-          # Kardinalität (0..N Kampagnen mit aktivem Bot-Voice gleichzeitig),
-          # Start/Stop on-demand — der Standard-OTP-Antwort dafür. Registry-
-          # Key = Discord-Guild-ID (Integer) — das ist, was der Consumer aus
-          # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
-          # interne campaign_id.
-          {Registry, keys: :unique, name: Worker.Discord.Registry},
-          {DynamicSupervisor, name: Worker.Discord.BotSupervisor, strategy: :one_for_one},
-          # Issue #866 (Slice F): Kuration → automatische Neuableitung
-          # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.
-          Worker.Recording.Pipeline.Dirty,
-          Worker.Recording.Recorder,
-          Worker.Recording.CampaignReplay,
-          # Issue #281b/#296: Sidecar-Lifecycle. Spawnt Python-FastAPI als
-          # OS-Subprocess wenn venv + Script da sind; setzt die jeweilige
-          # *_sidecar_url-Setting nach erfolgreichem /health-Check. Eine
-          # Instanz: Diarisierung (8766, pyannote). Der NLI-Faithfulness-
-          # Sidecar (8765) ist mit #1124 entfallen.
-          # Fehlt ein venv, wird die Instanz graceful übersprungen.
-          {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
-          # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
-          # last-N). Initial-Prune via handle_continue + Process.send_after-
-          # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
-          Worker.PipelineErrorLog.Pruner,
-          # Issue #1076: der Discord-Gateway-Bot hängt unter einem eigenen
-          # DynamicSupervisor statt als statischer Top-Level-Child. Grund ist
-          # nicht Symmetrie, sondern Schadensbegrenzung: ein Fehlstart liefert
-          # hier `{:error, reason}` an den Aufrufer, statt den gesamten
-          # Worker-Boot mitzureißen (#985, empirisch gefunden). Der
-          # BotSupervisor daneben bleibt für die per-Kampagne-VoiceSessions —
-          # zwei Lebenszyklen, zwei Supervisor.
-          {DynamicSupervisor, name: Worker.Discord.GatewaySupervisor, strategy: :one_for_one},
-          Worker.Discord.BotGate,
-          # Issue #1218: Zwischenspeicher für den Statusendpunkt (Präsenz).
-          Worker.Status.Praesenz
-        ] ++ updater_child() ++ status_kind()
-      else
-        no_browser = Application.get_env(:worker, :no_browser, false)
+          [
+            # Issue #512: systemd-Watchdog ganz vorne — pingt WATCHDOG=1, solange
+            # der Worker-Tree lebt. Stoppt die App (Self-Update-Zombie), stirbt der
+            # Pinger → systemd killt + restartet den BEAM. No-op (`:ignore`) ohne
+            # systemd-Notify-Env (Dev-/PR-Test-Worker).
+            Worker.SystemdWatchdog,
+            # Issue #542: die Vorfall-Zählung gehört weit nach vorn — sie soll
+            # auch die Abstürze der Kinder sehen, die nach ihr starten. Der
+            # Logger-Handler für Task-Abstürze hängt an ihrem `init/1`; ohne
+            # laufenden Reporter verfallen Zählrufe still, ein Fehlstart hier
+            # legt also nichts lahm.
+            Worker.Telemetry,
+            {Phoenix.PubSub, name: Worker.PubSub},
+            # Issue #233: supervisor für asynchrone Tasks (Stage-1-Transcribe etc.) —
+            # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace
+            # erscheinen statt silent unter `Task.start` zu verschwinden.
+            {Task.Supervisor, name: Worker.TaskSupervisor},
+            # Issue #292: strikt-serielle GPU/CPU-Queue. AudioBuffer + Pipeline
+            # routen ihre schweren Jobs durch dieses GenServer, damit Whisper,
+            # pyannote-Diarisierung und Ollama-Inference sich nicht mehr
+            # gegenseitig die GPU/VRAM zerschießen.
+            Worker.GpuQueue,
+            Worker.Materializer,
+            Worker.HubClient,
+            Worker.Recording.AudioBuffer,
+            Worker.Recording.Pipeline,
+            # Issue #1122: Gedächtnis des laufenden Durchgangs (Stufe, Einheiten,
+            # Zeiten). Eigener Prozess, damit die Fortschritts-Casts einer
+            # Gap-Fill-Schleife (bis zu einige hundert) sich nicht vor den
+            # `run_for_session`-Call der Pipeline legen — und weil er später die
+            # Koordinator-Rolle für auf mehrere Worker verteilte Batches trägt.
+            Worker.Recording.Pipeline.Fortschritt,
+            # J4 (#1207): die Laufsicht für Jack-Läufe der Pipeline, nur auf
+            # Loopback (Tom, 11.09.2026). Ohne Port (Tests) kein Prozess; ein
+            # belegter Port — ein zweiter Worker auf derselben Maschine — ist
+            # eine Warnung, kein Startfehler.
+            %{
+              id: Worker.Jack.Sicht,
+              start:
+                {Worker.Jack.Sicht, :betrieb, [Application.get_env(:worker, :jack_sicht_port)]}
+            },
+            # #1247: die Laufsicht des Zeit-Jack, eine Stelle über der von Jack
+            # (Maintainer, 19.09.2026). Eigener Prozess, eigener Port, eigener
+            # Name — zwei Läufe teilen sich sonst eine Seite, und wer den einen
+            # beobachtet, verliert den anderen. Dieselbe Zurückhaltung beim
+            # Start: ohne Port kein Prozess, ein belegter Port ist eine Warnung.
+            %{
+              id: Worker.Jack.Zeit.Sicht,
+              start:
+                {Worker.Jack.Sicht, :betrieb,
+                 [
+                   Application.get_env(:worker, :zeit_sicht_port),
+                   [name: Worker.Jack.Zeit.Sicht, titel: "Zeit-Laufsicht"]
+                 ]}
+            },
+            # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
+            # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
+            # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse
+            # sind Singleton-GenServer mit interner State-Map). Genuin variable
+            # Kardinalität (0..N Kampagnen mit aktivem Bot-Voice gleichzeitig),
+            # Start/Stop on-demand — der Standard-OTP-Antwort dafür. Registry-
+            # Key = Discord-Guild-ID (Integer) — das ist, was der Consumer aus
+            # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
+            # interne campaign_id.
+            {Registry, keys: :unique, name: Worker.Discord.Registry},
+            {DynamicSupervisor, name: Worker.Discord.BotSupervisor, strategy: :one_for_one},
+            # Issue #866 (Slice F): Kuration → automatische Neuableitung
+            # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.
+            Worker.Recording.Pipeline.Dirty,
+            Worker.Recording.Recorder,
+            Worker.Recording.CampaignReplay,
+            # Issue #281b/#296: Sidecar-Lifecycle. Spawnt Python-FastAPI als
+            # OS-Subprocess wenn venv + Script da sind; setzt die jeweilige
+            # *_sidecar_url-Setting nach erfolgreichem /health-Check. Eine
+            # Instanz: Diarisierung (8766, pyannote). Der NLI-Faithfulness-
+            # Sidecar (8765) ist mit #1124 entfallen.
+            # Fehlt ein venv, wird die Instanz graceful übersprungen.
+            {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
+            # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
+            # last-N). Initial-Prune via handle_continue + Process.send_after-
+            # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
+            Worker.PipelineErrorLog.Pruner,
+            # Issue #1076: der Discord-Gateway-Bot hängt unter einem eigenen
+            # DynamicSupervisor statt als statischer Top-Level-Child. Grund ist
+            # nicht Symmetrie, sondern Schadensbegrenzung: ein Fehlstart liefert
+            # hier `{:error, reason}` an den Aufrufer, statt den gesamten
+            # Worker-Boot mitzureißen (#985, empirisch gefunden). Der
+            # BotSupervisor daneben bleibt für die per-Kampagne-VoiceSessions —
+            # zwei Lebenszyklen, zwei Supervisor.
+            {DynamicSupervisor, name: Worker.Discord.GatewaySupervisor, strategy: :one_for_one},
+            Worker.Discord.BotGate,
+            # Issue #1218: Zwischenspeicher für den Statusendpunkt (Präsenz).
+            Worker.Status.Praesenz
+          ] ++ updater_child() ++ status_kind()
+        else
+          no_browser = Application.get_env(:worker, :no_browser, false)
 
-        Logger.info(
-          "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()}." <>
-            if(no_browser, do: "", else: " Öffne Browser.")
-        )
+          Logger.info(
+            "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()}." <>
+              if(no_browser, do: "", else: " Öffne Browser.")
+          )
 
-        unless no_browser do
-          open_browser_async("http://127.0.0.1:#{setup_port()}/setup")
+          unless no_browser do
+            open_browser_async("http://127.0.0.1:#{setup_port()}/setup")
+          end
+
+          [{Worker.Setup.Endpoint, port: setup_port()}]
         end
-
-        [{Worker.Setup.Endpoint, port: setup_port()}]
-      end
 
     ergebnis = Supervisor.start_link(children, strategy: :one_for_one, name: Worker.Supervisor)
 
