@@ -113,6 +113,10 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   defp beispiel("nicht_in_die_kette"), do: %{"zeilen" => [1], "grund" => "Tisch"}
   defp beispiel("haenge_an_kette"), do: %{"von" => 1, "bis" => 2}
   defp beispiel("unterhaenge_kettenglied"), do: %{"glied" => 1, "zeilen" => [3]}
+
+  defp beispiel("nimm_anker_zurueck"),
+    do: %{"zeilen" => [1], "art" => "zeitpunkt", "grund" => "trägt nicht"}
+
   defp beispiel("melde_konflikt"), do: %{"zeilen" => [1], "befund" => "x", "beleg" => "b"}
   defp beispiel("kettenplatz_unklar"), do: %{"zeilen" => [1], "text" => "unklar"}
 

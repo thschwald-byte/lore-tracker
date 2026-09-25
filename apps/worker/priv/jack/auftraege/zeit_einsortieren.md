@@ -150,6 +150,13 @@ Szenenwechsel eine feinere Grenze nahelegt.
 - **`setz_spanne`** — hier ist Zeit *vergangen*. „Wir sind zwei Stunden
   marschiert“. Ohne Spannen steht die Kette still: Zwischen zwei genannten
   Uhrzeiten liegen oft Stunden, die niemand ausspricht.
+- **`nimm_anker_zurueck`** — ein Anker von dir, der nicht trägt. Eine Dauer
+  ohne Bezugspunkt, eine Angabe, die du beim zweiten Lesen anders verstehst,
+  ein Zeitpunkt, der die Reihe verbiegt: nimm ihn weg, mit Grund. **Das ist
+  kein Eingeständnis, sondern die billigste Korrektur, die es gibt** — ein
+  falscher Anker zieht die ganze Linie schief, und ich rechne ihn mit.
+  Für „der alte ist falsch, hier ist der richtige" nimm `anker_ersetzen`;
+  hier geht es um „weg damit, ohne Ersatz".
 - **`setz_frist`** — hier ist Zeit *angekündigt*. **Eine Frist bewegt die
   Kette nie** — die Zeit steht noch bevor. Festgehalten wird sie trotzdem.
 

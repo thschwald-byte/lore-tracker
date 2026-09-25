@@ -17,7 +17,7 @@ defmodule Worker.Jack.Zeit.Anker do
   geraten.
   """
 
-  alias Worker.Jack.Zeit.{Kettenwerkzeuge, Mitschnitt, Setzen, Stand}
+  alias Worker.Jack.Zeit.{Mitschnitt, Setzen, Stand, Vorbehalte}
   alias Worker.Timeline.Kette
   alias Worker.Timeline.Ausdruck
 
@@ -301,14 +301,16 @@ defmodule Worker.Jack.Zeit.Anker do
         ausfuehren: &w_ersetzen/2
       },
       %{
-        name: "melde_konflikt",
+        name: "nimm_anker_zurueck",
         beschreibung:
-          "Trägt einen Widerspruch zu einer abgesegneten Stelle ein. Eine " <>
-            "Festlegung, die ein Mensch getroffen hat, überschreibt niemand — auch " <>
-            "du nicht. Wenn du triftige Gründe hast, dass sie nicht stimmt, schreib " <>
-            "sie hier auf: Ein Mensch sieht sich das an. Nenne, WAS du gefunden " <>
-            "hast und WORAUS — ohne das kann niemand entscheiden, ohne deine Arbeit " <>
-            "zu wiederholen.",
+          "Nimmt einen Anker zurück, den DU gesetzt hast — ohne Ersatz. Nimm das, " <>
+            "wenn du merkst, dass er nicht trägt: eine Dauer ohne Bezugspunkt, eine " <>
+            "Angabe, die du beim zweiten Lesen anders verstehst, ein Zeitpunkt, der " <>
+            "die Reihe verbiegt. Die Stelle ist danach wieder ohne Zeit; die Zeilen " <>
+            "bleiben, wo sie in der Kette liegen. Für „der alte ist falsch, hier ist " <>
+            "der richtige“ ist anker_ersetzen da — das hier ist die Rücknahme selbst. " <>
+            "Eine Festlegung, die ein Mensch abgesegnet hat, kannst du nicht " <>
+            "zurücknehmen; dafür ist melde_konflikt da.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -316,69 +318,30 @@ defmodule Worker.Jack.Zeit.Anker do
               "type" => "array",
               "items" => %{"type" => "integer"},
               "minItems" => 1,
-              "description" =>
-                "Die Zeilen, um die es geht — dort, wo die abgesegnete Stelle deiner Ansicht nach nicht stimmt."
+              "description" => "Die Zeilen, an denen der Anker hängt — dieselben wie beim Setzen."
             },
-            "befund" => %{
+            "art" => %{
+              "type" => "string",
+              "enum" => ~w(zeitpunkt spanne frist),
+              "description" =>
+                "Welchen der Anker an dieser Stelle. An einer Zeile dürfen mehrere hängen (etwa eine Spanne und ein Zeitpunkt), deshalb brauche ich das."
+            },
+            "grund" => %{
               "type" => "string",
               "description" =>
-                "WAS du gefunden hast: der Widerspruch in einem Satz, so dass ein Mensch entscheiden kann, ohne deine Arbeit zu wiederholen."
-            },
-            "beleg" => %{
-              "type" => "string",
-              "description" => "WORAUS: das wörtliche Zitat, auf das sich dein Befund stützt."
+                "Warum er nicht trägt. Steht danach an der Stelle und erklärt einem Menschen, was du gesehen hast."
             }
           },
-          "required" => ~w(zeilen befund beleg)
+          "required" => ~w(zeilen art grund)
         },
         wiederholung: :zaehlt,
         aendert_bestand: true,
-        ausfuehren: &w_konflikt/2
-      },
-      %{
-        name: "kettenplatz_unklar",
-        beschreibung:
-          "Hält fest, dass du dich an einer Stelle NICHT entscheiden kannst — und " <>
-            "setzt nichts. **Das ist zugleich die Einordnung „unklar“**: Die Zeile " <>
-            "bleibt auf der Linie, ist aber vermerkt, und ich leite keine Zeit " <>
-            "aus ihr ab. Beide Unklarheiten gehören hierher: „Welt oder Tisch?“ " <>
-            "und „gespielt schon, aber die Zeitangabe verstehe ich nicht“. " <>
-            "Zweifeln soll so billig sein wie Setzen: Lieber keine " <>
-            "Angabe als eine geratene. Der häufigste Fall ist die Welt-Frage: Aus " <>
-            "„drei viertel elf“ allein geht nicht hervor, ob die Uhr am Tisch oder " <>
-            "in der Welt gemeint ist. Lies dann zuerst die Zeilen davor — die Frage " <>
-            "steht oft drei Zeilen früher, mit fremden Einwürfen dazwischen.",
-        parameter: %{
-          "type" => "object",
-          "properties" => %{
-            "zeilen" => %{
-              "type" => "array",
-              "items" => %{"type" => "integer"},
-              "description" =>
-                "Einzelne Zeilennummern. Für zusammenhängende Abschnitte lieber von/bis."
-            },
-            "von" => %{
-              "type" => "integer",
-              "description" => "Erste Zeile des Abschnitts (mit bis)."
-            },
-            "bis" => %{
-              "type" => "integer",
-              "description" => "Letzte Zeile des Abschnitts (mit von)."
-            },
-            "text" => %{
-              "type" => "string",
-              "description" =>
-                "Was du nicht entscheiden kannst — beides gehört hierher: „Welt oder Tisch?“ und „ingame, aber die Zeit ist unklar“."
-            }
-          },
-          "required" => ["text"]
-        },
-        optional: ~w(zeilen von bis),
-        wiederholung: :zaehlt,
-        aendert_bestand: true,
-        ausfuehren: &w_zweifel/2
+        ausfuehren: &w_zuruecknehmen/2
       }
-    ]
+      # Die drei Vorbehalte — melde_konflikt, kettenplatz_unklar, zweifel —
+      # stehen in `Worker.Jack.Zeit.Vorbehalte`: Sie datieren nichts, sondern
+      # halten fest, dass keine Zeit gesetzt wird.
+    ] ++ Vorbehalte.werkzeuge()
   end
 
   # ─── Ausführung ─────────────────────────────────────────────────────
@@ -470,62 +433,82 @@ defmodule Worker.Jack.Zeit.Anker do
   # Drei Wege stehen jetzt offen, und `Worker.Timeline.Linie.stelle_fuer/3`
   # wählt in dieser Reihenfolge: „anfang" (vor alles), eine Zielzeile, oder
   # die eigene Zeit des Abschnitts.
-  defp offene_ids(s, ids), do: Enum.reject(ids, &Kette.glied_von(s.kette, &1))
+  # **Die Rücknahme ist der fehlende Aufrufer** (#1247, 24.09.2026).
+  # `Setzen.loesche_kettenplatz/2` war gebaut und dokumentiert, samt der
+  # Begründung, warum sie die Content-Adressierung bewusst bricht — und hatte
+  # **keinen einzigen Aufrufer**. Die Klasse „Apparat ohne Producer", die
+  # dieses Repo mit #724 und #1109 zweimal erzeugt hat.
+  #
+  # Gefunden am echten Lauf: Jack grübelte sechs Minuten über die Spanne „60
+  # Jahre her" und schrieb dabei fünfzehnmal denselben Gedanken („the cleanest
+  # solution is to remove this span entirely"). Er hatte das Problem richtig
+  # erkannt — eine relative Angabe ohne Bezugspunkt zieht die Linie zurück —
+  # und kein Werkzeug dafür. `anker_ersetzen` verlangt einen Ersatz, und
+  # „nichts" ist keiner.
+  #
+  # **Abgesegnetes bleibt.** Dieselbe Regel wie beim Setzen, und aus demselben
+  # Grund: Was ein Mensch entschieden hat, nimmt kein Lauf zurück. Die Antwort
+  # nennt den Weg (`melde_konflikt`), statt nur abzulehnen (#1211-Lehre).
+  defp w_zuruecknehmen(s, f) do
+    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f["zeilen"]),
+         s = Stand.gelesen(s, zeilen),
+         {:ok, anker} <- eigener_anker(s, ids, f["art"]) do
+      grund = to_string(f["grund"])
+      geloest = Setzen.loesche_kettenplatz(anker, grund)
 
-  defp w_konflikt(s, f) do
-    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f["zeilen"]) do
-      eintrag = %{
-        utterance_ids: ids,
-        befund: to_string(f["befund"]),
-        beleg: to_string(f["beleg"])
-      }
-
-      {Stand.gelesen(s, zeilen) |> Stand.konflikt(eintrag),
+      {Stand.setzen(s, geloest),
        {:ok,
-        "Konflikt eingetragen. Ein Mensch sieht sich das an; die abgesegnete Stelle " <>
-          "bleibt bis dahin, wie sie ist."}}
+        "Zurückgenommen: #{art_wort(f["art"])} „#{feld(anker, :wert)}“. Die Stelle " <>
+          "trägt keine Zeit mehr, die Zeilen bleiben in ihrem Kettenglied."}}
     else
       {:fehler, text} -> {s, {:error, text}}
     end
   end
 
-  defp w_zweifel(s, f) do
-    with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f) do
-      anker =
-        Setzen.bauen(%{
-          utterance_ids: ids,
-          art: :zweifel,
-          wert: "",
-          welt: "",
-          beleg: "",
-          zweifel: to_string(f["text"])
-        })
+  # Nur ein eigener, noch gesetzter Anker der genannten Art. Drei Absagen, und
+  # jede nennt, was stattdessen geht — eine Absage ohne Ausweg schickt Jack in
+  # die Wiederholung.
+  defp eigener_anker(s, ids, art) do
+    art = to_string(art)
 
-      # **Unklar heisst: in der Kette, aber vermerkt** (#1247, 20.09.2026).
-      # Der Zweifel setzte bis dahin nur einen Anker und liess die Zeilen
-      # unentschieden — sie blieben offen, und `fertig()` fragte weiter nach
-      # ihnen. Für eine Stelle, an der Jack sich NICHT entscheiden kann, ist
-      # das ein Widerspruch: Er hat entschieden, dass er es nicht
-      # entscheiden kann. Die Zeilen gehören also in die Kette, an ihrer
-      # Stelle, mit dem Zweifel daran.
-      s = Stand.gelesen(s, zeilen)
+    kandidaten =
+      s
+      |> Stand.an(ids, art: art)
+      |> Enum.reject(&(to_string(feld(&1, :art)) == "geloest"))
 
-      s =
-        case Stand.kette(s, &Kette.anhaengen(&1, offene_ids(s, ids))) do
-          {:ok, s, _} -> s
-          {:fehler, _} -> s
-        end
+    mensch = Enum.find(kandidaten, &abgesegnet_anker?/1)
 
-      s = s |> Stand.einordnen(zeilen, :unklar) |> Stand.setzen(anker)
+    cond do
+      mensch ->
+        {:fehler,
+         "An dieser Stelle steht ein #{art_wort(art)}, den ein Mensch am " <>
+           "#{feld(mensch, :abgesegnet_am)} abgesegnet hat („#{feld(mensch, :wert)}“). " <>
+           "Den nimmt kein Lauf zurück. Wenn du triftige Gründe hast, dass er nicht " <>
+           "stimmt: melde_konflikt."}
 
-      {s,
-       {:ok,
-        "Zweifel festgehalten — keine Zeit gesetzt, #{length(ids)} Zeile(n) in der " <>
-          "Kette und als unklar vermerkt. " <> Kettenwerkzeuge.kettenstand(s)}}
-    else
-      {:fehler, text} -> {s, {:error, text}}
+      kandidaten == [] ->
+        {:fehler,
+         "An diesen Zeilen hängt von mir #{keine_art(art)}. Sieh in lies_kette() " <>
+           "nach, was dort steht — vielleicht ist es eine andere Art, oder eine " <>
+           "andere Stelle."}
+
+      true ->
+        {:ok, hd(kandidaten)}
     end
   end
+
+  # „kein Spanne" gegen „keine Spanne" — das Geschlecht steht an der Art.
+  defp keine_art("spanne"), do: "keine Spanne"
+  defp keine_art("frist"), do: "keine Frist"
+  defp keine_art(art), do: "kein #{art_wort(art)}"
+
+  defp abgesegnet_anker?(a), do: feld(a, :abgesegnet_am) != ""
+
+  # Ein Anker kommt mit Atom-Schlüsseln aus dem Stand und mit String-Schlüsseln
+  # aus Mnesia. Dieselbe Form steht schon in `Stand` und `Setzen`, beide
+  # privat — sie zu einem geteilten Leser zusammenzuziehen ist eigene Arbeit
+  # und gehört nicht in diesen Cut.
+  defp feld(a, k) when is_map(a), do: Map.get(a, k) || Map.get(a, to_string(k)) || ""
 
   # ─── Helfer ─────────────────────────────────────────────────────────
 
@@ -691,6 +674,17 @@ defmodule Worker.Jack.Zeit.Anker do
     case Ausdruck.gelesen_als(a.wert, s.kalender) do
       {:ok, typ} -> " (gelesen als #{typ})"
       :kein_ausdruck -> ""
+    end
+  end
+
+  # Jack schickt die Art als String („spanne"), der Stand hält sie als Atom.
+  # Ohne diese Klausel stand in der Antwort „kein spanne von mir".
+  defp art_wort(a) when is_binary(a) do
+    case a do
+      "zeitpunkt" -> "Zeitpunkt"
+      "spanne" -> "Spanne"
+      "frist" -> "Frist"
+      andere -> andere
     end
   end
 

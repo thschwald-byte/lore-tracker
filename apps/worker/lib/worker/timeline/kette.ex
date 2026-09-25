@@ -119,6 +119,18 @@ defmodule Worker.Timeline.Kette do
           draussen: %{String.t() => String.t()}
         }
 
+  @doc """
+  Die Äußerungen dieser Liste, die noch in **keinem** Glied liegen.
+
+  Wer einen Anker setzt, braucht ein Kettenglied darunter (#1247) — und diese
+  Frage stellen zwei Aufrufer (`Anker`, `Vorbehalte`), seit der Schnitt sie
+  getrennt hat. Sie gehört hierher: Es ist eine Frage an die Kette, keine an
+  den Anker.
+  """
+  @spec offene(t(), [String.t()]) :: [String.t()]
+  def offene(%{} = kette, ids) when is_list(ids),
+    do: Enum.reject(ids, &glied_von(kette, &1))
+
   @doc "Ein leerer Zeitstrahl."
   @spec neu() :: t()
   def neu, do: %{glieder: [], draussen: %{}}

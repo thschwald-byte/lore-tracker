@@ -44,6 +44,13 @@ Stunde, aber die eingetragenen Dauern ergeben zusammen drei. Dann ist entweder
 eine Spanne zu groß, oder sie gehört gar nicht dorthin — oder einer der beiden
 Zeitpunkte ist falsch gelesen.
 
+**Hier hilft `nimm_anker_zurueck`.** Ein Anker, der nicht trägt, muss weg —
+und zwar ohne Ersatz, wenn du keinen hast. Der häufigste Fall ist eine
+**relative Angabe ohne Bezugspunkt**: „sechzig Jahre her" ist keine Zeit,
+solange nicht feststeht, von wann aus gerechnet wird; sie zieht die Linie
+irgendwohin. Nimm sie zurück und nenne den Grund. Das ist die billigste
+Korrektur, die es gibt — solange der Anker steht, rechne ich ihn mit.
+
 **Eine lange Strecke ohne jeden Anker.** Wenn zwischen zwei festen Punkten
 hundert Zeilen liegen, wird alles dazwischen gleichmäßig verteilt. Das ist
 selten richtig. Schau nach, ob in dieser Strecke doch eine Zeitangabe steht,

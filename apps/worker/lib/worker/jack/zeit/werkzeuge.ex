@@ -53,7 +53,8 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   # einreihen, dann datieren.
   @kette ~w(haenge_an_kette unterhaenge_kettenglied erweitere_kettenglied
             versetze_kettenglied loesche_kettenglied nicht_in_die_kette)
-  @setzend ~w(setz_zeitpunkt setz_spanne setz_frist anker_dazu anker_ersetzen melde_konflikt kettenplatz_unklar)
+  @setzend ~w(setz_zeitpunkt setz_spanne setz_frist anker_dazu anker_ersetzen
+              nimm_anker_zurueck melde_konflikt kettenplatz_unklar)
 
   @doc """
   Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Liste.
