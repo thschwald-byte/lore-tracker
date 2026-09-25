@@ -18,6 +18,7 @@ import { ColumnSync } from "./hooks/column_sync";
 import { ViewModePersist } from "./hooks/view_mode_persist";
 import { FragFenster } from "./hooks/frag_fenster";
 import { FragWarten } from "./hooks/frag_warten";
+import { FragStrom } from "./hooks/frag_strom";
 import { startLocalTime } from "./local_time";
 import liveSelect from "live_select";
 
@@ -62,7 +63,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     } catch (_) {}
     return params;
   },
-  hooks: { MicSetup, MicCapture, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, UtteranceWindow, IconUpload, ArchiveTogglePersist, ColumnSync, ViewModePersist, FragFenster, FragWarten, ...liveSelect },
+  hooks: { MicSetup, MicCapture, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, UtteranceWindow, IconUpload, ArchiveTogglePersist, ColumnSync, ViewModePersist, FragFenster, FragWarten, FragStrom, ...liveSelect },
 });
 
 window.addEventListener("phx:save-last-campaign", (e) => {

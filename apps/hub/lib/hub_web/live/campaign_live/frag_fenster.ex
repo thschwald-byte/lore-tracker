@@ -152,6 +152,16 @@ defmodule HubWeb.CampaignLive.FragFenster do
   Eine Meldung zu einem Lauf, der nicht mehr der aktuelle ist, wird verworfen:
   Wer eine zweite Frage stellt, während die erste rechnet, will die zweite.
   """
+  def antwort(socket, %{"kind" => "frage_strom", "frage_lauf_id" => id, "stuecke" => st}) do
+    # **Der Strom geht per `push_event` an den Hook, NIE in die Assigns.**
+    # Er wächst über den Lauf; in den Assigns würde er bei jedem Diff kopiert
+    # und gehalten — die #1146-Klasse. Der Hook hängt an und deckelt selbst.
+    case socket.assigns.frag.lauf do
+      %{id: ^id} -> {:noreply, Phoenix.LiveView.push_event(socket, "frag_strom", %{stuecke: st})}
+      _ -> {:noreply, socket}
+    end
+  end
+
   def antwort(socket, %{"frage_lauf_id" => id} = payload) do
     frag = socket.assigns.frag
 
@@ -505,6 +515,17 @@ defmodule HubWeb.CampaignLive.FragFenster do
   defp konsole(assigns) do
     ~H"""
     <div class="mr-8 rounded-lg bg-bg-0/60 border border-ink-2/15 px-2 py-1.5">
+      <%!-- Der Denkstrom. Der Hook füllt ihn per push_event und deckelt die
+            Zahl der Zeilen — hier steht bewusst nichts aus den Assigns, sonst
+            wüchse der Strom in den Socket (#1146). `phx-update="ignore"`
+            schützt ihn davor, dass morphdom ihn beim nächsten Diff leert. --%>
+      <div
+        id="frag-strom"
+        phx-hook="FragStrom"
+        phx-update="ignore"
+        class="max-h-40 overflow-y-auto space-y-0.5 font-mono text-[10px] leading-snug empty:hidden"
+      >
+      </div>
       <p
         id="frag-warten"
         phx-hook="FragWarten"

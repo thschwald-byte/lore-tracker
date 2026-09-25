@@ -131,6 +131,37 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     end
   end
 
+  describe "der Denkstrom geht NICHT in die Assigns (#1146)" do
+    test "ein Strom-Stück wird gepusht, nicht im Verlauf abgelegt" do
+      {:noreply, s} =
+        FragFenster.antwort(socket(lauf("l1")), %{
+          "kind" => "frage_strom",
+          "frage_lauf_id" => "l1",
+          "stuecke" => [%{"art" => "denken", "text" => "Ich überlege."}]
+        })
+
+      # Über einen Lauf sammeln sich Tausende Token. In den Assigns würde das
+      # bei jedem Diff kopiert und gehalten.
+      # Geprüft wird die ZUSAGE (nichts landet im Verlauf), nicht die innere
+      # Form von `push_event` — ein Test, der die nachbaut, bricht beim
+      # nächsten LiveView-Update, ohne dass sich etwas geändert hat (#1149).
+      # Dass gepusht wird, hält der Quelltext-Wächter fest.
+      assert s.assigns.frag.verlauf == []
+      assert s.assigns.frag.lauf == %{id: "l1"}
+    end
+
+    test "ein Strom zu einem überholten Lauf wird verworfen" do
+      {:noreply, s} =
+        FragFenster.antwort(socket(lauf("neu")), %{
+          "kind" => "frage_strom",
+          "frage_lauf_id" => "alt",
+          "stuecke" => [%{"art" => "denken", "text" => "x"}]
+        })
+
+      assert s.assigns.frag.verlauf == []
+    end
+  end
+
   describe "das Prüfurteil reist mit — und wird unterschieden" do
     test "alle vier Zustände kommen unverändert im Eintrag an" do
       # „gestützt" und „nur die IDs geprüft" dürfen nicht dasselbe anzeigen:
@@ -244,6 +275,16 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
 
       refute nur_code(@fenster, "#") =~ "warte_tick",
              "ein Server-Timer je Textwechsel wären ~50 Diffs pro Lauf (#1200-Klasse)"
+    end
+
+    test "der Denkstrom geht per push_event, nicht über die Assigns" do
+      code = nur_code(@fenster, "#")
+
+      assert code =~ ~s|push_event(socket, "frag_strom"|,
+             "ohne push_event wüchse der Strom in den Socket (#1146)"
+
+      assert nur_code(@fenster, "#") =~ ~s|phx-update="ignore"|,
+             "ohne das leert morphdom den Strom beim nächsten Diff"
     end
 
     test "der Lauf wird VOR dem Fragen abonniert" do

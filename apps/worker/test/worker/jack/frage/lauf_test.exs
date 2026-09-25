@@ -88,6 +88,8 @@ defmodule Worker.Jack.Frage.LaufTest do
   defp antworten(text, ids),
     do: antwort([aufruf("antworte", %{"text" => text, "fakt_ids" => ids})])
 
+  defp keine(text), do: antwort([aufruf("keine_antwort", %{"text" => text})])
+
   describe "der volle Lauf" do
     test "lesen, antworten: die Antwort trägt ECHTE Fakt-IDs" do
       assert {:ok, %{antwort: a, runden: runden}} =
@@ -109,7 +111,7 @@ defmodule Worker.Jack.Frage.LaufTest do
     test "der Auftrag trägt die Frage in einem abgesetzten Block" do
       {:ok, _} =
         Frage.laufen(eingabe("Was plant der Schurke?"),
-          modell: skript([antworten("Nichts steht dazu da.", [])]),
+          modell: skript([keine("Nichts steht dazu da.")]),
           kontext_fenster: 20_000,
           stuetzung: false
         )
@@ -125,7 +127,7 @@ defmodule Worker.Jack.Frage.LaufTest do
     test "die Fakten beider Sitzungen zählen, nicht nur die der laufenden" do
       {:ok, _} =
         Frage.laufen(eingabe(),
-          modell: skript([antworten("x", [])]),
+          modell: skript([keine("x")]),
           kontext_fenster: 20_000,
           stuetzung: false
         )
@@ -155,7 +157,7 @@ defmodule Worker.Jack.Frage.LaufTest do
     test "ein leerer Text wird abgelehnt" do
       assert {:ok, %{antwort: a}} =
                Frage.laufen(eingabe(),
-                 modell: skript([antworten("   ", ["S1-F1"]), antworten("Doch etwas.", [])]),
+                 modell: skript([antworten("   ", ["S1-F1"]), keine("Doch etwas.")]),
                  kontext_fenster: 20_000,
                  stuetzung: false
                )
@@ -163,22 +165,79 @@ defmodule Worker.Jack.Frage.LaufTest do
       assert a.text == "Doch etwas."
     end
 
-    test "fehlende fakt_ids werden abgelehnt — eine LEERE Liste nicht" do
+    test "eine LEERE Faktenliste wird abgelehnt — und verweist auf das andere Werkzeug" do
+      # Die leere Liste könnte auch heissen, dass das Modell die Belege
+      # vergessen hat. Wer nichts gefunden hat, sagt das ausdrücklich.
       assert {:ok, %{antwort: a}} =
                Frage.laufen(eingabe(),
                  modell:
                    skript([
-                     antwort([aufruf("antworte", %{"text" => "ohne Feld"})]),
-                     antworten("Dazu steht nichts in den Fakten.", [])
+                     antworten("ohne Belege", []),
+                     keine("Dazu steht nichts in den Fakten.")
                    ]),
                  kontext_fenster: 20_000,
                  stuetzung: false
                )
 
-      # Die leere Liste ist die ehrliche Antwort: Erzwänge das Werkzeug einen
-      # Beleg, erfände das Modell einen.
       assert a.fakt_ids == []
+      assert a.belegt? == false
       assert a.text == "Dazu steht nichts in den Fakten."
+    end
+
+    test "fehlende fakt_ids werden abgelehnt" do
+      assert {:ok, %{antwort: a}} =
+               Frage.laufen(eingabe(),
+                 modell:
+                   skript([
+                     antwort([aufruf("antworte", %{"text" => "ohne Feld"})]),
+                     antworten("Kodex betritt die Villa.", ["S1-F1"])
+                   ]),
+                 kontext_fenster: 20_000,
+                 stuetzung: false
+               )
+
+      assert a.fakt_ids == ["f_alt"]
+    end
+  end
+
+  describe "die zwei Abschlüsse (Maintainer, 25.09.2026)" do
+    test "keine_antwort ist ein vollwertiger Abschluss, kein Scheitern" do
+      assert {:ok, %{antwort: a, runden: 1}} =
+               Frage.laufen(eingabe(),
+                 modell: skript([keine("Dazu gibt es nichts.")]),
+                 kontext_fenster: 20_000,
+                 stuetzung: false
+               )
+
+      assert a.text == "Dazu gibt es nichts."
+      assert a.geprueft == :ohne_beleg
+      refute a.belegt?
+    end
+
+    test "antworte setzt belegt? und behält die Prüfung offen" do
+      {:ok, %{antwort: a}} =
+        Frage.laufen(eingabe(),
+          modell: skript([antworten("Kodex betritt die Villa.", ["S1-F1"])]),
+          kontext_fenster: 20_000,
+          stuetzung: false
+        )
+
+      assert a.belegt?
+      assert a.geprueft == :ids, "die Stützung steht noch aus — das Werkzeug prüft nur Existenz"
+    end
+
+    test "beide Werkzeuge stehen im Lauf zur Verfügung" do
+      s = %Worker.Jack.Resuemee.Stand{
+        art: :frage,
+        lauf: :antworten,
+        sitzung: %{id: "s", nummer: 1, name: "S"},
+        fakten: [],
+        mitschnitt: %Worker.Jack.Stand{bloecke: %{}, max_block: -1, cast: [], straenge: []}
+      }
+
+      namen = Worker.Jack.Frage.Werkzeuge.namen(s)
+      assert "antworte" in namen
+      assert "keine_antwort" in namen
     end
   end
 

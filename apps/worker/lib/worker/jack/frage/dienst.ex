@@ -26,6 +26,7 @@ defmodule Worker.Jack.Frage.Dienst do
   require Logger
 
   alias Worker.Jack.Frage
+  alias Worker.Jack.Frage.Strom
 
   @registry Worker.Jack.Frage.Registry
 
@@ -74,6 +75,12 @@ defmodule Worker.Jack.Frage.Dienst do
   def laeuft?(lauf_id), do: Registry.lookup(@registry, lauf_id) != []
 
   defp fahren(lauf_id, campaign_id, frage, melden, opts) do
+    # Der Denkstrom geht an den Fragenden mit, während gerechnet wird
+    # (#850, Maintainer). Eigener Prozess, weil dieser Task gleich in
+    # `run_frei/2` hängt und seine Mailbox nicht leeren könnte.
+    strom = Strom.starten(lauf_id, melden)
+    opts = Keyword.put_new(opts, :beobachter, strom)
+
     ergebnis =
       Worker.GpuQueue.run_frei(
         fn ->
@@ -83,6 +90,10 @@ defmodule Worker.Jack.Frage.Dienst do
         end,
         label: "frage:#{String.slice(lauf_id, 0, 8)}"
       )
+
+    # Erst den Rest des Stroms, dann das Ergebnis — sonst stünde im Fenster
+    # die Antwort über dem Denken, das zu ihr führte.
+    Strom.beenden(strom)
 
     case ergebnis do
       {:belegt, label} ->

@@ -108,6 +108,18 @@ defmodule Worker.HubClient.Replay do
     })
   end
 
+  # Der Denkstrom, gedrosselt (`Worker.Jack.Frage.Strom`). Fire-and-forget: Er
+  # ist Begleitung, nicht Ergebnis — geht ein Stück verloren, fehlt eine Zeile
+  # im Fenster, nie die Antwort.
+  defp melde_frage(cid, {:frage_strom, lauf_id, stuecke}) do
+    Worker.HubClient.publish_status(%{
+      "kind" => "frage_strom",
+      "campaign_id" => cid,
+      "frage_lauf_id" => lauf_id,
+      "stuecke" => Enum.map(stuecke, &%{"art" => &1.art, "text" => &1.text})
+    })
+  end
+
   defp melde_frage(cid, {:frage_fehler, lauf_id, grund}) do
     Worker.HubClient.publish_status(%{
       "kind" => "frage_fehler",
