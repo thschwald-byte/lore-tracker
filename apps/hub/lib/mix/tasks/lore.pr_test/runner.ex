@@ -570,7 +570,13 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     ] ++ if(discord?, do: [], else: [{"DISCORD_BOT_TOKEN", @sentinel_token}])
   end
 
-  defp spawn_detached!(cmd, cwd, env_list, log_file, pid_file) do
+  @doc """
+  Startet `cmd` losgelöst (eigene Session, PPID 1) und schreibt die PID nach
+  `pid_file`. Öffentlich seit #850, weil `Mix.Tasks.Lore.PrTest.Reload` denselben
+  Weg braucht — ein Nachbau dort liefe dem hier gepflegten Verhalten
+  (Log-Rotation, `setsid --fork`, PID vor `exec`) hinterher.
+  """
+  def spawn_detached!(cmd, cwd, env_list, log_file, pid_file) do
     # Issue #931: Log NICHT truncaten — das vorige Log auf `.1` rotieren, bevor
     # der neue Lauf frisch schreibt. Sonst überschreibt ein Re-Spawn/Restart auf
     # demselben Port genau das Log des Ereignisses, das man debuggen will

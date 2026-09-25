@@ -16,9 +16,12 @@ defmodule Worker.Jack.Frage.Eingabe do
       der von aussen kommt. Sie steht im Auftrag als abgesetzter Datenblock,
       nie als Anweisungssatz — siehe `Worker.Jack.Frage.auftrag/1`.
 
-  Als Sitzungsanker dient die **jüngste** Sitzung der Kampagne: Die Lesebasis
-  braucht eine (Mitschnitt, `sitzung.nummer`, `fruehere`), und die jüngste ist
-  die, auf die sich „zuletzt" in einer Frage bezieht.
+  Als Sitzungsanker dient die jüngste Sitzung **mit Fakten**. Die Lesebasis
+  braucht eine (Mitschnitt, `sitzung.nummer`, `fruehere`), und „jüngste" allein
+  reicht nicht: Sitzungen werden angelegt, bevor sie bespielt sind — am ersten
+  echten Lauf gegen eine Kampagne mit vier Sitzungen (Fakten nur in 1 und 2)
+  scheiterte die Eingabe deshalb mit `{:error, :no_facts}`, obwohl 208 Fakten
+  dalagen. Eine leere jüngste Sitzung ist der Normalfall, nicht der Ausreißer.
   """
 
   alias Worker.Jack.Chronik.Eingabe, as: Chronik
@@ -27,14 +30,34 @@ defmodule Worker.Jack.Frage.Eingabe do
   @doc """
   Die Eingabe für eine Frage an eine Kampagne.
 
-  `{:error, :keine_sitzung}`, wenn die Kampagne keine Sitzung hat — dann gibt
-  es nichts zu fragen, und die Lesebasis hätte keinen Anker.
+  `{:error, :keine_sitzung}`, wenn die Kampagne keine Sitzung **mit Fakten**
+  hat — dann gibt es nichts zu fragen, und die Lesebasis hätte keinen Anker.
   """
   @spec aus_repo(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def aus_repo(campaign_id, frage) when is_binary(campaign_id) and is_binary(frage) do
-    with {:ok, session_id} <- juengste_sitzung(campaign_id),
+    with {:ok, session_id} <- anker(campaign_id),
          {:ok, basis} <- Basis.aus_repo(session_id) do
       {:ok, zusaetze(basis, frage)}
+    end
+  end
+
+  @doc """
+  Die Sitzung, an der die Lesebasis hängt: die jüngste **mit Fakten**.
+
+  Pur ab der Sitzungsliste, damit ein Test die Auswahl ohne Repo prüfen kann.
+  `hat_fakten?` sagt für eine Sitzungs-ID, ob Fakten vorliegen.
+  """
+  @spec anker_aus([map()], (String.t() -> boolean())) :: {:ok, String.t()} | {:error, term()}
+  def anker_aus([], _hat_fakten?), do: {:error, :keine_sitzung}
+
+  def anker_aus(sessions, hat_fakten?) do
+    sessions
+    |> Enum.sort_by(& &1.number)
+    |> Enum.reverse()
+    |> Enum.find(&hat_fakten?.(&1.id))
+    |> case do
+      nil -> {:error, :keine_sitzung}
+      s -> {:ok, s.id}
     end
   end
 
@@ -57,10 +80,13 @@ defmodule Worker.Jack.Frage.Eingabe do
   @spec frage(map()) :: String.t()
   def frage(eingabe), do: Map.get(eingabe, :frage) || ""
 
-  defp juengste_sitzung(campaign_id) do
-    case Worker.Repo.list_sessions(campaign_id) do
-      [] -> {:error, :keine_sitzung}
-      sessions -> {:ok, sessions |> List.last() |> Map.fetch!(:id)}
+  defp anker(campaign_id),
+    do: anker_aus(Worker.Repo.list_sessions(campaign_id), &fakten?/1)
+
+  defp fakten?(session_id) do
+    case Worker.Repo.get_session_facts(session_id) do
+      %{facts: [_ | _]} -> true
+      _ -> false
     end
   end
 end
