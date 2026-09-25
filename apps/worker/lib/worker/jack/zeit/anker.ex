@@ -266,7 +266,11 @@ defmodule Worker.Jack.Zeit.Anker do
         beschreibung:
           "Antwort auf eine Rückfrage: Der bestehende Anker wird aus der Kette " <>
             "gelöst, deiner tritt an seine Stelle. Nimm das, wenn der alte falsch " <>
-            "ist — nicht, wenn beide stimmen; dafür ist dazu da.",
+            "ist — nicht, wenn beide stimmen; dafür ist dazu da. " <>
+            "**Nur mit einer Kennung aus einer Rückfrage von mir.** Willst du " <>
+            "einen EIGENEN Anker korrigieren, den ich angenommen habe (etwa weil " <>
+            "ich seinen Wert nicht als Zeit lesen konnte): nimm_anker_zurueck, " <>
+            "dann neu setzen.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -502,6 +506,27 @@ defmodule Worker.Jack.Zeit.Anker do
   defp keine_art("frist"), do: "keine Frist"
   defp keine_art(art), do: "kein #{art_wort(art)}"
 
+  # **Ein Hinweis ohne Weg kostet Runden** (#1247, 25.09.2026, am laufenden
+  # Lauf gesehen). Jack bekam „als Zeit lesbar ist er nicht — so ginge es: …",
+  # verstand es richtig und wollte den Anker korrigieren. Nur: Kein Werkzeug
+  # sieht nach „korrigieren" aus. Er nahm `anker_ersetzen` (das eine Kennung
+  # aus einer RÜCKFRAGE braucht), scheiterte an der leeren Kennung und schrieb
+  # dazu:
+  #
+  #     „The system accepted the anchor without asking for clarification,
+  #      even though it flagged that it couldn't read it clearly."
+  #
+  # Der Widerspruch ist echt: Der Anker GILT (er ordnet, er datiert nur nicht),
+  # und daneben steht „nicht lesbar". Ohne den Weg ist das aus seiner Sicht
+  # nicht auflösbar — zwei Runden gingen verloren, dann fand er
+  # `nimm_anker_zurueck` selbst. Derselbe Grund wie bei jeder Ablehnung in
+  # diesem Repo: nennen, was stattdessen geht (#1211, dort 28 von 51 Runden).
+  defp weg do
+    "Der Anker gilt so, wie er ist — er ordnet, er datiert nur nicht. " <>
+      "Willst du ihn ersetzen: nimm_anker_zurueck, dann neu setzen. " <>
+      "(anker_ersetzen ist nur die Antwort auf eine Rückfrage von mir.) "
+  end
+
   defp abgesegnet_anker?(a), do: feld(a, :abgesegnet_am) != ""
 
   # Ein Anker kommt mit Atom-Schlüsseln aus dem Stand und mit String-Schlüsseln
@@ -587,8 +612,11 @@ defmodule Worker.Jack.Zeit.Anker do
     wert = to_string(a[:wert] || "")
 
     case lesbare_kurzform(wert, a.art, s) do
-      kurz when is_binary(kurz) -> "So ginge es: nimm nur den Ausdruck selbst, also „#{kurz}“. "
-      nil -> lesarten_hinweis(wert, a.art, s)
+      kurz when is_binary(kurz) ->
+        "So ginge es: nimm nur den Ausdruck selbst, also „#{kurz}“. " <> weg()
+
+      nil ->
+        lesarten_hinweis(wert, a.art, s)
     end
   end
 
@@ -617,13 +645,13 @@ defmodule Worker.Jack.Zeit.Anker do
         cond do
           uhr && jahr ->
             "„#{wert}“ kann beides sein — eine Uhrzeit oder eine Jahreszahl. Du hast den " <>
-              "Satz gelesen, ich nicht: Sag es eindeutig, „#{uhr}“ oder „#{jahr}“. "
+              "Satz gelesen, ich nicht: Sag es eindeutig, „#{uhr}“ oder „#{jahr}“. " <> weg()
 
           uhr ->
-            "So ginge es: „#{uhr}“. "
+            "So ginge es: „#{uhr}“. " <> weg()
 
           jahr ->
-            "So ginge es: „#{jahr}“. "
+            "So ginge es: „#{jahr}“. " <> weg()
 
           true ->
             ""

@@ -2093,6 +2093,19 @@ Jahr 2010" es sind — das Füllwort stand in keiner Liste. Es fällt jetzt, mit
 derselben Schranke wie „kurz vor 2080": nur vor einer drei- bis fünfstelligen
 Zahl, damit „um sieben" eine Uhrzeit bleibt.
 
+**Jeder Hinweis nennt den Weg** (am laufenden Lauf gesehen, 25.09.2026). Jack
+bekam „als Zeit lesbar ist er nicht — so ginge es: …", verstand es richtig und
+wollte den Anker korrigieren — nur sieht kein Werkzeug nach „korrigieren" aus.
+Er nahm `anker_ersetzen` (das eine Kennung aus einer **Rückfrage** braucht),
+scheiterte an der leeren Kennung und benannte den Widerspruch selbst: „The
+system accepted the anchor without asking for clarification, even though it
+flagged that it couldn't read it clearly." Der Widerspruch ist echt — der
+Anker GILT (er ordnet, er datiert nur nicht), und daneben steht „nicht
+lesbar". Zwei Runden gingen verloren, dann fand er `nimm_anker_zurueck`
+selbst. Seitdem sagt jeder Vorschlag beides: dass der Anker gilt, und dass
+Ersetzen über `nimm_anker_zurueck` läuft; `anker_ersetzen` nennt in seiner
+Beschreibung die Kennungspflicht und die Alternative.
+
 **Die Antwort fragt jetzt, statt zu raten** (Maintainer, 24.09.2026: „man
 muss den context auswerten — ‚um 7' kann beides sein"). Den Kontext hat genau
 einer: Jack. Also probiert die Antwort beide Lesarten durch denselben Parser

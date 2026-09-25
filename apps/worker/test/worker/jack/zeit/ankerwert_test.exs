@@ -134,6 +134,38 @@ defmodule Worker.Jack.Zeit.AnkerwertTest do
     end
   end
 
+  describe "der Hinweis nennt den Weg — sonst kostet er Runden" do
+    # Am laufenden Lauf gesehen (25.09.2026): Jack verstand „so ginge es"
+    # richtig, wollte korrigieren, fand kein Werkzeug dafür und nahm
+    # `anker_ersetzen` — das eine Kennung aus einer Rückfrage braucht. Zwei
+    # Runden verloren, und sein Denkstrom benannte den Widerspruch: „The
+    # system accepted the anchor … even though it flagged that it couldn't
+    # read it clearly."
+    test "jeder Vorschlag sagt, dass der Anker gilt und wie man ihn ersetzt" do
+      for wert <- ["2070 (Konzernkriege)", "um 7", "um 70", "um sieben"] do
+        t = hinweis(wert)
+
+        assert t =~ "nimm_anker_zurueck", "#{wert}: der Weg fehlt"
+        assert t =~ "gilt so, wie er ist", "#{wert}: dass er gilt, fehlt"
+      end
+    end
+
+    test "ein lesbarer Anker bekommt den Hinweis NICHT" do
+      # Sonst stünde bei jedem geglückten Anker eine Anleitung zum Ersetzen.
+      assert hinweis("2070") == ""
+    end
+
+    test "anker_ersetzen nennt die Kennungspflicht und die Alternative" do
+      b =
+        Anker.werkzeuge()
+        |> Enum.find(&(&1.name == "anker_ersetzen"))
+        |> Map.get(:beschreibung)
+
+      assert b =~ "Kennung aus einer Rückfrage"
+      assert b =~ "nimm_anker_zurueck"
+    end
+  end
+
   describe "die Werkzeugbeschreibung sagt es" do
     test "das Wert-Feld verbietet Erläuterung und Schrägstrich ausdrücklich" do
       beschreibung =
