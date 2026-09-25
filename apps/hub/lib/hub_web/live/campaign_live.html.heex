@@ -1213,14 +1213,12 @@
                          Zeile — die ist seit #916 schon klickbar (Kuration), und
                          ein zweiter Klick-Sinn auf derselben Fläche wäre eine
                          stille Kollision. --%>
-                    <% befund = HubWeb.CampaignLive.FragFenster.befund_an_fakt(f["id"]) %>
                     <button
-                      :if={befund}
                       type="button"
-                      phx-click="frag_befund"
-                      phx-value-id={befund}
-                      class="text-primary/70 hover:text-primary"
-                      title="Offener Befund zu diesem Fakt — im Fenster ansehen"
+                      phx-click="frag_zu_fakt"
+                      phx-value-claim={f["claim"]}
+                      class="text-primary/30 hover:text-primary"
+                      title="Dazu nachfragen — öffnet das Fenster mit dieser Frage"
                     >💬</button>
                     <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
                   </div>

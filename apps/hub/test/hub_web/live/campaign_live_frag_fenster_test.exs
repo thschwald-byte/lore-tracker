@@ -1,9 +1,9 @@
 defmodule HubWeb.CampaignLiveFragFensterTest do
   @moduledoc """
-  Issue #850, erster Schnitt: das Frag-Fenster.
+  Issue #850: das Frag-Fenster, seit S3 am echten Lauf.
 
   Zwei Sorten Prüfung, und die zweite ist die wichtigere. Der Verhaltensteil
-  hält den synthetischen Lauf fest (Frage → Konsole → Antwort mit Belegen).
+  hält fest, was aus der Antwort des Workers im Fenster wird.
   Die **Quelltext-Wächter** halten die vier Entscheidungen fest, die das
   Fenster unbrauchbar machen, wenn jemand sie beiläufig zurücknimmt — und
   keine davon erzeugt einen Fehler, wenn sie fällt:
@@ -22,163 +22,135 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
   use HubWeb.ConnCase, async: false
 
   alias HubWeb.CampaignLive.FragFenster
-  alias HubWeb.CampaignLive.FragFenster.Synthetisch
 
-  describe "Zustand und synthetische Läufe (pur)" do
+  # Ein Socket, wie ihn die CampaignLive hält — mehr braucht `antwort/2` nicht.
+  defp socket(frag, fakten \\ []) do
+    %Phoenix.LiveView.Socket{
+      assigns: %{__changed__: %{}, frag: frag, facts: fakten}
+    }
+  end
+
+  defp lauf(id), do: %{FragFenster.initial() | lauf: %{id: id}, offen?: true}
+
+  defp antwort_payload(id, extra \\ %{}) do
+    Map.merge(
+      %{
+        "kind" => "frage_antwort",
+        "frage_lauf_id" => id,
+        "text" => "Die Antwort.",
+        "kurze_ids" => ["S1-F1"],
+        "fakt_ids" => ["f_eins"],
+        "geprueft" => "gestuetzt"
+      },
+      extra
+    )
+  end
+
+  describe "Zustand" do
     test "initial/0 liefert alle Felder, die eine Klausel später schreibt (#1005)" do
       f = FragFenster.initial()
 
-      # Ein Feld, das per Map-Update geschrieben wird, aber hier fehlt, wirft
-      # zur Laufzeit einen KeyError — in VoiceSession war das ein Crash-Loop.
-      for k <- [:offen?, :verlauf, :lauf, :frage, :befunde], do: assert(Map.has_key?(f, k))
-      refute f.offen?
-      assert f.verlauf == []
+      for schluessel <- [:offen?, :verlauf, :lauf, :frage, :befunde] do
+        assert Map.has_key?(f, schluessel), "#{schluessel} fehlt im Anfangszustand"
+      end
+
       assert f.lauf == nil
+      assert f.verlauf == []
     end
 
-    test "die Zahl am Knopf zählt Befunde, nicht das Gespräch" do
-      f = FragFenster.initial()
-      assert FragFenster.offene(f) == length(Synthetisch.befunde())
+    test "es gibt Beispielfragen, und keine verspricht ein Ergebnis" do
+      assert length(FragFenster.vorschlaege()) > 0
 
-      # Das Gespräch ist flüchtig (Maintainer 25.09.) — es darf die Zahl nicht bewegen.
-      assert FragFenster.offene(%{f | verlauf: [%{art: :frage, text: "x"}]}) ==
-               FragFenster.offene(f)
-    end
-
-    test "jeder Lauf endet mit einer Antwort, und die Belege sind vollständig" do
-      for art <- [:figur, :verbindung, :leer] do
-        schritte = Synthetisch.schritte(art)
-        assert schritte != []
-        assert Enum.all?(schritte, &(&1.ms > 0)), "ohne Wartezeit ist die Konsole nicht messbar"
-        assert List.last(schritte).art == :fertig
-
-        a = Synthetisch.antwort(art)
-        assert a.text != ""
-
-        for b <- a.belege do
-          for k <- [:id, :sitzung, :block, :text], do: assert(Map.has_key?(b, k))
-        end
+      for v <- FragFenster.vorschlaege() do
+        assert String.ends_with?(v, "?"), "#{inspect(v)} ist keine Frage"
       end
-    end
-
-    test "die Nicht-Antwort sagt es, statt etwas zu erfinden" do
-      assert Synthetisch.antwort(:leer).text =~ "nicht in den Aufzeichnungen"
-      assert Synthetisch.antwort(:leer).belege == []
-
-      # Der wichtigere Fall: beide Belege echt, die Verbindung erfunden (#850,
-      # Kommentar 5, Frage 3). Die Antwort muss trotz Fundstellen NEIN sagen.
-      v = Synthetisch.antwort(:verbindung)
-      assert length(v.belege) == 2
-      assert v.text =~ "steht nichts" or v.text =~ "nirgends"
-    end
-
-    test "die Spur der Verbindungs-Frage zeigt die fehlende Verbindung, bevor der Text es tut" do
-      treffer =
-        Synthetisch.schritte(:verbindung)
-        |> Enum.filter(&(&1.art == :werkzeug and &1.treffer != nil))
-
-      assert Enum.any?(treffer, &(&1.treffer == 0)),
-             "ohne einen Null-Treffer in der Spur ist der Prototyp für diese Frage wertlos"
     end
   end
 
-  describe "Belege zeigen auf echte Stellen, sobald es welche gibt" do
-    defp fakt(n),
-      do: %{
-        "id" => "f_#{n}",
-        "claim" => "Aussage #{n}",
-        "session_id" => "s-1",
-        "quell_utterance_ids" => ["u-#{n}-a", "u-#{n}-b"]
-      }
+  describe "die Antwort des Workers wird zum Verlaufseintrag" do
+    test "Text, Belege und Prüfurteil kommen an" do
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1")), antwort_payload("l1"))
 
-    test "mit geladenen Fakten trägt jeder Beleg ein Sprungziel" do
-      a = Synthetisch.antwort(:figur, Enum.map(1..8, &fakt/1), [%{"id" => "s-1", "number" => 3}])
-
-      assert a.belege != []
-
-      for b <- a.belege do
-        assert b.utterance_id, "ohne Ziel ist der ↗ tot"
-        assert b.sitzung == "S3", "die Sitzungsnummer kommt aus der Sitzungsliste"
-        assert b.text != ""
-      end
+      assert [%{art: :antwort} = e] = s.assigns.frag.verlauf
+      assert e.text == "Die Antwort."
+      assert e.geprueft == "gestuetzt"
+      assert [%{kurz: "S1-F1", fakt_id: "f_eins"}] = e.belege
+      assert s.assigns.frag.lauf == nil, "der Lauf ist beendet"
     end
 
-    test "dieselbe Frage zeigt dieselben Belege" do
-      f = Enum.map(1..12, &fakt/1)
-      assert Synthetisch.antwort(:figur, f) == Synthetisch.antwort(:figur, f)
+    test "ein Fehler wird als Fehler gezeigt, nicht als Antwort" do
+      {:noreply, s} =
+        FragFenster.antwort(
+          socket(lauf("l1")),
+          %{"kind" => "frage_fehler", "frage_lauf_id" => "l1", "grund" => "Kein Worker da."}
+        )
+
+      assert [%{art: :fehler, text: "Kein Worker da."}] = s.assigns.frag.verlauf
+      assert s.assigns.frag.lauf == nil
     end
 
-    test "verschiedene Fragen greifen verschiedene Fakten" do
-      f = Enum.map(1..12, &fakt/1)
-      a = Synthetisch.antwort(:figur, f).belege |> Enum.map(& &1.id)
-      b = Synthetisch.antwort(:verbindung, f).belege |> Enum.map(& &1.id)
-      refute a == b, "sonst sieht jede Antwort gleich aus"
-    end
+    test "eine Antwort auf einen überholten Lauf wird verworfen" do
+      # Wer eine zweite Frage stellt, während die erste rechnet, will die
+      # zweite. Ohne diese Prüfung erschiene die alte Antwort darunter.
+      {:noreply, s} = FragFenster.antwort(socket(lauf("neu")), antwort_payload("alt"))
 
-    test "ohne Fakten bleibt der erfundene Beleg — und sein Ziel ist ausdrücklich leer" do
-      a = Synthetisch.antwort(:figur, [])
-      assert a.belege != []
-      for b <- a.belege, do: refute(b[:utterance_id], "ein erfundener Beleg darf nicht springen")
-    end
-
-    test "Fakten ohne Quellen taugen nicht als Beleg" do
-      ohne = [
-        %{"id" => "f_x", "claim" => "x", "session_id" => "s-1", "quell_utterance_ids" => []}
-      ]
-
-      assert Synthetisch.antwort(:figur, ohne).belege == []
-    end
-
-    test "die Nicht-Antwort bleibt eine Nicht-Antwort, auch mit Fakten" do
-      a = Synthetisch.antwort(:leer, Enum.map(1..8, &fakt/1))
-      assert a.text =~ "nicht in den Aufzeichnungen"
-      assert a.belege == [], "eine Nicht-Antwort belegt nichts"
-    end
-  end
-
-  describe "Der zweite Eingang: Befund am Objekt" do
-    test "nicht jede Fakt-Zeile trägt ein Zeichen, aber immer dieselben" do
-      ids = for n <- 1..200, do: "f_#{n}"
-      mit = Enum.filter(ids, &Synthetisch.befund_an_fakt/1)
-
-      assert mit != [], "ohne Marker ist der zweite Eingang unerreichbar"
-      assert length(mit) < div(length(ids), 3), "zu viele — die Spalte würde blinken"
-
-      # Deterministisch: beim Neuladen stehen die Zeichen an denselben Zeilen.
-      assert Enum.map(ids, &Synthetisch.befund_an_fakt/1) ==
-               Enum.map(ids, &Synthetisch.befund_an_fakt/1)
-    end
-
-    test "jeder gestreute Marker zeigt auf einen Befund, den es gibt" do
-      bekannte = MapSet.new(Synthetisch.befunde(), & &1.id)
-
-      for n <- 1..200, bf = Synthetisch.befund_an_fakt("f_#{n}") do
-        assert MapSet.member?(bekannte, bf), "#{bf} zeigt ins Leere"
-      end
-    end
-
-    test "ein Fakt ohne id bekommt kein Zeichen" do
-      refute Synthetisch.befund_an_fakt(nil)
-    end
-
-    test "zweimal auf dasselbe Zeichen klicken legt den Befund nicht doppelt ab" do
-      sock = %Phoenix.LiveView.Socket{assigns: %{frag: FragFenster.initial(), __changed__: %{}}}
-      [b | _] = Synthetisch.befunde()
-
-      {:noreply, s1} = FragFenster.event(sock, "frag_befund", %{"id" => b.id})
-      assert length(s1.assigns.frag.verlauf) == 1
-      assert s1.assigns.frag.offen?
-
-      # Zweiter Klick — in der Spalte hin und her, oder schlicht nochmal.
-      {:noreply, s2} = FragFenster.event(s1, "frag_befund", %{"id" => b.id})
-      assert length(s2.assigns.frag.verlauf) == 1, "der Befund stünde sonst zweimal da"
-      assert s2.assigns.frag.offen?, "und das Fenster muss trotzdem aufgehen"
-    end
-
-    test "ein Zeichen, dessen Befund es nicht gibt, tut nichts" do
-      sock = %Phoenix.LiveView.Socket{assigns: %{frag: FragFenster.initial(), __changed__: %{}}}
-      {:noreply, s} = FragFenster.event(sock, "frag_befund", %{"id" => "gibt-es-nicht"})
       assert s.assigns.frag.verlauf == []
+      assert s.assigns.frag.lauf == %{id: "neu"}
+    end
+  end
+
+  describe "Belege springen nur, wo es ein Ziel gibt" do
+    test "mit geladenem Fakt trägt der Beleg eine Utterance-ID" do
+      fakten = [%{"id" => "f_eins", "quell_utterance_ids" => ["u-7", "u-8"]}]
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1"), fakten), antwort_payload("l1"))
+
+      assert [%{utterance_id: "u-7"}] = hd(s.assigns.frag.verlauf).belege
+    end
+
+    test "ohne geladene Fakten bleibt das Ziel leer — der Knopf führt nicht ins Nichts" do
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1")), antwort_payload("l1"))
+
+      assert [%{utterance_id: nil, kurz: "S1-F1"}] = hd(s.assigns.frag.verlauf).belege
+    end
+
+    test "ein Fakt ohne Quellen taugt nicht als Sprungziel" do
+      fakten = [%{"id" => "f_eins", "quell_utterance_ids" => []}]
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1"), fakten), antwort_payload("l1"))
+
+      assert [%{utterance_id: nil}] = hd(s.assigns.frag.verlauf).belege
+    end
+
+    test "eine Antwort ohne Belege hat eine leere Liste, keine erfundene" do
+      p =
+        antwort_payload("l1", %{"kurze_ids" => [], "fakt_ids" => [], "geprueft" => "ohne_beleg"})
+
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1")), p)
+
+      assert hd(s.assigns.frag.verlauf).belege == []
+      assert hd(s.assigns.frag.verlauf).geprueft == "ohne_beleg"
+    end
+  end
+
+  describe "das Prüfurteil reist mit — und wird unterschieden" do
+    test "alle vier Zustände kommen unverändert im Eintrag an" do
+      # „gestützt" und „nur die IDs geprüft" dürfen nicht dasselbe anzeigen:
+      # Am Messlauf vom 25.09.2026 kam eine Antwort mit echten IDs durch,
+      # deren Aussage in den Fakten nicht stand.
+      for zustand <- ~w(gestuetzt nicht_gestuetzt ohne_beleg ungeprueft) do
+        {:noreply, s} =
+          FragFenster.antwort(socket(lauf("l1")), antwort_payload("l1", %{"geprueft" => zustand}))
+
+        assert hd(s.assigns.frag.verlauf).geprueft == zustand
+      end
+    end
+
+    test "der Grund einer bemängelten Stützung geht nicht verloren" do
+      p =
+        antwort_payload("l1", %{"geprueft" => "nicht_gestuetzt", "grund" => "X steht nicht da."})
+
+      {:noreply, s} = FragFenster.antwort(socket(lauf("l1")), p)
+
+      assert hd(s.assigns.frag.verlauf).grund == "X steht nicht da."
     end
   end
 
@@ -274,8 +246,30 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
              "ein Server-Timer je Textwechsel wären ~50 Diffs pro Lauf (#1200-Klasse)"
     end
 
-    test "ein zweiter Lauf bricht den Timer des ersten ab" do
-      assert nur_code(@fenster, "#") =~ "Process.cancel_timer"
+    test "der Lauf wird VOR dem Fragen abonniert" do
+      # Sonst kann die Antwort vor dem Abonnement eintreffen und ins Leere
+      # laufen — bei 30 Sekunden Laufzeit selten, aber nicht nie.
+      code = nur_code(@fenster, "#")
+      [vor, _] = String.split(code, "Commands.request_frage", parts: 2)
+
+      assert vor =~ "PipelineStatus.subscribe_frage",
+             "abonniert wird nach dem Fragen — die Antwort kann dann ins Leere laufen"
+    end
+
+    test "ein zweiter Lauf bricht den ersten beim Worker ab" do
+      # Nur zu vergessen reicht nicht: Der Lauf hielte die Grafikkarte für
+      # eine Antwort, die niemand mehr sehen will.
+      assert nur_code(@fenster, "#") =~ "Commands.abbrechen_frage"
+    end
+
+    test "die Antwort geht auf den Lauf-Topic, nicht auf den der Kampagne" do
+      # Fragt der Spielleiter „was plant der Schurke", läse auf dem
+      # Kampagnen-Topic die ganze Runde mit (#850, S2).
+      code = File.read!("lib/hub_web/pipeline_status.ex")
+      assert code =~ "def frage_topic("
+
+      [_, route] = String.split(code, "def route(", parts: 2)
+      assert route =~ ~s|"frage_lauf_id"|, "route/1 kennt die Lauf-ID nicht"
     end
 
     # Der öffnende `<dialog …>`-Tag allein — Attribute, die nur dort falsch
@@ -307,6 +301,11 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
         end
       end)
       |> elem(0)
+      # Das `reverse` ist nicht Kosmetik: Ohne es kommt der Code RÜCKWÄRTS
+      # heraus (die Reduce sammelt mit `[z | acc]`). Solange jeder Wächter nur
+      # auf Vorkommen prüft, fällt das nicht auf — der erste, der eine
+      # REIHENFOLGE prüft, misst dann das Gegenteil.
+      |> Enum.reverse()
       |> Enum.join("\n")
     end
 

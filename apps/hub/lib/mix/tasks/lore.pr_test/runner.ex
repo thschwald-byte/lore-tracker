@@ -608,7 +608,30 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       "cd #{shell_quote(cwd)} && setsid --fork bash -c #{shell_quote(inner)}"
 
     {_, 0} = System.cmd("bash", ["-c", full])
+
+    # Issue #850: Startangaben neben die PID-Datei legen. `pr_test.reload` liest
+    # die Umgebung sonst aus `/proc` — das geht nur, solange der Prozess LEBT.
+    # Stirbt ein Worker (ein Fehler im Materializer reisst den ganzen Baum mit),
+    # ist genau die Angabe weg, die man zum Wiederanfahren braucht, und die
+    # Stage-Mnesia liegt unerreichbar daneben.
+    schreibe_startangaben(pid_file, cmd, cwd, env_list)
     :ok
+  end
+
+  # Enthält Cookie und JWT — deshalb nur für den Eigentümer lesbar. Ein
+  # Fehlschlag ist kein Grund, den Start scheitern zu lassen: ohne die Datei
+  # funktioniert alles wie bisher, nur der Neustart eines toten Prozesses nicht.
+  defp schreibe_startangaben(pid_file, cmd, cwd, env_list) do
+    datei = String.replace_suffix(pid_file, ".pid", ".start.json")
+
+    inhalt =
+      Jason.encode!(%{"cmd" => cmd, "cwd" => cwd, "env" => Map.new(env_list)}, pretty: true)
+
+    with :ok <- File.write(datei, inhalt) do
+      File.chmod(datei, 0o600)
+    end
+  rescue
+    e -> Mix.shell().info("  (Startangaben nicht geschrieben: #{Exception.message(e)})")
   end
 
   defp shell_quote(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"

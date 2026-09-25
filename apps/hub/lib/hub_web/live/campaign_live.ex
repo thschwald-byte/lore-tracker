@@ -847,6 +847,14 @@ defmodule HubWeb.CampaignLive do
       ),
       do: Snapshot.apply_campaign_replay(socket, cid, status, payload)
 
+  # #850 (S3): die Antwort des Frage-Jack. Sie kommt auf dem Topic DIESES
+  # Laufs, nicht auf dem der Kampagne — sonst läse die ganze Runde mit, was
+  # einer gefragt hat. Die Klausel steht VOR dem Auffangzweig darunter, der
+  # sonst jede Statusmeldung schluckt; `frage_lauf_id` ist das schärfere
+  # Merkmal.
+  def handle_info({:pipeline_status, %{"frage_lauf_id" => _} = payload}, socket),
+    do: FragFenster.antwort(socket, payload)
+
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
   # Issue #1149: Rückmeldungen der Lese-Schlange. Best-effort — bleiben sie

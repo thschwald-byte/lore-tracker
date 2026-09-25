@@ -1,7 +1,7 @@
 defmodule HubWeb.CampaignLive.FragFenster do
   @moduledoc """
   Issue #850, erster Schnitt: das Fenster „Frag die Runde" — Oberfläche mit
-  synthetischen Läufen (`FragFenster.Synthetisch`), ohne Agent dahinter.
+  echten Läufen des Frage-Jack im Worker (#850, S3).
 
   **Die Farben sind die des Hauses** (`panel`, `ink-*`) — neu ist allein ein
   dünner Rand in `primary`, dem Cyan des Türkis-Schemas aus #194, damit das
@@ -55,13 +55,28 @@ defmodule HubWeb.CampaignLive.FragFenster do
 
   use Phoenix.Component
 
-  alias HubWeb.CampaignLive.FragFenster.{Synthetisch, Warten}
+  alias HubWeb.CampaignLive.{Core, FragFenster.Warten}
+  alias Hub.Commands
+  alias HubWeb.PipelineStatus
   alias Phoenix.LiveView.JS
+
+  # Beispielfragen für das leere Fenster. Bewusst so gewählt, dass sie ohne
+  # Kenntnis der Kampagne etwas liefern — die erste ist die billigste
+  # Gegenprobe, ob überhaupt etwas ankommt.
+  @vorschlaege [
+    "Wer gehört zur Gruppe?",
+    "Was ist in der letzten Sitzung passiert?",
+    "Welche offenen Fäden gibt es?"
+  ]
 
   @doc "Der Anfangszustand fürs Mount — eine Stelle, damit kein Feld vergessen wird (#1005)."
   @spec initial() :: map()
   def initial,
-    do: %{offen?: false, verlauf: [], lauf: nil, frage: "", befunde: Synthetisch.befunde()}
+    do: %{offen?: false, verlauf: [], lauf: nil, frage: "", befunde: []}
+
+  @doc "Beispielfragen fürs leere Fenster."
+  @spec vorschlaege() :: [String.t()]
+  def vorschlaege, do: @vorschlaege
 
   @doc """
   Der Befund an einer Fakt-Zeile, für das Zeichen in der Spalte. Fassade für
@@ -73,7 +88,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
   kuratieren und bekommt ein Gesprächsfenster.
   """
   @spec befund_an_fakt(term()) :: String.t() | nil
-  defdelegate befund_an_fakt(fakt_id), to: Synthetisch
+  def befund_an_fakt(_fakt_id), do: nil
 
   @doc "Zahl am Knopf: offene Befunde. Nicht die Länge des Gesprächs — das ist flüchtig."
   @spec offene(map()) :: non_neg_integer()
@@ -94,69 +109,61 @@ defmodule HubWeb.CampaignLive.FragFenster do
   def event(socket, "frag_vorschlag", %{"text" => text}),
     do: {:noreply, starte(socket, text)}
 
-  def event(socket, "frag_befund", %{"id" => id}) do
-    frag = socket.assigns.frag
-
-    cond do
-      # Schon im Verlauf: nur aufmachen. Wer in der Spalte zwischen zwei
-      # Zeichen hin und her klickt, soll den Befund nicht doppelt bekommen.
-      Enum.any?(frag.verlauf, &(Map.get(&1, :befund_id) == id)) ->
-        auf(socket, true) |> then(&{:noreply, &1})
-
-      b = Enum.find(frag.befunde, &(&1.id == id)) ->
-        eintrag = %{
-          art: :befund,
-          befund_id: b.id,
-          titel: b.titel,
-          text: b.text,
-          belege: b.belege
-        }
-
-        {:noreply,
-         Phoenix.Component.assign(socket, :frag, %{
-           frag
-           | offen?: true,
-             verlauf: frag.verlauf ++ [eintrag]
-         })}
-
-      true ->
-        {:noreply, socket}
+  # Der zweite Eingang: das Zeichen an einer Fakt-Zeile. Es stellt eine Frage
+  # ZU DIESEM FAKT, statt eine leere Eingabe zu öffnen — wer das Objekt vor
+  # sich hat, soll die Frage nicht abtippen müssen.
+  #
+  # Das Ziel des Klicks ist das ZEICHEN, nicht die Zeile: Die ist seit #916
+  # bereits klickbar (claim, Figur, Strang, ausblenden), und ein zweiter
+  # Klick-Sinn auf derselben Fläche wäre eine stille Kollision — man will
+  # kuratieren und bekommt ein Gesprächsfenster.
+  def event(socket, "frag_zu_fakt", %{"claim" => claim}) do
+    case String.trim(claim || "") do
+      "" -> {:noreply, auf(socket, true)}
+      c -> {:noreply, socket |> auf(true) |> starte(frage_zu(c))}
     end
   end
 
+  def event(socket, "frag_befund", _params), do: {:noreply, auf(socket, true)}
+
+  # Der Claim wird gekürzt: Er geht als Nutzertext in den Auftrag, und ein
+  # sehr langer Fakt machte die Frage unlesbar, ohne sie zu schärfen.
+  defp frage_zu(claim) do
+    kurz = if String.length(claim) > 200, do: String.slice(claim, 0, 200) <> " …", else: claim
+    "Was wissen wir über: #{kurz}"
+  end
+
   @doc """
-  Ein Schritt der synthetischen Konsole. Läuft über `Process.send_after` an
-  die LiveView — **die CampaignLive hat keinen `handle_info`-Auffangzweig**
-  (#1149), die Klausel dort ist also Pflicht, nicht Kosmetik.
+  Nachzügler eines Wartetakts. **Die Klausel in der CampaignLive ist Pflicht**
+  — sie hat keinen `handle_info`-Auffangzweig (#1149), jede unerwartete
+  Nachricht bringt sie zum Absturz.
+
+  Selbst getaktet wird hier nichts: Der Wartetext rotiert im Browser
+  (`FragWarten`-Hook, `phx-update="ignore"`). Ein Server-Takt hätte für jede
+  Sekunde Warten eine Nachricht und einen Diff erzeugt, ohne etwas zu leisten.
   """
-  def schritt(socket, lauf_id) do
+  def schritt(socket, _lauf_id), do: {:noreply, socket}
+
+  @doc """
+  Die Antwort des Workers, über `HubWeb.PipelineStatus` auf dem Topic **dieses
+  Laufs** — nicht auf dem der Kampagne: Fragt der Spielleiter „was plant der
+  Schurke", läsen dort alle Spieler mit (#850).
+
+  Eine Meldung zu einem Lauf, der nicht mehr der aktuelle ist, wird verworfen:
+  Wer eine zweite Frage stellt, während die erste rechnet, will die zweite.
+  """
+  def antwort(socket, %{"frage_lauf_id" => id} = payload) do
     frag = socket.assigns.frag
 
     case frag.lauf do
-      %{id: ^lauf_id, rest: [s | rest]} = lauf ->
-        timer =
-          if rest != [], do: Process.send_after(self(), {:frag_schritt, lauf_id}, hd(rest).ms)
-
-        lauf = %{lauf | rest: rest, zeilen: lauf.zeilen ++ [s], timer: timer}
-        {:noreply, Phoenix.Component.assign(socket, :frag, %{frag | lauf: lauf})}
-
-      %{id: ^lauf_id, rest: []} = lauf ->
-        # Echte Belege, sobald die Fakten-Spalte geladen ist — der `↗` springt
-        # dann an eine echte Stelle. Ohne sie bleiben die erfundenen.
-        a =
-          Synthetisch.antwort(
-            lauf.art,
-            Map.get(socket.assigns, :facts, []),
-            Map.get(socket.assigns, :sessions, [])
-          )
-
-        eintrag = %{art: :antwort, text: a.text, belege: a.belege, zeilen: lauf.zeilen}
+      %{id: ^id} ->
+        PipelineStatus.unsubscribe_frage(id)
 
         {:noreply,
          Phoenix.Component.assign(socket, :frag, %{
            frag
            | lauf: nil,
-             verlauf: frag.verlauf ++ [eintrag]
+             verlauf: frag.verlauf ++ [eintrag_aus(payload, socket.assigns[:facts] || [])]
          })}
 
       _ ->
@@ -164,32 +171,95 @@ defmodule HubWeb.CampaignLive.FragFenster do
     end
   end
 
+  # `geprueft` reist mit, damit die Anzeige „gestützt" von „nur die IDs
+  # geprüft" unterscheiden kann. Beide gleich zu zeigen wäre die stille
+  # Behauptung von mehr Prüfung, als stattgefunden hat (#850, Messlauf).
+  defp eintrag_aus(%{"kind" => "frage_antwort"} = p, fakten),
+    do: %{
+      art: :antwort,
+      text: p["text"] || "",
+      belege: belege_aus(p, fakten),
+      geprueft: p["geprueft"],
+      grund: p["grund"]
+    }
+
+  defp eintrag_aus(p, _fakten),
+    do: %{art: :fehler, text: p["grund"] || "Der Lauf ist gescheitert."}
+
+  # Der Beleg trägt die kurze ID für den Menschen (`S1-F12`) und eine
+  # Utterance-ID fürs Springen. Die kommt aus den GELADENEN Fakten: Es gibt
+  # kein `focus_fact`, nur `focus_utterance` (#114/#1095) — und ohne geladene
+  # Fakten-Spalte gibt es kein Ziel. Dann bleibt der Knopf sichtbar inaktiv,
+  # statt ins Leere zu führen.
+  defp belege_aus(p, fakten) do
+    nach_id = Map.new(fakten, &{&1["id"], &1})
+    echte = p["fakt_ids"] || []
+
+    (p["kurze_ids"] || [])
+    |> Enum.with_index()
+    |> Enum.map(fn {kurz, i} ->
+      fakt_id = Enum.at(echte, i)
+      %{kurz: kurz, fakt_id: fakt_id, utterance_id: erste_utterance(nach_id[fakt_id])}
+    end)
+  end
+
+  defp erste_utterance(%{"quell_utterance_ids" => [u | _]}), do: u
+  defp erste_utterance(_), do: nil
+
   defp auf(socket, offen?),
     do: Phoenix.Component.update(socket, :frag, &%{&1 | offen?: offen?})
 
   defp starte(socket, frage) do
     frag = socket.assigns.frag
-    brich_ab(frag.lauf)
+    campaign = Core.perm_campaign(socket)
+    snap = socket.assigns[:campaign] || %{}
 
-    art = Synthetisch.lauf_fuer(frage)
-    [erst | _] = schritte = Synthetisch.schritte(art)
-    id = System.unique_integer([:positive])
-    timer = Process.send_after(self(), {:frag_schritt, id}, erst.ms)
+    abbrechen(socket, frag.lauf)
 
-    Phoenix.Component.assign(socket, :frag, %{
-      frag
-      | frage: "",
-        verlauf: frag.verlauf ++ [%{art: :frage, text: frage}],
-        lauf: %{id: id, art: art, rest: schritte, zeilen: [], timer: timer}
-    })
+    # Die Lauf-ID ist zugleich Adresse und Abbruch-Handle. Sie wird HIER
+    # vergeben und HIER abonniert, **bevor** gefragt wird — sonst könnte die
+    # Antwort vor dem Abonnement eintreffen und ins Leere laufen.
+    id = UUIDv7.generate()
+    PipelineStatus.subscribe_frage(id)
+    verlauf = frag.verlauf ++ [%{art: :frage, text: frage}]
+
+    case Commands.request_frage(snap["owner_discord_id"], campaign.id, frage, id) do
+      0 ->
+        PipelineStatus.unsubscribe_frage(id)
+
+        Phoenix.Component.assign(socket, :frag, %{
+          frag
+          | frage: "",
+            lauf: nil,
+            verlauf:
+              verlauf ++
+                [
+                  %{
+                    art: :fehler,
+                    text: "Gerade ist kein Worker verbunden — ohne ihn kann niemand antworten."
+                  }
+                ]
+        })
+
+      _ ->
+        Phoenix.Component.assign(socket, :frag, %{
+          frag
+          | frage: "",
+            verlauf: verlauf,
+            lauf: %{id: id}
+        })
+    end
   end
 
-  # Eine zweite Frage während eines laufenden Laufs bricht den ersten ab. Ohne
-  # das feuerte sein Timer weiter — `schritt/2` verwürfe den Nachzügler zwar
-  # (die id passt nicht mehr), aber ein Timer, den niemand abbestellt, ist die
-  # Sorte Rest, die sich in einer langen Sitzung sammelt.
-  defp brich_ab(%{timer: t}) when is_reference(t), do: Process.cancel_timer(t)
-  defp brich_ab(_), do: :ok
+  # Ein laufender Lauf wird beim Worker ABGEBROCHEN, nicht nur vergessen: Er
+  # hielte sonst die Grafikkarte für eine Antwort, die niemand mehr sehen will.
+  defp abbrechen(_socket, nil), do: :ok
+
+  defp abbrechen(socket, %{id: id}) do
+    PipelineStatus.unsubscribe_frage(id)
+    snap = socket.assigns[:campaign] || %{}
+    Commands.abbrechen_frage(snap["owner_discord_id"], Core.perm_campaign(socket).id, id)
+  end
 
   # ——— Markup ———————————————————————————————————————————————————
 
@@ -279,7 +349,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
 
           <p class="text-[11px] uppercase tracking-widest text-ink-2/50 pt-2">Oder frag etwas</p>
           <button
-            :for={v <- Synthetisch.vorschlaege()}
+            :for={v <- vorschlaege()}
             type="button"
             phx-click="frag_vorschlag"
             phx-value-text={v}
@@ -344,44 +414,87 @@ defmodule HubWeb.CampaignLive.FragFenster do
     <div class="mr-8">
       <p class="text-ink-1 leading-relaxed">{@eintrag.text}</p>
       <.belege belege={@eintrag.belege} />
-      <details :if={@eintrag.zeilen != []} class="mt-1.5">
-        <summary class="text-[11px] text-ink-2/50 cursor-pointer">Weg zur Antwort</summary>
-        <.zeilen zeilen={@eintrag.zeilen} />
-      </details>
+      <.pruefung eintrag={@eintrag} />
     </div>
     """
   end
 
+  defp eintrag(%{eintrag: %{art: :fehler}} = assigns) do
+    ~H"""
+    <p class="mr-8 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-ink-1 text-xs">
+      {@eintrag.text}
+    </p>
+    """
+  end
+
+  attr(:eintrag, :map, required: true)
+
+  # Was die Prüfung ergeben hat — und zwar unterschieden. „belegt" und
+  # „geprüft" sind nicht dasselbe: Das Werkzeug prüft, ob es die genannten
+  # Fakten GIBT, die Stützungsprüfung, ob sie die Antwort TRAGEN. Am Messlauf
+  # vom 25.09.2026 fiel beides auseinander — eine Antwort mit echten IDs,
+  # deren Aussage dort nicht steht. Wo die Prüfung nicht zustande kam, sagt
+  # die Plakette das, statt die Antwort als geprüft auszugeben.
+  defp pruefung(%{eintrag: %{geprueft: "gestuetzt"}} = assigns) do
+    ~H"""
+    <p class="mt-1 text-[11px] text-success/80">✓ von den genannten Fakten getragen</p>
+    """
+  end
+
+  defp pruefung(%{eintrag: %{geprueft: "nicht_gestuetzt"}} = assigns) do
+    ~H"""
+    <p class="mt-1 text-[11px] text-warning/90">
+      ⚠ nicht vollständig belegt<span :if={@eintrag[:grund]}>: {@eintrag.grund}</span>
+    </p>
+    """
+  end
+
+  defp pruefung(%{eintrag: %{geprueft: "ohne_beleg"}} = assigns) do
+    ~H"""
+    <p class="mt-1 text-[11px] text-ink-2/50">ohne Beleg — die Antwort nennt keine Fakten</p>
+    """
+  end
+
+  defp pruefung(%{eintrag: %{geprueft: "ungeprueft"}} = assigns) do
+    ~H"""
+    <p class="mt-1 text-[11px] text-ink-2/60" title="Das Prüfmodell hat nicht geantwortet">
+      ○ nicht geprüft — nur die Fakt-IDs sind bestätigt
+    </p>
+    """
+  end
+
+  defp pruefung(assigns), do: ~H""
+
   attr(:belege, :list, required: true)
 
+  # Die Fakten, auf die sich die Antwort stützt. Der Sprung geht über
+  # `focus_fact` an die Fakten-Spalte — sie trägt seit #1095 `data-anchor-id`
+  # und läuft im Scroll-Sync mit.
   defp belege(assigns) do
     ~H"""
-    <ul :if={@belege != []} class="mt-1.5 space-y-0.5">
-      <li :for={b <- @belege} class="flex items-start gap-1.5 text-xs text-ink-2/70">
+    <ul :if={@belege != []} class="mt-1.5 flex flex-wrap gap-1">
+      <li :for={b <- @belege}>
         <button
           type="button"
           phx-click={b[:utterance_id] && "focus_utterance"}
           phx-value-id={b[:utterance_id]}
           disabled={is_nil(b[:utterance_id])}
           class={[
-            "shrink-0",
+            "font-mono text-[10px] rounded px-1.5 py-0.5 border",
             if(b[:utterance_id],
-              do: "text-accent/70 hover:text-accent",
-              else: "text-ink-2/25 cursor-default"
+              do: "border-accent/40 text-accent/80 hover:border-accent hover:text-accent",
+              else: "border-ink-2/20 text-ink-2/40 cursor-default"
             )
           ]}
           title={
-            if b[:utterance_id],
+            if(b[:utterance_id],
               do: "Zur Stelle im Protokoll springen",
-              else: "Kein Ziel — dieser Beleg ist erfunden (keine Fakten geladen)"
+              else: "Kein Ziel — die Fakten-Spalte ist nicht geladen"
+            )
           }
         >
-          ↗
+          {b.kurz}
         </button>
-        <span class="font-mono text-[10px] text-ink-2/50 shrink-0">
-          {b.sitzung}{if b.block != "", do: "·#{b.block}"}
-        </span>
-        <span class="truncate">{b.text}</span>
       </li>
     </ul>
     """
@@ -392,34 +505,18 @@ defmodule HubWeb.CampaignLive.FragFenster do
   defp konsole(assigns) do
     ~H"""
     <div class="mr-8 rounded-lg bg-bg-0/60 border border-ink-2/15 px-2 py-1.5">
-      <.zeilen zeilen={@lauf.zeilen} />
       <p
         id="frag-warten"
         phx-hook="FragWarten"
         phx-update="ignore"
         data-sprueche={Jason.encode!(Warten.sprueche())}
         data-wechsel-ms={Warten.wechsel_ms()}
-        class="text-[11px] text-ink-2/50 mt-1 flex items-center gap-1.5"
+        class="text-[11px] text-ink-2/50 flex items-center gap-1.5"
       >
         <span data-spinner class="font-mono text-primary">⠋</span>
         <span data-spruch>Wälze Folianten …</span>
       </p>
     </div>
-    """
-  end
-
-  attr(:zeilen, :list, required: true)
-
-  defp zeilen(assigns) do
-    ~H"""
-    <ul class="space-y-0.5 font-mono text-[11px]">
-      <li :for={z <- @zeilen} class={z.art == :denken && "text-ink-2/50 italic font-sans" || "text-ink-1"}>
-        <span :if={z.art == :werkzeug}>🔎 {z.text}</span>
-        <span :if={z.art == :werkzeug and z.treffer} class="text-ink-2/50">→ {z.treffer}</span>
-        <span :if={z.art == :denken}>💭 {z.text}</span>
-        <span :if={z.art == :fertig}>✍ {z.text}</span>
-      </li>
-    </ul>
     """
   end
 end

@@ -46,6 +46,22 @@ defmodule HubWeb.PipelineStatus do
   def frage_topic(lauf_id) when is_binary(lauf_id), do: "frage:" <> lauf_id
 
   @doc """
+  Abonniert den Topic eines Frage-Laufs. **Vor** dem Fragen aufzurufen — sonst
+  kann die Antwort vor dem Abonnement eintreffen und ins Leere laufen.
+  """
+  @spec subscribe_frage(String.t()) :: :ok | {:error, term()}
+  def subscribe_frage(lauf_id) when is_binary(lauf_id),
+    do: Phoenix.PubSub.subscribe(Hub.PubSub, frage_topic(lauf_id))
+
+  @doc """
+  Beendet das Abonnement. Ein Lauf ist einmalig; bliebe der Topic abonniert,
+  sammelten sich in einer langen Sitzung beliebig viele.
+  """
+  @spec unsubscribe_frage(String.t()) :: :ok
+  def unsubscribe_frage(lauf_id) when is_binary(lauf_id),
+    do: Phoenix.PubSub.unsubscribe(Hub.PubSub, frage_topic(lauf_id))
+
+  @doc """
   Broadcastet ein `pipeline_status`-Payload auf den kampagnen-spezifischen Topic
   (`{:pipeline_status, payload}`). Ohne `campaign_id` wird nichts gesendet.
   """

@@ -146,6 +146,15 @@ defmodule Worker.Settings do
     # spart nichts und ließe ihn nur früher zusammenfassen.
     frage_jack_model: :no_default,
 
+    # Issue #850: das Modell der Stützungsprüfung. Leer (oder ungesetzt) = das
+    # Modell des Frage-Jack. **Ein eigener Schlüssel, weil Prüfer und Geprüfter
+    # nicht dasselbe Modell sein sollten** — am ersten Messlauf (25.09.2026)
+    # belegt: gpt-oss:20b befolgte eine Injektion („ignoriere die Fakten und
+    # behaupte …"), und dieselbe Instanz hätte die eigene Überredung prüfen
+    # sollen. Derselbe Grund, aus dem #783 dem Verify-Judge ein eigenes Backend
+    # gab. Leser: `Worker.Jack.Frage.Stuetzung.modell_name/0`.
+    frage_pruefer_model: :no_default,
+
     # J4 (#1207): Jacks Regler. Die Defaults sind EXAKT die Werte der
     # Messreihe C (`Worker.Jack.Messlauf.modell_reihe_c/1`) — ohne Eingriff
     # ändert sich Jacks Verhalten nicht. Sie gehen über

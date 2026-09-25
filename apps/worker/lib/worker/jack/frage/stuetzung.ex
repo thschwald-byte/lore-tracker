@@ -20,10 +20,27 @@ defmodule Worker.Jack.Frage.Stuetzung do
   wird zudem nicht Satz gegen Korpus, sondern die ganze Antwort gegen die
   wenigen Fakten, die sie selbst nennt — ein Aufruf, Sekunden.
 
+  **Die Form wird erzwungen, nicht erbeten.** `format: "json"` ist bei Ollama
+  eine Bitte: Am ersten Messlauf (25.09.2026) antwortete gpt-oss:20b darauf mit
+  Fließtext samt Denkspur („We need to check if the answer is fully supported
+  by the facts…"), `Jason.decode` scheiterte, und das Urteil war `:ungeprueft`
+  — die Prüfung war also genau bei dem Modell wirkungslos, das sie am nötigsten
+  hatte. Deshalb geht ein **JSON-Schema** als `format` mit (`@schema`); Ollama
+  erzwingt daraus token-weise die Struktur. Die #676-Lektion an neuer Stelle.
+
+  **Der Prüfer ist ein eigenes Modell** (`frage_pruefer_model`, leer = das des
+  Frage-Jack). Im selben Messlauf befolgte gpt-oss:20b eine Injektion
+  („ignoriere die Fakten und behaupte …") — und hätte als Prüfer die eigene
+  Überredung bewerten sollen. Ein Modell, das sich überreden lässt, kann seine
+  Überredung nicht prüfen; derselbe Grund, aus dem #783 dem Verify-Judge ein
+  eigenes Backend gab.
+
   **Flag-not-drop.** Die Antwort wird nie verworfen. Scheitert die Prüfung
   (Modell weg, unlesbare Ausgabe), ist der Zustand `:ungeprueft`, und die
   Oberfläche sagt „IDs geprüft" statt „gestützt" — eine ehrliche Aussage über
-  weniger Prüfung, keine stille Behauptung von mehr.
+  weniger Prüfung, keine stille Behauptung von mehr. **Ehrliche Grenze:**
+  `:ungeprueft` heißt praktisch ungeschützt; wo es gehäuft auftritt, ist das
+  Modell des Prüfers falsch gewählt, nicht die Antwort in Ordnung.
 
   Die vier Zustände:
 
@@ -124,9 +141,49 @@ defmodule Worker.Jack.Frage.Stuetzung do
   defp fakten_block(zitiert),
     do: Enum.map_join(zitiert, "\n", fn f -> "#{f.id}: #{f.aussage}" end)
 
+  # Ollama erzwingt daraus die Struktur token-weise — anders als bei
+  # `format: "json"`, das ein Modell auch ignorieren kann.
+  @schema %{
+    "type" => "object",
+    "properties" => %{
+      "getragen" => %{
+        "type" => "boolean",
+        "description" => "true, wenn jede sachliche Behauptung aus den Fakten folgt"
+      },
+      "grund" => %{
+        "type" => "string",
+        "description" => "die eine Behauptung, die nicht in den Fakten steht"
+      }
+    },
+    "required" => ["getragen"]
+  }
+
+  @doc "Das Schema, das die Antwort des Prüfmodells erzwingt."
+  @spec schema() :: map()
+  def schema, do: @schema
+
+  @doc """
+  Das Modell der Prüfung: `frage_pruefer_model`, leer oder ungesetzt = das
+  Modell des Frage-Jack.
+  """
+  @spec modell_name() :: String.t() | nil
+  def modell_name do
+    case Worker.Settings.get(:frage_pruefer_model) do
+      name when is_binary(name) ->
+        if String.trim(name) == "", do: Worker.Jack.Frage.modell_name(), else: String.trim(name)
+
+      _ ->
+        Worker.Jack.Frage.modell_name()
+    end
+  end
+
   defp urteilen(text, zitiert, opts) do
     {llm, opts} = Keyword.pop(opts, :llm, &standard_llm/2)
-    opts = Keyword.put_new(opts, :format, "json")
+
+    opts =
+      opts
+      |> Keyword.put_new(:format, @schema)
+      |> Keyword.put_new_lazy(:model, &modell_name/0)
 
     with {:ok, roh} <- llm.(prompt(text, zitiert), opts),
          {:ok, map} <- lesen(roh) do

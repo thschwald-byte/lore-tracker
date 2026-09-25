@@ -78,6 +78,61 @@ defmodule Worker.Jack.Frage.StuetzungTest do
     end
   end
 
+  describe "die Form wird erzwungen (#850, Messlauf 25.09.2026)" do
+    test "das Schema geht als format mit, nicht die Bitte \"json\"" do
+      # `format: "json"` ist bei Ollama eine Bitte: gpt-oss:20b antwortete
+      # darauf mit Fliesstext samt Denkspur, und die Pruefung war genau bei dem
+      # Modell wirkungslos, das sie am noetigsten hatte.
+      gesehen =
+        Stuetzung.pruefen(antwort("x", ["S1-F1"]), fakten(),
+          llm: fn _p, opts ->
+            send(self(), {:opts, opts})
+            {:ok, ~s({"getragen": true})}
+          end
+        )
+
+      assert gesehen.geprueft == :gestuetzt
+      assert_received {:opts, opts}
+      assert opts[:format] == Stuetzung.schema()
+      refute opts[:format] == "json"
+    end
+
+    test "das Schema verlangt getragen und beschreibt beide Felder" do
+      s = Stuetzung.schema()
+
+      assert s["required"] == ["getragen"]
+      assert s["properties"]["getragen"]["type"] == "boolean"
+      # Beschreibungen sind der Teil, der auch ohne GBNF ankommt (#1075).
+      assert s["properties"]["getragen"]["description"] =~ "Fakten"
+      assert s["properties"]["grund"]["description"] =~ "nicht"
+    end
+
+    test "ein Modell wird mitgegeben — der Pruefer ist nicht zwingend der Geprüfte" do
+      Stuetzung.pruefen(antwort("x", ["S1-F1"]), fakten(),
+        llm: fn _p, opts ->
+          send(self(), {:opts, opts})
+          {:ok, ~s({"getragen": true})}
+        end
+      )
+
+      assert_received {:opts, opts}
+      assert Keyword.has_key?(opts, :model)
+    end
+
+    test "ein ausdrücklich übergebenes Modell schlägt die Einstellung" do
+      Stuetzung.pruefen(antwort("x", ["S1-F1"]), fakten(),
+        model: "eigenes-modell",
+        llm: fn _p, opts ->
+          send(self(), {:opts, opts})
+          {:ok, ~s({"getragen": true})}
+        end
+      )
+
+      assert_received {:opts, opts}
+      assert opts[:model] == "eigenes-modell"
+    end
+  end
+
   describe "der Prompt" do
     test "Antwort und Fakten stehen in abgesetzten Blöcken" do
       p = Stuetzung.prompt("Die Antwort.", fakten())
