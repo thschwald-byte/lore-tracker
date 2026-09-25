@@ -51,6 +51,12 @@ defmodule Worker.Agent.Lauf do
     * `:anheften` — `true` (Default): der Auftrag steht fest vor dem Verlauf;
       `false`: er ist der Anfang des Verlaufs und kann wie bei pi einem
       Schnitt zum Opfer fallen.
+    * `:verlauf` — ein Verlauf aus einem früheren Lauf (dessen `verlauf` im
+      Bericht), auf dem dieser aufsetzt; er steht vor dem Auftrag dieses
+      Laufs und kann wie jeder Verlauf kompaktiert werden. Damit wird aus
+      Einzelläufen ein Gespräch (#850): System und der angeheftete Auftrag
+      bleiben unverändert, die neue Frage kommt hinten an — der Idealfall
+      für den KV-Cache des Servers. Ohne die Option beginnt der Lauf leer.
     * `:denken_zurueck` — `false` (Default): die Denkspur des Modells geht
       ins Protokoll, nicht zurück an das Modell. `true`: sie steht an jeder
       früheren Modellantwort im Verlauf (`denken:`), zählt in die Schätzung
@@ -113,6 +119,7 @@ defmodule Worker.Agent.Lauf do
           ende: ende(),
           runden: non_neg_integer(),
           nachrichten: [map()],
+          verlauf: [map()],
           kompaktierungen: non_neg_integer(),
           nutzung: Modell.nutzung(),
           ms: non_neg_integer()
@@ -322,6 +329,7 @@ defmodule Worker.Agent.Lauf do
       ende: ende,
       runden: s.runde,
       nachrichten: nachrichten(s),
+      verlauf: s.verlauf,
       kompaktierungen: s.kompaktierungen,
       nutzung: s.nutzung,
       ms: verstrichen(s)
@@ -613,7 +621,7 @@ defmodule Worker.Agent.Lauf do
       modell: modell!(Keyword.fetch!(opts, :modell)),
       system: text!(Keyword.fetch!(opts, :system), :system),
       angeheftet: if(anheften, do: auftrag, else: []),
-      verlauf: if(anheften, do: [], else: auftrag),
+      verlauf: verlauf!(Keyword.get(opts, :verlauf, [])) ++ if(anheften, do: [], else: auftrag),
       werkzeuge: werkzeuge!(werkzeuge),
       werkzeug_liste: werkzeuge,
       max_runden: positiv!(Keyword.get(opts, :max_runden, @default_runden), :max_runden),
@@ -668,6 +676,27 @@ defmodule Worker.Agent.Lauf do
 
   defp modell!(anderes),
     do: raise(ArgumentError, "modell: erwartet {modul, opts}, erhalten #{inspect(anderes)}")
+
+  # Ein fortgesetzter Verlauf (#850) trägt die Rollen, die ein Lauf erzeugt:
+  # `assistant` mit `tool_calls`, `tool` mit `tool_call_id`, `user`. Geprüft
+  # wird nur die Form, die `Worker.Agent.Modell.Ollama.nachricht/1` bedienen
+  # kann — eine unbekannte Rolle fiele dort sonst erst beim Serialisieren auf,
+  # mitten im Lauf und ohne Hinweis auf ihre Herkunft.
+  defp verlauf!([]), do: []
+
+  defp verlauf!(liste) when is_list(liste) do
+    Enum.each(liste, fn
+      %{role: r, content: c} when r in [:user, :system] and is_binary(c) -> :ok
+      %{role: :assistant} -> :ok
+      %{role: :tool, tool_call_id: _, content: _} -> :ok
+      anderes -> raise ArgumentError, "verlauf: unbekannte Nachricht #{inspect(anderes)}"
+    end)
+
+    liste
+  end
+
+  defp verlauf!(anderes),
+    do: raise(ArgumentError, "verlauf: Liste erwartet, erhalten #{inspect(anderes)}")
 
   defp auftrag!([_ | _] = nachrichten) do
     if Enum.all?(nachrichten, &match?(%{role: :user, content: text} when is_binary(text), &1)),

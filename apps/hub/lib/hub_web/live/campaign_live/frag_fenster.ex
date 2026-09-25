@@ -69,10 +69,26 @@ defmodule HubWeb.CampaignLive.FragFenster do
     "Welche offenen Fäden gibt es?"
   ]
 
+  @chat_fragen 5
+
+  @doc "Wie viele Fragen ein eingeschaltetes Gespräch trägt."
+  @spec chat_fragen() :: pos_integer()
+  def chat_fragen, do: @chat_fragen
+
   @doc "Der Anfangszustand fürs Mount — eine Stelle, damit kein Feld vergessen wird (#1005)."
   @spec initial() :: map()
   def initial,
-    do: %{offen?: false, verlauf: [], lauf: nil, frage: "", befunde: []}
+    do: %{
+      offen?: false,
+      verlauf: [],
+      lauf: nil,
+      frage: "",
+      befunde: [],
+      # Der Gesprächsmodus: `nil` = jede Frage steht für sich, sonst
+      # `%{id:, rest:}` — die Gesprächs-ID, die der Worker seinem Verlauf
+      # zuordnet, und wie viele Fragen es noch trägt.
+      chat: nil
+    }
 
   @doc "Beispielfragen fürs leere Fenster."
   @spec vorschlaege() :: [String.t()]
@@ -126,6 +142,47 @@ defmodule HubWeb.CampaignLive.FragFenster do
 
   def event(socket, "frag_befund", _params), do: {:noreply, auf(socket, true)}
 
+  # Der Modus-Knopf (#850, Maintainer 26.09.2026): „Frage" = jede Frage steht
+  # für sich, „Chat max N" = die nächsten N Fragen setzen aufeinander auf.
+  #
+  # **Jedes Einschalten vergibt eine neue Gesprächs-ID.** Damit braucht das
+  # Ausschalten kein Aufräumen beim Worker — das alte Gespräch verfällt dort
+  # von selbst, und ein neues beginnt garantiert leer, statt womöglich auf
+  # einem Verlauf aufzusetzen, den niemand mehr im Fenster sieht.
+  def event(socket, "frag_modus", _params) do
+    frag = socket.assigns.frag
+
+    chat =
+      case frag.chat do
+        nil -> %{id: UUIDv7.generate(), rest: @chat_fragen}
+        _ -> nil
+      end
+
+    {:noreply, Phoenix.Component.assign(socket, :frag, %{frag | chat: chat})}
+  end
+
+  # Der Abbruch-Knopf: Ein Lauf, der sich verrannt hat, hält bis zu fünf
+  # Minuten die Grafikkarte — und der Fragende sieht nur den Wartetext. Der
+  # Abbruch beendet den Task beim Worker, nicht erst die laufende Runde.
+  def event(socket, "frag_abbrechen", _params) do
+    frag = socket.assigns.frag
+
+    case frag.lauf do
+      nil ->
+        {:noreply, socket}
+
+      lauf ->
+        abbrechen(socket, lauf)
+
+        {:noreply,
+         Phoenix.Component.assign(socket, :frag, %{
+           frag
+           | lauf: nil,
+             verlauf: frag.verlauf ++ [%{art: :fehler, text: "Abgebrochen."}]
+         })}
+    end
+  end
+
   # Der Claim wird gekürzt: Er geht als Nutzertext in den Auftrag, und ein
   # sehr langer Fakt machte die Frage unlesbar, ohne sie zu schärfen.
   defp frage_zu(claim) do
@@ -176,6 +233,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
          Phoenix.Component.assign(socket, :frag, %{
            frag
            | lauf: nil,
+             chat: chat_danach(frag.chat, payload),
              verlauf: frag.verlauf ++ [eintrag_aus(payload, socket.assigns[:facts] || [])]
          })}
 
@@ -198,6 +256,28 @@ defmodule HubWeb.CampaignLive.FragFenster do
 
   defp eintrag_aus(p, _fakten),
     do: %{art: :fehler, text: p["grund"] || "Der Lauf ist gescheitert."}
+
+  # Der Zähler läuft an der **Antwort** herunter, nicht am Absenden: Ein
+  # gescheiterter oder abgebrochener Lauf hat nichts in den Verlauf gelegt,
+  # und eine verbrauchte Frage ohne Gegenwert wäre schwer zu erklären.
+  #
+  # Der Worker kann das Gespräch von sich aus beenden
+  # (`gespraech_weiter? == false`, etwa weil er den Verlauf zusammenfassen
+  # musste). Dann schaltet das Fenster zurück, statt weiter Folgefragen auf
+  # etwas zu stellen, das den Verlauf nicht mehr wörtlich enthält.
+  defp chat_danach(nil, _payload), do: nil
+
+  defp chat_danach(chat, %{"kind" => "frage_antwort"} = p) do
+    rest = chat.rest - 1
+
+    cond do
+      p["gespraech_weiter?"] == false -> nil
+      rest <= 0 -> nil
+      true -> %{chat | rest: rest}
+    end
+  end
+
+  defp chat_danach(chat, _payload), do: chat
 
   # Der Beleg trägt die kurze ID für den Menschen (`S1-F12`) und eine
   # Utterance-ID fürs Springen. Die kommt aus den GELADENEN Fakten: Es gibt
@@ -239,7 +319,13 @@ defmodule HubWeb.CampaignLive.FragFenster do
     # Stück kommt — sonst hätte der Hook, an den gepusht wird, kein Element.
     verlauf = frag.verlauf ++ [%{art: :frage, text: frage}, %{art: :strom, lauf_id: id}]
 
-    case Commands.request_frage(snap["owner_discord_id"], campaign.id, frage, id) do
+    gespraech_id = frag.chat && frag.chat.id
+
+    # `Commands.request_frage/5` hat einen `is_binary`-Guard auf die
+    # Discord-ID: Ein Snapshot ohne Spielleiter (frisch, unvollständig
+    # geladen) liesse den Aufruf mit `FunctionClauseError` sterben — und mit
+    # ihm die ganze Ansicht, wegen einer Frage.
+    case erreicht(snap["owner_discord_id"], campaign.id, frage, id, gespraech_id) do
       0 ->
         PipelineStatus.unsubscribe_frage(id)
 
@@ -270,6 +356,11 @@ defmodule HubWeb.CampaignLive.FragFenster do
     end
   end
 
+  defp erreicht(did, _cid, _frage, _id, _gid) when not is_binary(did), do: 0
+
+  defp erreicht(did, cid, frage, id, gid),
+    do: Commands.request_frage(did, cid, frage, id, gid)
+
   # Ein laufender Lauf wird beim Worker ABGEBROCHEN, nicht nur vergessen: Er
   # hielte sonst die Grafikkarte für eine Antwort, die niemand mehr sehen will.
   defp abbrechen(_socket, nil), do: :ok
@@ -277,7 +368,17 @@ defmodule HubWeb.CampaignLive.FragFenster do
   defp abbrechen(socket, %{id: id}) do
     PipelineStatus.unsubscribe_frage(id)
     snap = socket.assigns[:campaign] || %{}
-    Commands.abbrechen_frage(snap["owner_discord_id"], Core.perm_campaign(socket).id, id)
+
+    # Dasselbe wie in `starte/2`: ohne Spielleiter kein Aufruf. Das Abonnement
+    # ist oben schon aufgelöst, der Lauf ist für dieses Fenster damit vorbei —
+    # ein Abbruch, der niemanden erreicht, ist kein Grund abzustürzen.
+    case snap["owner_discord_id"] do
+      did when is_binary(did) ->
+        Commands.abbrechen_frage(did, Core.perm_campaign(socket).id, id)
+
+      _ ->
+        :ok
+    end
   end
 
   # ——— Markup ———————————————————————————————————————————————————
@@ -397,6 +498,17 @@ defmodule HubWeb.CampaignLive.FragFenster do
             autocomplete="off"
             class="grow bg-bg-0 border border-ink-2/25 rounded-lg px-3 py-1.5 text-sm text-ink-0 placeholder:text-ink-2/40"
           />
+          <.modus chat={@frag.chat} />
+          <button
+            type="button"
+            phx-click="frag_abbrechen"
+            disabled={is_nil(@frag.lauf)}
+            class="px-2 text-ink-2/70 hover:text-warning disabled:opacity-25 disabled:hover:text-ink-2/70"
+            aria-label="Laufende Frage abbrechen"
+            title="Abbrechen — hält den Lauf beim Worker an"
+          >
+            ⏹
+          </button>
           <button type="submit" class="text-accent px-2" aria-label="Frage abschicken">➤</button>
         </div>
         <p class="text-[10px] text-ink-2/50 mt-1.5 leading-snug">
@@ -525,6 +637,42 @@ defmodule HubWeb.CampaignLive.FragFenster do
         </button>
       </li>
     </ul>
+    """
+  end
+
+  attr(:chat, :map, default: nil)
+
+  # Der Modus-Knopf (Maintainer, 26.09.2026). Zwei Zustände, und der Text sagt
+  # beide Male, **was gilt** — nicht, was ein Klick täte: „Frage" heißt, dass
+  # jede Frage für sich steht; „Chat max N", dass die nächsten N aufeinander
+  # aufsetzen. Ein Knopf, der seine Wirkung statt seines Zustands anzeigt,
+  # lässt sich nicht lesen, wenn man ihn nicht gerade gedrückt hat.
+  #
+  # Die Farbe trägt dieselbe Aussage doppelt (#67): Farbe allein ist kein
+  # zugängliches Signal, deshalb ändert sich auch der Text.
+  defp modus(%{chat: nil} = assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="frag_modus"
+      class="px-2 text-[11px] rounded-lg border border-ink-2/25 text-ink-2/70 hover:border-accent/50"
+      title="Jede Frage steht für sich — klicken für ein Gespräch mit Zusammenhang"
+    >
+      Frage
+    </button>
+    """
+  end
+
+  defp modus(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="frag_modus"
+      class="px-2 text-[11px] rounded-lg border border-accent/60 bg-accent/15 text-accent"
+      title="Die nächsten Fragen kennen den bisherigen Verlauf — klicken für Einzelfragen"
+    >
+      Chat max {@chat.rest}
+    </button>
     """
   end
 

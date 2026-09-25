@@ -18,6 +18,13 @@ defmodule Worker.Jack.Frage.Dienst do
   Frist „bis zum Ende des laufenden Aufrufs" liesse die Karte bei einem
   27b-Modell auf 200 Fakten noch Dutzende Sekunden belegt — für niemanden.
 
+  **Die Gesprächs-ID** (`opts[:gespraech_id]`, #850) ist etwas anderes als die
+  Lauf-ID: Sie bleibt über die Fragen eines Chat-Gesprächs stehen. Liegt zu
+  ihr ein Verlauf, setzt der Lauf darauf auf (`Worker.Jack.Frage.Gespraech`);
+  gemerkt wird **nur nach einer Antwort** — ein abgebrochener oder
+  gescheiterter Lauf lässt das Gespräch, wie es war, statt einen halben
+  Verlauf zu hinterlassen.
+
   **Ehrliche Grenze:** Ob Ollama bei einem Verbindungsabbruch wirklich aufhört
   oder die Antwort zu Ende rechnet, ist **nicht gemessen**. Der Worker gibt
   die Karte in jedem Fall frei; ob die Grafikkarte es auch tut, steht dahin.
@@ -26,7 +33,7 @@ defmodule Worker.Jack.Frage.Dienst do
   require Logger
 
   alias Worker.Jack.Frage
-  alias Worker.Jack.Frage.Strom
+  alias Worker.Jack.Frage.{Gespraech, Strom}
 
   @registry Worker.Jack.Frage.Registry
 
@@ -75,17 +82,22 @@ defmodule Worker.Jack.Frage.Dienst do
   def laeuft?(lauf_id), do: Registry.lookup(@registry, lauf_id) != []
 
   defp fahren(lauf_id, campaign_id, frage, melden, opts) do
+    {gespraech_id, opts} = Keyword.pop(opts, :gespraech_id)
+    fortsetzung = Gespraech.holen(gespraech_id)
+
     # Der Denkstrom geht an den Fragenden mit, während gerechnet wird
     # (#850, Maintainer). Eigener Prozess, weil dieser Task gleich in
     # `run_frei/2` hängt und seine Mailbox nicht leeren könnte.
     strom = Strom.starten(lauf_id, melden)
     opts = Keyword.put_new(opts, :beobachter, strom)
 
+    lauf_opts = if fortsetzung, do: Keyword.put(opts, :fortsetzung, fortsetzung), else: opts
+
     ergebnis =
       Worker.GpuQueue.run_frei(
         fn ->
           with {:ok, eingabe} <- Frage.Eingabe.aus_repo(campaign_id, frage) do
-            Frage.laufen(eingabe, opts)
+            Frage.laufen(eingabe, lauf_opts)
           end
         end,
         label: "frage:#{String.slice(lauf_id, 0, 8)}"
@@ -103,11 +115,36 @@ defmodule Worker.Jack.Frage.Dienst do
         melden.({:frage_fehler, lauf_id, :keine_antwort})
 
       {:ok, %{antwort: a} = r} ->
-        melden.({:frage_fertig, lauf_id, Map.put(a, :runden, r.runden)})
+        weiter? = gespraech_fortschreiben(gespraech_id, r)
+
+        melden.(
+          {:frage_fertig, lauf_id,
+           a |> Map.put(:runden, r.runden) |> Map.put(:gespraech_weiter?, weiter?)}
+        )
 
       {:error, grund} ->
         Logger.warning("Frage-Jack: Lauf #{lauf_id} gescheitert: #{inspect(grund)}")
         melden.({:frage_fehler, lauf_id, grund})
+    end
+  end
+
+  # Merkt den Verlauf für die nächste Frage — oder beendet das Gespräch.
+  #
+  # **Eine Kompaktierung beendet es** (`Worker.Jack.Frage.Gespraech`): Danach
+  # stehen die gelesenen Fakten nicht mehr wörtlich im Verlauf, sondern als
+  # Zusammenfassung, und die Belege der nächsten Antwort ständen auf ihr. Der
+  # Hub erfährt es über `gespraech_weiter?` und schaltet zurück, statt weiter
+  # Folgefragen auf eine Zusammenfassung zu stellen.
+  defp gespraech_fortschreiben(nil, _r), do: false
+
+  defp gespraech_fortschreiben(gespraech_id, r) do
+    if Map.get(r, :kompaktierungen, 0) > 0 do
+      Logger.info("Frage-Jack: Gespräch #{gespraech_id} endet — der Verlauf wurde kompaktiert")
+      Gespraech.verwerfen(gespraech_id)
+      false
+    else
+      Gespraech.merken(gespraech_id, %{auftrag: r.auftrag, verlauf: r.verlauf})
+      true
     end
   end
 end

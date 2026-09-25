@@ -41,6 +41,39 @@ defmodule Worker.Jack.Frage.LaufTest do
     end
   end
 
+  # Ein Modell, das nur festhält, WAS es gesehen hat. Der `Skript`-Helfer
+  # taugt dafür nicht: Er meldet den Auftrag nur, wenn genau zwei Nachrichten
+  # ankommen — bei einer Fortsetzung sind es mehr.
+  defmodule Spion do
+    @moduledoc false
+    @behaviour Worker.Agent.Modell
+
+    @impl true
+    def antworten(nachrichten, _werkzeuge, opts) do
+      Agent.update(Keyword.fetch!(opts, :spion), fn _ -> nachrichten end)
+
+      {:ok,
+       %{
+         text: nil,
+         denken: nil,
+         aufrufe: [
+           %{
+             id: "id_a",
+             name: "antworte",
+             argumente: {:ok, %{"text" => "gut", "fakt_ids" => ["S1-F1"]}}
+           }
+         ],
+         stopp: :werkzeuge,
+         nutzung: nil
+       }}
+    end
+  end
+
+  defp spion do
+    {:ok, s} = Agent.start_link(fn -> nil end)
+    {{Spion, spion: s}, s}
+  end
+
   defp antwort(aufrufe),
     do: %{text: nil, denken: nil, aufrufe: aufrufe, stopp: :werkzeuge, nutzung: nil}
 
@@ -281,6 +314,99 @@ defmodule Worker.Jack.Frage.LaufTest do
                  max_runden: 2,
                  stuetzung: false
                )
+    end
+  end
+
+  describe "Fortsetzung — das Gespräch (Chat-Modus)" do
+    test "die Folgefrage steht im abgesetzten Block, nicht als nackter Satz" do
+      # Sie ist Nutzertext wie die erste Frage. Als blanker Satz wäre sie die
+      # einzige Stelle des Gesprächs, an der Nutzertext wie eine Anweisung
+      # aussieht — genau der Angriff, den der Auftrag sonst überall abwehrt.
+      block = Frage.folgefrage("Wer noch?")
+
+      assert block =~ "<frage>"
+      assert block =~ "</frage>"
+      assert block =~ "Wer noch?"
+    end
+
+    test "der Auftrag des ERSTEN Laufs bleibt stehen, die Frage kommt hinten an" do
+      forts = %{
+        auftrag: "DER ERSTE AUFTRAG",
+        verlauf: [
+          %{role: :user, content: "vorige Runde"},
+          %{role: :assistant, content: "vorige Antwort", tool_calls: []}
+        ]
+      }
+
+      {modell, agent} = spion()
+
+      assert {:ok, %{antwort: a}} =
+               Frage.laufen(eingabe("Wer noch?"),
+                 modell: modell,
+                 kontext_fenster: 20_000,
+                 stuetzung: false,
+                 fortsetzung: forts
+               )
+
+      assert a.text == "gut"
+
+      # Der angeheftete Auftrag ist unverändert der erste. Ihn mit der neuen
+      # Frage neu zu bauen wäre naheliegend und falsch: Er steht ganz vorn,
+      # ein geänderter Auftrag bräche das Präfix — und damit den KV-Cache,
+      # der eine Folgefrage erst billig macht.
+      [_system, auftrag | _] = Agent.get(agent, & &1)
+      assert auftrag.content == "DER ERSTE AUFTRAG"
+      refute auftrag.content =~ "Wer noch?"
+    end
+
+    test "das Modell sieht den bisherigen Verlauf UND die neue Frage" do
+      forts = %{
+        auftrag: "Auftrag 1",
+        verlauf: [
+          %{role: :user, content: "Frage 1"},
+          %{role: :assistant, content: "Antwort 1", tool_calls: []}
+        ]
+      }
+
+      {modell, agent} = spion()
+
+      assert {:ok, _} =
+               Frage.laufen(eingabe("Frage 2"),
+                 modell: modell,
+                 kontext_fenster: 20_000,
+                 stuetzung: false,
+                 fortsetzung: forts
+               )
+
+      gesehen = Agent.get(agent, & &1)
+      texte = Enum.map(gesehen, &Map.get(&1, :content))
+
+      assert "Auftrag 1" in texte
+      assert "Frage 1" in texte
+      assert "Antwort 1" in texte
+      assert Enum.any?(texte, &(is_binary(&1) and &1 =~ "Frage 2"))
+
+      # Die Reihenfolge ist die Aussage: System, angehefteter Auftrag,
+      # bisheriger Verlauf, neue Frage. Steht die neue Frage nicht zuletzt,
+      # beantwortet das Modell die vorige noch einmal.
+      assert List.last(texte) =~ "Frage 2"
+      assert hd(gesehen).role == :system
+    end
+
+    test "das Ergebnis trägt Auftrag und Verlauf für die nächste Runde" do
+      assert {:ok, r} =
+               Frage.laufen(eingabe(),
+                 modell: skript([lesen(), antworten("Ein Magier.", ["S1-F1"])]),
+                 kontext_fenster: 20_000,
+                 stuetzung: false
+               )
+
+      # Ohne beides könnte der Dienst keine Fortsetzung bilden — der Auftrag
+      # steht angeheftet und ist im Verlauf nicht enthalten.
+      assert is_binary(r.auftrag)
+      assert r.auftrag =~ "<frage>"
+      assert is_list(r.verlauf) and r.verlauf != []
+      assert r.kompaktierungen == 0
     end
   end
 end

@@ -215,12 +215,13 @@ defmodule HubWeb.WorkerChannel do
 
   # J4 (#1207): „noch N Iterationen“ für eine Session.
   # Issue #850: eine Frage an die Kampagne, mit der Lauf-ID des Fragers.
-  def handle_info({:start_frage, discord_id, campaign_id, frage, lauf_id}, socket) do
+  def handle_info({:start_frage, discord_id, campaign_id, frage, lauf_id, gespraech_id}, socket) do
     push(socket, "start_frage", %{
       "discord_id" => discord_id,
       "campaign_id" => campaign_id,
       "frage" => frage,
-      "lauf_id" => lauf_id
+      "lauf_id" => lauf_id,
+      "gespraech_id" => gespraech_id
     })
 
     {:noreply, socket}

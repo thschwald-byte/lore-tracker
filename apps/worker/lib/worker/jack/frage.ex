@@ -61,30 +61,78 @@ defmodule Worker.Jack.Frage do
   Optionen wie bei den anderen Jacks (`:modell`, `:kontext_fenster`,
   `:auftrag`, `:beobachter`, `:stand_beobachter`, `:protokoll`), dazu
   `:stuetzung` — `false` überspringt die Prüfung (für Tests ohne Modell), was
-  die Antwort auf `geprueft: :ids` stehen lässt.
+  die Antwort auf `geprueft: :ids` stehen lässt — und `:fortsetzung`
+  (`%{auftrag:, verlauf:}` aus einem früheren Lauf, #850): dann ist **dies
+  eine Folgefrage im selben Gespräch**.
+
+  Das Ergebnis trägt `auftrag` und `verlauf` mit, damit der Aufrufer daraus
+  die nächste Fortsetzung bilden kann.
+
+  **Bei einer Fortsetzung bleibt der Auftrag des ersten Laufs stehen**, und
+  die neue Frage kommt als Nachricht ans Ende des Verlaufs. Den Auftrag mit
+  der neuen Frage neu zu bauen wäre naheliegend und falsch: Er steht
+  angeheftet ganz vorn, ein geänderter Auftrag bräche das Präfix — und damit
+  den KV-Cache des Servers, der eine Folgefrage sonst fast umsonst macht.
+  Die Folgefrage steht dabei im **selben abgesetzten Block** wie die erste
+  (`folgefrage/1`); als nackter Satz wäre sie die einzige Stelle im Gespräch,
+  an der Nutzertext wie eine Anweisung aussieht.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts \\ []) do
     eingabe = Map.put(eingabe, :art, :frage)
     {stuetzen?, opts} = Keyword.pop(opts, :stuetzung, true)
+    {forts, opts} = Keyword.pop(opts, :fortsetzung)
 
     opts =
       opts
       |> Keyword.put_new(:max_runden, @max_runden)
       |> Keyword.put_new(:max_ms, @max_ms)
 
-    with {:ok, r} <-
+    with {:ok, auftrag} <- auftrag_fuer(eingabe, forts, opts),
+         opts = fortsetzen(opts, auftrag, forts, eingabe),
+         {:ok, r} <-
            Lauf.starten(
              eingabe,
              opts,
              fn -> Stand.fuer_frage(eingabe) end,
-             fn -> auftrag(eingabe) end,
+             fn -> {:ok, auftrag} end,
              :frage_ohne_abschluss,
              jack()
            ) do
-      {:ok, Map.put(r, :antwort, antwort(r.stand, stuetzen?, opts))}
+      {:ok,
+       r
+       |> Map.put(:antwort, antwort(r.stand, stuetzen?, opts))
+       |> Map.put(:auftrag, auftrag)}
     end
   end
+
+  # Der Auftrag: bei einer Fortsetzung der gemerkte, sonst der frisch
+  # gebaute — es sei denn, der Aufrufer gibt einen vor (Tests).
+  defp auftrag_fuer(eingabe, forts, opts) do
+    cond do
+      opts[:auftrag] -> {:ok, opts[:auftrag]}
+      forts -> {:ok, forts.auftrag}
+      true -> auftrag(eingabe)
+    end
+  end
+
+  defp fortsetzen(opts, auftrag, nil, _eingabe), do: Keyword.put(opts, :auftrag, auftrag)
+
+  defp fortsetzen(opts, auftrag, forts, eingabe) do
+    opts
+    |> Keyword.put(:auftrag, auftrag)
+    |> Keyword.put(
+      :verlauf,
+      forts.verlauf ++ [%{role: :user, content: folgefrage(Eingabe.frage(eingabe))}]
+    )
+  end
+
+  @doc """
+  Eine Folgefrage als Nachricht an das Modell — im selben abgesetzten Block
+  wie die erste Frage im Auftrag, aus demselben Grund.
+  """
+  @spec folgefrage(String.t()) :: String.t()
+  def folgefrage(frage), do: "Eine weitere Frage:\n\n<frage>\n#{frage}\n</frage>"
 
   @doc """
   Der Name des Modells: `frage_jack_model`, leer oder ungesetzt = Jacks

@@ -230,17 +230,20 @@ defmodule Hub.Commands do
 
   Liefert die Zahl der erreichten Worker (0 = keiner online, dann kommt keine
   Antwort und der Aufrufer muss das selbst anzeigen).
+
+  Mit `gespraech_id` setzt die Frage ein Gespräch fort (Chat-Modus, #850) —
+  der Worker hält den Verlauf dazu; ohne sie ist sie ein Lauf für sich.
   """
-  @spec request_frage(String.t(), String.t(), String.t(), String.t()) :: 0 | 1
-  def request_frage(discord_id, campaign_id, frage, lauf_id)
+  @spec request_frage(String.t(), String.t(), String.t(), String.t(), String.t() | nil) :: 0 | 1
+  def request_frage(discord_id, campaign_id, frage, lauf_id, gespraech_id \\ nil)
       when is_binary(discord_id) and is_binary(campaign_id) and is_binary(frage) and
-             is_binary(lauf_id) do
+             is_binary(lauf_id) and (is_binary(gespraech_id) or is_nil(gespraech_id)) do
     case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_frage, discord_id, campaign_id, frage, lauf_id})
+        send(pid, {:start_frage, discord_id, campaign_id, frage, lauf_id, gespraech_id})
         1
     end
   end

@@ -71,7 +71,15 @@ defmodule Worker.HubClient.Replay do
       when is_binary(lauf_id) and is_binary(cid) and is_binary(frage) do
     Logger.info("HubClient: Frage lauf=#{lauf_id} campaign=#{cid} by=#{p["discord_id"]}")
 
-    Worker.Jack.Frage.Dienst.starten(lauf_id, cid, frage, &melde_frage(cid, &1))
+    # `gespraech_id` ist optional: Ohne sie ist die Frage ein Lauf für sich
+    # (Modus „Frage"), mit ihr setzt sie das Gespräch fort (Modus „Chat").
+    opts =
+      case p["gespraech_id"] do
+        g when is_binary(g) and g != "" -> [gespraech_id: g]
+        _ -> []
+      end
+
+    Worker.Jack.Frage.Dienst.starten(lauf_id, cid, frage, &melde_frage(cid, &1), opts)
 
     {:ok, socket}
   end
@@ -104,7 +112,8 @@ defmodule Worker.HubClient.Replay do
       "kurze_ids" => antwort.kurze_ids,
       "geprueft" => to_string(antwort.geprueft),
       "grund" => Map.get(antwort, :grund),
-      "runden" => Map.get(antwort, :runden)
+      "runden" => Map.get(antwort, :runden),
+      "gespraech_weiter?" => Map.get(antwort, :gespraech_weiter?, false)
     })
   end
 
