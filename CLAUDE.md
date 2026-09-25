@@ -2407,6 +2407,36 @@ man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
 Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
 `mahnung`), nicht über `bericht.nachrichten`.
 
+#### Was ein Werkzeug sagt, muss wahr sein — zwei Etiketten
+
+Beide am Chronik- und Zeit-Lauf vom 25.09.2026 gefunden, beide dieselbe
+Klasse: Eine Auskunft, die eine Sitzung nennt, wo die Kampagne gemeint ist.
+
+**`fakten(sitzung: N)` beim Chronik-Jack** (Maintainer: „chronik ist die ganze
+kampagne → das Etikett muss weg"). `s.fakten` trägt bei ihm **alle** Fakten
+aller Sitzungen (`Chronik.Eingabe.alle_fakten/1`), bei jedem anderen Jack nur
+die eigene. Die Klausel „die Nummer ist meine eigene → gib `s.fakten`" stammt
+aus der Resümee-Welt und war für ihn falsch: `fakten(sitzung: 2)` lieferte die
+ganze Kampagne, der Kopf behauptete „Sitzung 2, Fakten 1 bis 208", und im
+Bereich 1..40 standen S1-Fakten. Jack hat es sofort bemerkt („*the IDs are
+labeled as S1-F1 through S1-F40*"). Seitdem: ohne `sitzung` die Kampagne, und
+der Kopf sagt das („Alle Fakten der Kampagne"); mit `sitzung` genau diese
+Sitzung — **auch die eigene**, denn beim Chronik-Jack ist sie eine unter
+vielen. Die Absage nennt die Sitzungen, die Fakten haben (er kennt kein
+„früher").
+
+**Die Klammer von `lies_kette()`** (Maintainer: „muss über die ganze kampagne
+gehen"). Sie mischte drei kampagnenweite Zahlen mit einer eigenen, ohne
+Kennzeichnung: „41 Glieder, 6.235 Zeilen drin, 1.978 draussen, 0
+unentschieden" — während Jack an 3.385 Zeilen arbeitete. In zwei Läufen hat er
+darüber gerätselt. Seitdem stehen sie getrennt („Kampagne: … Deine Sitzung:
+…"). `unentschieden` bleibt die eigene Zahl, weil sie es sein **muss**: Jack
+entscheidet nur die Zeilen seiner Sitzung.
+
+**Zwei Wörter für zwei Satzstellungen** (`umfang_wort/1` vor einem Komma,
+`umfang_subjekt/1` vor einem Verb). Eines für beides läse sich in einem der
+Fälle hölzern — und die Meldungen sind das, was das Modell liest.
+
 #### Die Einordnung zählt nur die eigenen Zeilen
 
 Ein Folgefehler des Kette-Erbes (s. „Die Kette ist persistent"), am laufenden

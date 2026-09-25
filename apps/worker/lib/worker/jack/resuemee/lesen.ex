@@ -175,6 +175,30 @@ defmodule Worker.Jack.Resuemee.Lesen do
     end
   end
 
+  # **Beim Chronik-Jack ist der Gegenstand die KAMPAGNE** (Maintainer,
+  # 25.09.2026: „chronik ist die ganze kampagne → das Etikett muss weg").
+  #
+  # `s.fakten` trägt bei ihm alle Fakten aller Sitzungen (`alle_fakten/1`),
+  # bei den übrigen Jacks nur die eigene Sitzung. Die Klausel „die Nummer ist
+  # meine eigene → gib `s.fakten`" stammt aus der Resümee-Welt und war für ihn
+  # falsch: `fakten(sitzung: 2)` lieferte die ganze Kampagne, und der Kopf
+  # behauptete „Sitzung 2, Fakten 1 bis 208" — im Bereich 1..40 standen
+  # S1-Fakten. Am laufenden Lauf gesehen, und Jack hat es sofort bemerkt: „the
+  # IDs are labeled as S1-F1 through S1-F40, which suggests these might be
+  # from a different session than expected."
+  #
+  # Seitdem: **ohne `sitzung` die Kampagne** (`:kampagne` statt einer Nummer,
+  # der Kopf sagt das), **mit `sitzung` genau diese Sitzung** — auch die
+  # eigene, denn beim Chronik-Jack ist sie eine unter vielen.
+  defp sitzung_fakten(%Stand{art: :chronik} = s, nil), do: {:ok, :kampagne, s.fakten}
+
+  defp sitzung_fakten(%Stand{art: :chronik} = s, nr) do
+    case Enum.filter(s.fakten, &(Map.get(&1, :sitzung) == nr)) do
+      [] -> {:error, keine_sitzung(s, nr)}
+      liste -> {:ok, nr, liste}
+    end
+  end
+
   defp sitzung_fakten(s, nil), do: {:ok, s.sitzung.nummer, s.fakten}
   defp sitzung_fakten(%Stand{sitzung: %{nummer: n}} = s, n), do: {:ok, n, s.fakten}
   defp sitzung_fakten(%Stand{fruehere: []}, _nr), do: {:hinweis, Stand.keine_frueheren()}
@@ -184,6 +208,16 @@ defmodule Worker.Jack.Resuemee.Lesen do
       nil -> {:error, nicht_frueher(s, nr)}
       f -> {:ok, nr, f.fakten}
     end
+  end
+
+  # Beim Chronik-Jack gibt es kein „früher" — er sieht alle Sitzungen, also
+  # nennt die Absage die, die es gibt.
+  defp keine_sitzung(s, nr) do
+    vorhandene =
+      s.fakten |> Enum.map(&Map.get(&1, :sitzung)) |> Enum.uniq() |> Enum.sort() |> Enum.join(", ")
+
+    "Zu Sitzung #{nr} gibt es keine Fakten. Sitzungen mit Fakten: #{vorhandene}. " <>
+      "Ohne sitzung liest du alle Fakten der Kampagne."
   end
 
   defp nicht_frueher(s, nr) do
@@ -197,7 +231,7 @@ defmodule Worker.Jack.Resuemee.Lesen do
 
     cond do
       n == 0 ->
-        {s, {:ok, "Sitzung #{nr} hat keine Fakten."}}
+        {s, {:ok, "#{umfang_subjekt(nr)} hat keine Fakten."}}
 
       von > bis ->
         {s,
@@ -209,18 +243,31 @@ defmodule Worker.Jack.Resuemee.Lesen do
         {s,
          {:error,
           "Der Bereich #{von}-#{bis} liegt hinter den Fakten. " <>
-            "Sitzung #{nr} hat die Fakten 1 bis #{n}."}}
+            "#{umfang_subjekt(nr)} hat die Fakten 1 bis #{n}."}}
 
       true ->
         b = min(bis, n)
         teil = Enum.slice(liste, (von - 1)..(b - 1)//1)
         diese = nr == s.sitzung.nummer
-        kopf = "Sitzung #{nr}, Fakten #{von} bis #{b} von #{n}.\n" <> @kopfzeile
+        kopf = "#{umfang_wort(nr)}, Fakten #{von} bis #{b} von #{n}.\n" <> @kopfzeile
 
         {Stand.gelesen_merken(s, teil),
          {:ok, Enum.join([kopf | Enum.map(teil, &zeile(&1, diese))], "\n")}}
     end
   end
+
+  # `:kampagne` statt einer Nummer — die Zahl dahinter zählt dann über alle
+  # Sitzungen, und ein „Sitzung 2" davor wäre eine Falschaussage.
+  #
+  # Zwei Wörter für zwei Satzstellungen: `umfang_wort/1` steht vor einem
+  # Komma („Sitzung 2, Fakten 1 bis 40"), `umfang_subjekt/1` vor einem Verb
+  # („Sitzung 2 hat die Fakten 1 bis 5"). Eines für beides läse sich in einem
+  # der Fälle hölzern, und die Meldungen sind das, was Jack liest.
+  defp umfang_wort(:kampagne), do: "Alle Fakten der Kampagne"
+  defp umfang_wort(nr), do: "Sitzung #{nr}"
+
+  defp umfang_subjekt(:kampagne), do: "Die Kampagne"
+  defp umfang_subjekt(nr), do: "Sitzung #{nr}"
 
   @doc "Einen Fakt samt Belegblöcken lesen (Werkzeug `fakt`)."
   @spec fakt(Stand.t(), map()) :: ergebnis()

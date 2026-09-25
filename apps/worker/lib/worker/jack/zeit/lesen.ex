@@ -378,8 +378,20 @@ defmodule Worker.Jack.Zeit.Lesen do
 
     z = Stand.zahlen(s)
 
+    # **Die Klammer sagt, was die Kampagne ist und was deine Sitzung**
+    # (Maintainer, 25.09.2026: „lies_kette() muss über die ganze Kampagne
+    # gehen"). Sie mischte drei kampagnenweite Zahlen mit einer eigenen, ohne
+    # Kennzeichnung — und Jack hat in zwei Läufen darüber gerätselt, welche
+    # seine ist: „1978 lines were outside — hmm, ‚41 Glieder, 6235 Zeilen
+    # drin, 1978 draussen'. Wait, total lines across all se…". Er arbeitet an
+    # 3.385 Zeilen und bekam Zahlen über 8.213.
+    #
+    # `unentschieden` bleibt die eigene Zahl, weil sie es sein MUSS: Jack
+    # entscheidet nur die Zeilen seiner Sitzung. Sie steht jetzt nur nicht
+    # mehr in derselben Aufzählung wie die kampagnenweiten.
     stand =
-      "\n(#{z.glieder} Glieder, #{z.in_der_kette} Zeilen drin, #{z.draussen} draussen, " <>
+      "\n(Kampagne: #{z.glieder} Glieder, #{z.in_der_kette} Zeilen drin, " <>
+        "#{z.draussen} draussen. Deine Sitzung: #{z.utterances} Zeilen, " <>
         "#{z.unentschieden} unentschieden.)"
 
     kopf =

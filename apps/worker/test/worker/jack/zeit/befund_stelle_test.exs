@@ -160,6 +160,32 @@ defmodule Worker.Jack.Zeit.BefundStelleTest do
     end
   end
 
+  describe "die Klammer von lies_kette()" do
+    test "trennt die Kampagne von der eigenen Sitzung" do
+      # Maintainer, 25.09.2026: „lies_kette() muss über die ganze Kampagne
+      # gehen." Sie mischte drei kampagnenweite Zahlen mit einer eigenen, ohne
+      # Kennzeichnung — Jack hat in zwei Läufen darüber gerätselt, welche Zahl
+      # seine ist („1978 lines were outside — hmm … Wait, total lines across
+      # all se…"). Er arbeitete an 3.385 Zeilen und bekam Zahlen über 8.213.
+      h = halter([])
+
+      assert {:ok, text} = ruf(h, "lies_kette")
+      assert text =~ "Kampagne:"
+      assert text =~ "Deine Sitzung:"
+
+      # `unentschieden` bleibt die eigene Zahl — sie MUSS es sein, Jack
+      # entscheidet nur die Zeilen seiner Sitzung. Sie steht nur nicht mehr in
+      # derselben Aufzählung wie die kampagnenweiten.
+      assert text =~ ~r/Deine Sitzung: \d+ Zeilen, \d+ unentschieden/
+    end
+
+    test "und die kampagnenweiten Zahlen stehen unter Kampagne" do
+      h = halter([])
+      assert {:ok, text} = ruf(h, "lies_kette")
+      assert text =~ ~r/Kampagne: \d+ Glieder, \d+ Zeilen drin, \d+ draussen/
+    end
+  end
+
   describe "sitzungen(): die eigene Gliederzahl ist aktuell" do
     test "gezählt wird die Kette, nicht die Zahl vom Lauf-Beginn" do
       {:ok, kette, _} = Kette.anhaengen(Kette.neu(), ["u1", "u2"], grund: "A")
