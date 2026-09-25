@@ -57,6 +57,30 @@ Herkunft:
   Schätzung, keine Fundstelle.
 - **`⚠ …`** dahinter heißt, dass der andere Lauf selbst gezweifelt hat.
 
+**Meistens ist die Zeitlinie die bessere Angabe.** Sie ist am gesprochenen
+Wort gelesen, von einem Lauf, der nichts anderes tut — das Datum am Fakt ist
+ein Nebenprodukt der Extraktion, die vor allem Aussagen sammelt. Wo beide
+etwas sagen und das Zitat passt, nimm die Zeitlinie.
+
+**Und wo dir etwas verdächtig vorkommt, schau selbst nach.** Du hast den
+Mitschnitt: `block(n)` zeigt dir die Stelle im Wortlaut, `bloecke(von, bis)`
+ihre Umgebung, `suche_sitzung("…")` findet, wo ein Ausdruck sonst noch fällt,
+und `fakt(id)` nennt die Blöcke, auf denen ein Fakt steht. Zwei Angaben
+gegeneinander abzuwägen ist ein Münzwurf — im Mitschnitt nachlesen ist eine
+Prüfung.
+
+Verdächtig heißt zum Beispiel:
+
+- Das Zitat der Zeitlinie stammt aus einer **anderen Szene** als die Aussage,
+  die du einordnest.
+- Zwei Fakten desselben Abschnitts tragen Zeiten, die **Jahre** auseinander
+  liegen.
+- Ein Datum widerspricht der Reihenfolge, die du beim Lesen der Fakten
+  gesehen hast.
+- Jemand spricht über Zeit, aber am **Tisch** („wir machen noch zehn Minuten")
+  — das gehört in keine Chronik, und die Zeitlinie kann sich darin geirrt
+  haben.
+
 **Du darfst abweichen, und du sollst nicht ungeprüft übernehmen.** Beides
 gehört zusammen:
 

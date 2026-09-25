@@ -140,5 +140,34 @@ defmodule Worker.Jack.Chronik.ZeitlinieTest do
       text = File.read!("priv/jack/auftraege/chronik_verfeinerung.md")
       assert text =~ "nicht ungeprüft übernehmen"
     end
+
+    test "beide nennen den Rang und den Weg zum Selbstnachsehen" do
+      # Maintainer, 25.09.2026: „sag aber dass die kette meistens besser ist —
+      # und dass er auch selber Zeitdaten kontextuell überprüfen soll, wenn ihm
+      # etwas fishy vorkommt."
+      for f <- ~w(chronik_schreiben chronik_verfeinerung) do
+        text = File.read!("priv/jack/auftraege/#{f}.md")
+
+        assert text =~ "Meistens ist die Zeitlinie die bessere Angabe",
+               "#{f} nennt den Rang nicht"
+
+        assert text =~ "schau selbst nach", "#{f} sagt nicht, dass er selbst prüfen soll"
+        assert text =~ "Verdächtig heißt", "#{f} nennt keine Beispiele für verdächtig"
+      end
+    end
+
+    test "und sie nennen nur Werkzeuge, die der Chronik-Jack wirklich hat" do
+      # Ein Auftrag, der ein Werkzeug nennt, das es nicht gibt, schickt Jack in
+      # einen Fehlversuch — und der zählt in die Wiederholungssperre (#1211).
+      vorhanden =
+        Worker.Jack.Chronik.Werkzeuge.namen(%Worker.Jack.Resuemee.Stand{
+          lauf: :schreiben,
+          art: :chronik
+        })
+
+      for w <- ~w(block bloecke suche_sitzung fakt) do
+        assert w in vorhanden, "der Auftrag nennt #{w}, der Lauf hat es nicht"
+      end
+    end
   end
 end
