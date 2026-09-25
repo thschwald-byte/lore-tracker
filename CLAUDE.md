@@ -2243,9 +2243,38 @@ sie auf die richtige Utterance. Eine fremde Zeile mit derselben Nummer setzte
 einen Anker an die falsche Stelle, lautlos. Fremde Zeilen tragen deshalb ein
 Präfix (`S1/45`) und sind über die setzenden Werkzeuge nicht erreichbar; die
 eigene Sitzung wird von `lies_frueher` abgewiesen, mit dem Verweis auf
-`lies_sprechlinie`. **Fremde GLIEDER** darf er dagegen erweitern und versetzen
-— das geht über die Glied-Kennung und ist seit der kampagnenweiten Kette
-möglich.
+`lies_sprechlinie`. **Fremde Glieder kann er MELDEN, nicht bearbeiten** — und diese Doku hat
+zwischenzeitlich das Gegenteil behauptet. Die Ketten-Werkzeuge adressieren ein
+Glied über eine **Zeilennummer des eigenen Mitschnitts**
+(`Mitschnitt.aufloesen` → Utterance → Glied); für ein fremdes Glied gibt es
+keine solche Zeile, es ist damit nicht ansprechbar. Gefunden hat es Jack im
+Prüf-Lauf, als er einen falschen Anker in S1 fand — „um 10" als Uhrzeit
+gelesen, gemeint war das Jahr 2010 — und fragte: „But I can't anchor in S1. So
+what can I do?" Die Antwort war: nichts.
+
+Seitdem nimmt `melde_konflikt` eine **Glied-Nummer** aus `lies_kette()`
+(`Kettenwerkzeuge.glied_nach_nummer/2`) — die einzige Adresse, die auch für ein
+fremdes Glied trägt. Melden ja, ändern nein: Die Begründung für die Sperre
+bleibt richtig, ein falscher Anker ist aber kein Entscheid des anderen Laufs,
+sondern ein Fehler, und er verbiegt die Linie kampagnenweit. Fremde Glieder
+tatsächlich zu bearbeiten wäre eigene Arbeit.
+
+**Und `lies_kette()` zeigt sie überhaupt erst seit diesem Fund.** Der Filter
+verglich die höchste Zeilennummer eines Gliedes mit `ab`, und `max_nr/2`
+liefert 0, wenn keine seiner Äußerungen im eigenen Mitschnitt steht — für ein
+fremdes Glied immer. Jack sah nur seine eigene Hälfte und benannte es selbst:
+„Ich sehe nur Glieder 15-34, aber die Befunde beziehen sich auf frühere Glieder
+1-14 aus S1, die ich noch nicht gesehen habe." Er konnte die Befunde nicht
+prüfen, weil ihre Glieder unsichtbar waren. Fremde Glieder gelten jetzt
+unabhängig von `ab` und tragen „andere Sitzung" statt eines Strichs — ein
+Strich sagt nicht, warum keine Nummern dastehen.
+
+Ebenfalls von ihm gefunden: `sitzungen()` nennt Gliederzahlen vom **Beginn des
+Laufs** (sie entstehen beim Bau der Eingabe). Nach 86 Runden stand dort 0,
+während die Kette 34 hatte, und Jack hielt es für einen Datenfehler — „the
+session shows 2660 lines with 34 chain elements, but the earlier output
+indicated zero". Die Antwort sagt es jetzt und verweist für den aktuellen Stand
+auf `lies_kette()`.
 
 Geladen wird **beim Zugriff** (Muster `Resuemee.Mitschnitte`, #1210): Die
 Übersicht reist vorgeladen mit (vier Zahlen je Sitzung), die Mitschnitte nicht

@@ -53,7 +53,11 @@ defmodule Worker.Jack.Zeit.Vorbehalte do
             "du nicht. Wenn du triftige Gründe hast, dass sie nicht stimmt, schreib " <>
             "sie hier auf: Ein Mensch sieht sich das an. Nenne, WAS du gefunden " <>
             "hast und WORAUS — ohne das kann niemand entscheiden, ohne deine Arbeit " <>
-            "zu wiederholen.",
+            "zu wiederholen. **Auch für Fehler in einer ANDEREN Sitzung:** Findest " <>
+            "du dort einen falschen Anker, den du nicht selbst beheben kannst " <>
+            "(ankern geht nur in deiner Sitzung), meld ihn hier mit der " <>
+            "Glied-Nummer aus lies_kette(). Das ist der Weg — nicht schweigen, " <>
+            "weil dir die Werkzeuge fehlen.",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -62,7 +66,12 @@ defmodule Worker.Jack.Zeit.Vorbehalte do
               "items" => %{"type" => "integer"},
               "minItems" => 1,
               "description" =>
-                "Die Zeilen, um die es geht — dort, wo die abgesegnete Stelle deiner Ansicht nach nicht stimmt."
+                "Die Zeilen DEINER Sitzung, um die es geht. Für eine Stelle in einer anderen Sitzung nimm stattdessen glied."
+            },
+            "glied" => %{
+              "type" => "integer",
+              "description" =>
+                "Die Nummer eines Kettengliedes aus lies_kette() — auch eines aus einer ANDEREN Sitzung. Nimm das, wenn du dort einen Fehler findest, den du selbst nicht beheben kannst."
             },
             "befund" => %{
               "type" => "string",
@@ -74,8 +83,9 @@ defmodule Worker.Jack.Zeit.Vorbehalte do
               "description" => "WORAUS: das wörtliche Zitat, auf das sich dein Befund stützt."
             }
           },
-          "required" => ~w(zeilen befund beleg)
+          "required" => ~w(befund beleg)
         },
+        optional: ~w(zeilen glied),
         wiederholung: :zaehlt,
         aendert_bestand: true,
         ausfuehren: &w_konflikt/2
@@ -127,6 +137,43 @@ defmodule Worker.Jack.Zeit.Vorbehalte do
   end
 
   # ─── Ausführung ─────────────────────────────────────────────────────
+
+  # **Ein Fehler in einer fremden Sitzung braucht einen Weg** (#1247,
+  # 25.09.2026). Jack fand im Prüf-Lauf einen falschen Anker in S1 — „um 10"
+  # als Uhrzeit gelesen, gemeint war das Jahr 2010 — und schrieb:
+  #
+  #     „Both point to the same S1/85 anchor being wrong (it's the year 2010,
+  #      not a time). But I can't anchor in S1. So what can I do?"
+  #
+  # Nichts, bis hierher: `nimm_anker_zurueck` und `melde_konflikt` verlangten
+  # Zeilen der eigenen Sitzung, `anker_ersetzen` eine Rückfrage-Kennung. Er sah
+  # einen Fehler in fremden Daten und hatte keinen Kanal dafür.
+  #
+  # Die Begründung für die Sperre bleibt richtig („deren Zeilen hat der Lauf
+  # jener Sitzung entschieden") — aber ein falscher Anker ist kein Entscheid,
+  # sondern ein Fehler, und er verbiegt die Linie kampagnenweit. Melden darf er
+  # ihn also; ändern nicht. Adresse ist die Glied-Nummer aus `lies_kette()`,
+  # dieselbe wie bei den Ketten-Werkzeugen.
+  defp w_konflikt(s, %{"glied" => nr} = f) when is_integer(nr) do
+    case Kettenwerkzeuge.glied_nach_nummer(s, nr) do
+      {:ok, glied} ->
+        eintrag = %{
+          utterance_ids: Worker.Timeline.Kette.alle_utts(glied),
+          glied_id: glied.id,
+          befund: to_string(f["befund"]),
+          beleg: to_string(f["beleg"])
+        }
+
+        {Stand.konflikt(s, eintrag),
+         {:ok,
+          "Konflikt an Glied #{nr} („#{glied.grund || "ohne Titel"}“) eingetragen. " <>
+            "Ein Mensch sieht sich das an; an der Stelle selbst ändert sich nichts — " <>
+            "auch dann nicht, wenn sie aus einer anderen Sitzung stammt."}}
+
+      {:fehler, text} ->
+        {s, {:error, text}}
+    end
+  end
 
   defp w_konflikt(s, f) do
     with {:ok, ids, zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, f["zeilen"]) do

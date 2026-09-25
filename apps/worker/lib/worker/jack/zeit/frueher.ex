@@ -135,7 +135,18 @@ defmodule Worker.Jack.Zeit.Frueher do
             "S#{i.nummer}: #{i.zeilen} Zeilen, #{i.glieder} Kettenglied(er)#{notiz}#{eigen}"
           end)
 
-        {s, {:ok, "Sitzungen dieser Kampagne:\n#{zeilen}"}}
+        # **Die Gliederzahlen sind der Stand bei Lauf-Beginn** (#1247,
+        # 25.09.2026, am Lauf gefunden). Sie entstehen beim Bau der Eingabe;
+        # was dieser Lauf seitdem angelegt hat, steht nicht darin. Jack sah
+        # den Widerspruch und hielt ihn für einen Datenfehler: „the session
+        # shows 2660 lines with 34 chain elements, but the earlier output
+        # indicated zero chain elements for S4". Er hatte recht — die Zahl war
+        # vom Start, die Kette inzwischen gewachsen. Also sagt die Antwort es
+        # jetzt, statt eine veraltete Zahl als aktuell auszugeben.
+        {s,
+         {:ok,
+          "Sitzungen dieser Kampagne (Gliederzahlen vom Beginn dieses Laufs — " <>
+            "was du selbst angelegt hast, zeigt lies_kette()):\n#{zeilen}"}}
     end
   end
 

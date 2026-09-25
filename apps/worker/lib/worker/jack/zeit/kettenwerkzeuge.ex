@@ -324,6 +324,35 @@ defmodule Worker.Jack.Zeit.Kettenwerkzeuge do
 
   # ─── Ausführung ─────────────────────────────────────────────────────
 
+  @doc """
+  Ein Glied über seine **Position** in `lies_kette()` (1-basiert, Vorordnung
+  über den ganzen Baum) — die einzige Adresse, die auch für ein Glied einer
+  ANDEREN Sitzung trägt.
+
+  Die übrigen Ketten-Werkzeuge adressieren über eine **Zeilennummer** des
+  eigenen Mitschnitts (`Mitschnitt.aufloesen` → Utterance → Glied). Für ein
+  fremdes Glied gibt es keine solche Zeile; es war damit nicht ansprechbar.
+  Gefunden am Lauf vom 25.09.2026, als Jack einen falschen Anker in S1 fand
+  und fragte: „But I can't anchor in S1. So what can I do?"
+  """
+  @spec glied_nach_nummer(Stand.t(), pos_integer()) :: {:ok, map()} | {:fehler, String.t()}
+  def glied_nach_nummer(%Stand{} = s, nr) when is_integer(nr) and nr > 0 do
+    s.kette
+    |> Kette.flach()
+    |> Enum.at(nr - 1)
+    |> case do
+      {glied, _tiefe} ->
+        {:ok, glied}
+
+      nil ->
+        anzahl = Kette.anzahl(s.kette)
+        {:fehler, "Ein Glied Nummer #{nr} gibt es nicht — die Kette hat #{anzahl}."}
+    end
+  end
+
+  def glied_nach_nummer(_s, nr),
+    do: {:fehler, "#{inspect(nr)} ist keine Glied-Nummer; sieh in lies_kette() nach."}
+
   defp w_versetze_kettenglied(s, f) do
     with {:ok, [utt], zeilen} <- Mitschnitt.aufloesen(s.mitschnitt, [f["glied"]]),
          {:ok, glied} <- glied_bei(s, utt),

@@ -188,11 +188,25 @@ defmodule Worker.Jack.Zeit.Lesen do
     # ist ein Glied, und was Jack nicht sieht, kann er nicht prüfen. Die
     # Vorordnung ist die Lesereihenfolge; die Tiefe steht als Einrückung
     # davor, damit der Zusammenhang sichtbar ist, ohne ihn zu benennen.
+    # **Fremde Glieder gehören immer dazu** (#1247, 25.09.2026, am Lauf
+    # gefunden). Der Filter vergleicht die höchste ZEILENNUMMER eines Gliedes
+    # mit `ab` — und `max_nr/2` liefert 0, wenn keine seiner Äußerungen im
+    # eigenen Mitschnitt steht. Für ein Glied aus einer anderen Sitzung ist
+    # das immer so, es fiel damit aus `lies_kette()` heraus.
+    #
+    # Jack hat es selbst benannt: „Ich sehe nur Glieder 15-34, aber die
+    # Befunde beziehen sich auf frühere Glieder 1-14 aus S1, die ich noch
+    # nicht gesehen habe." Er konnte die Befunde nicht prüfen, weil ihre
+    # Glieder unsichtbar waren — die Kette lag vollständig im Stand, die
+    # Anzeige zeigte nur die eigene Hälfte.
+    #
+    # `ab` ist eine Nummer der EIGENEN Sitzung; auf ein fremdes Glied lässt
+    # sie sich nicht anwenden, also gilt es unabhängig davon.
     glieder =
       s.kette
       |> Kette.flach()
       |> Enum.with_index(1)
-      |> Enum.filter(fn {{g, _tiefe}, _platz} -> max_nr(g, s) >= ab end)
+      |> Enum.filter(fn {{g, _tiefe}, _platz} -> fremd?(g, s) or max_nr(g, s) >= ab end)
       |> Enum.take(anzahl)
 
     zeigen = befunde_zum_zeigen(s, linie)
@@ -208,6 +222,11 @@ defmodule Worker.Jack.Zeit.Lesen do
     for u <- Kette.alle_utts(glied), z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
   end
 
+  # Ein Glied aus einer anderen Sitzung: keine seiner Äußerungen steht im
+  # eigenen Mitschnitt. Es ist lesbar und veränderbar (erweitern, versetzen),
+  # nur nicht über Zeilennummern adressierbar — deshalb auch nicht filterbar.
+  defp fremd?(glied, %Stand{} = s), do: nummern(glied, s) == []
+
   defp max_nr(glied, %Stand{} = s) do
     case nummern(glied, s) do
       [] -> 0
@@ -217,7 +236,11 @@ defmodule Worker.Jack.Zeit.Lesen do
 
   defp spanne_wort(glied, %Stand{} = s) do
     case glied |> nummern(s) |> Enum.sort() do
-      [] -> "—"
+      # **„andere Sitzung" statt „—"** (#1247, 25.09.2026): Ein Strich sagt
+      # nicht, WARUM keine Nummern dastehen, und Jack hielt fremde Glieder
+      # daraufhin für fehlerhaft. Er darf sie anfassen (erweitern, versetzen)
+      # — nur nicht über Zeilennummern, denn die gelten für seine Sitzung.
+      [] -> "andere Sitzung"
       [n] -> "#{n}"
       liste -> "#{List.first(liste)}–#{List.last(liste)}"
     end

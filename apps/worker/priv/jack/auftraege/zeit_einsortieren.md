@@ -323,9 +323,11 @@ setzenden Werkzeuge **nicht** erreichbar. Du kannst fremde Sitzungen lesen und
 daraus schliessen, aber nicht in ihnen ankern — deren Zeilen hat ihr eigener
 Lauf entschieden.
 
-**Fremde GLIEDER darfst du dagegen anfassen:** erweitern, wenn eine Szene
-früher anfing als bisher gedacht, versetzen, wenn sie zeitlich falsch liegt.
-Das geht über die Glied-Nummer wie bei deinen eigenen.
+**Findest du in einer fremden Sitzung einen Fehler, meld ihn.** Bearbeiten
+kannst du dort nichts — die Ketten-Werkzeuge brauchen eine Zeilennummer deiner
+Sitzung, und die hat ein fremdes Glied nicht. Aber `melde_konflikt(glied: N,
+…)` nimmt die Glied-Nummer aus `lies_kette()`, auch für ein fremdes: Ein Mensch
+sieht sich das an. Nicht schweigen, weil dir die Werkzeuge fehlen.
 
 **Wann sich das lohnt:** Wenn deine Runde am Anfang auf die letzte Sitzung
 zurückblickt. Dann musst du erkennen, WELCHES alte Glied gemeint ist — und der

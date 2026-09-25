@@ -119,7 +119,9 @@ defmodule Worker.Jack.Zeit.FrueherTest do
     end
 
     test "ohne Lader bleibt es eine Aussage, kein Absturz" do
-      assert {:error, text} = ruf(halter(lader: nil), "lies_frueher", %{"sitzung" => 1, "ab" => 1})
+      assert {:error, text} =
+               ruf(halter(lader: nil), "lies_frueher", %{"sitzung" => 1, "ab" => 1})
+
       assert text =~ "kein Lader"
     end
   end
@@ -139,6 +141,75 @@ defmodule Worker.Jack.Zeit.FrueherTest do
     test "und sagen es, wenn keine da sind" do
       assert {:ok, text} = ruf(halter(vorige_notizen: %{}), "vorige_gedanken")
       assert text =~ "Kein früherer Lauf"
+    end
+  end
+
+  describe "ein Fehler in einer fremden Sitzung hat einen Weg" do
+    # Am Lauf vom 25.09.2026 gefunden. Jack fand im Prüf-Lauf einen falschen
+    # Anker in S1 und schrieb: „Both point to the same S1/85 anchor being wrong
+    # (it's the year 2010, not a time). But I can't anchor in S1. So what can I
+    # do?" — Die Antwort war bis dahin: nichts.
+    alias Worker.Timeline.Kette
+
+    defp mit_fremdem_glied do
+      {:ok, k, _} = Kette.anhaengen(Kette.neu(), ["v1", "v2"], grund: "S1: die Anreise")
+      {:ok, k, _} = Kette.anhaengen(k, ["u1", "u2"], grund: "S4: die Rückkehr")
+
+      {:ok, h} =
+        Halter.start_link(
+          Stand.neu(:pruefen, Enum.map(1..3, &zeile/1), kette: k, sitzung_nr: 4),
+          abbild: &Stand.abbild/1
+        )
+
+      h
+    end
+
+    test "melde_konflikt nimmt die Glied-Nummer aus lies_kette — auch für ein fremdes" do
+      h = mit_fremdem_glied()
+
+      assert {:ok, text} =
+               ruf(h, "melde_konflikt", %{
+                 "glied" => 1,
+                 "befund" => "Der Anker ist das Jahr 2010, nicht 10 Uhr",
+                 "beleg" => "um 10"
+               })
+
+      assert text =~ "Glied 1"
+      assert text =~ "S1: die Anreise"
+      assert text =~ "ändert sich nichts", "melden heisst nicht ändern"
+      assert length(Halter.stand(h).konflikte) == 1
+    end
+
+    test "der Konflikt trägt die Glied-Kennung, nicht nur Utterances" do
+      # Ohne sie wäre für einen Menschen nicht auffindbar, WELCHES Glied gemeint
+      # ist — die Utterances einer fremden Sitzung sagen ihm nichts.
+      h = mit_fremdem_glied()
+      ruf(h, "melde_konflikt", %{"glied" => 1, "befund" => "b", "beleg" => "z"})
+
+      [k] = Halter.stand(h).konflikte
+      assert is_binary(k.glied_id)
+      assert k.utterance_ids == ~w(v1 v2)
+    end
+
+    test "eine Nummer, die es nicht gibt, sagt wie viele es sind" do
+      assert {:error, text} =
+               ruf(mit_fremdem_glied(), "melde_konflikt", %{
+                 "glied" => 99,
+                 "befund" => "b",
+                 "beleg" => "z"
+               })
+
+      assert text =~ "Nummer 99 gibt es nicht"
+      assert text =~ "hat 2"
+    end
+
+    test "der Weg über eigene Zeilen bleibt unverändert" do
+      h = mit_fremdem_glied()
+
+      assert {:ok, text} =
+               ruf(h, "melde_konflikt", %{"zeilen" => [1], "befund" => "b", "beleg" => "z"})
+
+      assert text =~ "Konflikt eingetragen"
     end
   end
 
