@@ -217,6 +217,7 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     @hook "assets/js/hooks/frag_fenster.js"
     @live "lib/hub_web/live/campaign_live.ex"
     @warten "assets/js/hooks/frag_warten.js"
+    @strom_js "assets/js/hooks/frag_strom.js"
 
     test "der Dialog wird nicht-modal geöffnet — .show(), nie .showModal()" do
       js = nur_code(@hook, "//")
@@ -277,11 +278,23 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
              "ein Server-Timer je Textwechsel wären ~50 Diffs pro Lauf (#1200-Klasse)"
     end
 
-    test "der Denkstrom hängt NICHT am laufenden Lauf" do
-      # Hing er daran, flöge das Element mit der Antwort aus dem DOM — und mit
-      # ihm der Strom, der IM DOM lebt (Maintainer, 25.09.2026: „das Denken
-      # soll bleiben"). Geleert wird er beim Start der nächsten Frage.
+    test "der Denkstrom steht im Verlauf, zwischen Frage und Antwort" do
+      # Maintainer, 25.09.2026: „es soll immer Frage -> denkstrom -> antwort
+      # sein / der denkstrom der vorherigen frage soll erhalten bleiben."
+      # Ein einziges Element am Fensterende kann das nicht: Es gehörte immer
+      # zur jüngsten Frage, und die Antwort stünde darüber statt darunter.
       code = nur_code(@fenster, "#")
+
+      # Geprüft wird das FÜLLEN des Verlaufs, nicht die `eintrag`-Klausel:
+      # Die stünde auch dann noch da, wenn nie ein Strom-Eintrag entsteht, und
+      # der Wächter wäre grün über einem Fenster ohne Denkstrom.
+      assert code =~ "%{art: :strom, lauf_id:",
+             "kein Strom-Eintrag im Verlauf — dann hat er keinen Platz zwischen Frage und Antwort"
+
+      [vor, _] = String.split(code, "%{art: :strom, lauf_id:", parts: 2)
+
+      assert vor =~ "%{art: :frage, text:",
+             "der Strom wird VOR die Frage gehängt — dann steht die Antwort an der falschen Stelle"
 
       refute code =~ "<.strom :if=",
              "der Strom darf nicht an @frag.lauf hängen — sonst ist er nach der Antwort weg"
@@ -289,8 +302,44 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
       assert code =~ "<.warten :if={@frag.lauf}",
              "der Wartetext dagegen schon: er sagt „es läuft noch\""
 
-      assert code =~ ~s|push_event("frag_strom_leeren"|,
-             "ohne das trüge der Strom der vorigen Frage in die neue hinein"
+      refute code =~ "frag_strom_leeren",
+             "geleert wird nichts mehr — der Strom der vorigen Frage soll stehen bleiben"
+    end
+
+    test "jeder Strom trägt seine Lauf-ID, und der Hook vergleicht sie" do
+      # `push_event` erreicht JEDEN gemounteten Hook dieses Namens. Ohne den
+      # Vergleich bekäme jeder Strom im Fenster jedes Stück, und alle zeigten
+      # dasselbe — sichtbar erst ab der zweiten Frage.
+      code = nur_code(@fenster, "#")
+
+      assert code =~ ~S|id={"frag-strom-#{@lauf_id}"}|,
+             "ohne eigene DOM-ID je Lauf wären zwei Ströme dasselbe Element"
+
+      assert code =~ ~s|push_event(socket, "frag_strom", %{lauf_id:|,
+             "ohne die Lauf-ID am Ereignis kann der Hook nicht unterscheiden"
+
+      js = nur_code(@strom_js, "//")
+
+      assert js =~ "lauf_id !== this.lauf",
+             "der Hook nimmt jedes Stück an — alle Ströme zeigen dann dasselbe"
+    end
+
+    test "der Denkstrom wächst, er scrollt nicht" do
+      # Maintainer: „soll sich erweitern - kein scrollbalken". Ein Kasten mit
+      # eigenem Balken verbirgt genau das, was man lesen will; ein Zeilen-Deckel
+      # wirft weg, was stehen bleiben soll.
+      code = nur_code(@fenster, "#")
+      [_, ab_strom] = String.split(code, ~s|id={"frag-strom-|, parts: 2)
+      [markup, _] = String.split(ab_strom, "</div>", parts: 2)
+
+      refute markup =~ "overflow-y-auto", "der Strom bekommt keinen eigenen Scrollbalken"
+      refute markup =~ "max-h-", "der Strom wird nicht gedeckelt"
+
+      js = nur_code(@strom_js, "//")
+      refute js =~ "MAX_ZEILEN", "ein Zeilen-Deckel würfe weg, was erhalten bleiben soll"
+
+      assert js =~ "data-frag-verlauf",
+             "gescrollt wird im Verlauf — ohne ihn zieht der Strom nie nach"
     end
 
     test "der Denkstrom geht per push_event, nicht über die Assigns" do

@@ -157,8 +157,11 @@ defmodule HubWeb.CampaignLive.FragFenster do
     # Er wächst über den Lauf; in den Assigns würde er bei jedem Diff kopiert
     # und gehalten — die #1146-Klasse. Der Hook hängt an und deckelt selbst.
     case socket.assigns.frag.lauf do
-      %{id: ^id} -> {:noreply, Phoenix.LiveView.push_event(socket, "frag_strom", %{stuecke: st})}
-      _ -> {:noreply, socket}
+      %{id: ^id} ->
+        {:noreply, Phoenix.LiveView.push_event(socket, "frag_strom", %{lauf_id: id, stuecke: st})}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -231,7 +234,10 @@ defmodule HubWeb.CampaignLive.FragFenster do
     # Antwort vor dem Abonnement eintreffen und ins Leere laufen.
     id = UUIDv7.generate()
     PipelineStatus.subscribe_frage(id)
-    verlauf = frag.verlauf ++ [%{art: :frage, text: frage}]
+    # Frage → Denkstrom → Antwort, in dieser Reihenfolge (Maintainer,
+    # 25.09.2026). Der Strom bekommt seinen Platz im Verlauf, BEVOR das erste
+    # Stück kommt — sonst hätte der Hook, an den gepusht wird, kein Element.
+    verlauf = frag.verlauf ++ [%{art: :frage, text: frage}, %{art: :strom, lauf_id: id}]
 
     case Commands.request_frage(snap["owner_discord_id"], campaign.id, frage, id) do
       0 ->
@@ -252,11 +258,10 @@ defmodule HubWeb.CampaignLive.FragFenster do
         })
 
       _ ->
-        # Der Strom der vorigen Frage steht noch im DOM — er gehört zur
-        # vorigen Antwort, nicht zur neuen Frage.
-        socket
-        |> Phoenix.LiveView.push_event("frag_strom_leeren", %{})
-        |> Phoenix.Component.assign(:frag, %{
+        # Kein Leeren: Der Strom der vorigen Frage bleibt bei ihrer Antwort
+        # stehen (Maintainer). Jeder Lauf hat sein eigenes Element, adressiert
+        # über die Lauf-ID.
+        Phoenix.Component.assign(socket, :frag, %{
           frag
           | frage: "",
             verlauf: verlauf,
@@ -345,7 +350,10 @@ defmodule HubWeb.CampaignLive.FragFenster do
         </button>
       </div>
 
-      <div class="grow overflow-y-auto overscroll-contain px-3 py-2 space-y-3 text-sm">
+      <div
+        data-frag-verlauf
+        class="grow overflow-y-auto overscroll-contain px-3 py-2 space-y-3 text-sm"
+      >
         <div :if={@frag.verlauf == []} class="space-y-3">
           <p :if={@frag.befunde != []} class="text-[11px] uppercase tracking-widest text-warning/80">
             ⚠ {length(@frag.befunde)} offene Befunde
@@ -377,13 +385,6 @@ defmodule HubWeb.CampaignLive.FragFenster do
           <.eintrag eintrag={e} />
         </div>
 
-        <%!-- Der Denkstrom bleibt stehen, auch nachdem die Antwort da ist
-              (Maintainer, 25.09.2026: „das Denken soll bleiben"). Er hing
-              zuerst an `@frag.lauf` — dann flog das Element mit der Antwort
-              aus dem DOM, und weil der Strom IM DOM lebt und nicht in den
-              Assigns, war er weg. Geleert wird er jetzt beim Start der
-              nächsten Frage, vom Hook. --%>
-        <.strom />
         <.warten :if={@frag.lauf} />
       </div>
 
@@ -437,6 +438,12 @@ defmodule HubWeb.CampaignLive.FragFenster do
       <.belege belege={@eintrag.belege} />
       <.pruefung eintrag={@eintrag} />
     </div>
+    """
+  end
+
+  defp eintrag(%{eintrag: %{art: :strom}} = assigns) do
+    ~H"""
+    <.strom lauf_id={@eintrag.lauf_id} />
     """
   end
 
@@ -521,17 +528,25 @@ defmodule HubWeb.CampaignLive.FragFenster do
     """
   end
 
-  # Der Denkstrom. Der Hook füllt ihn per push_event und deckelt die Zahl der
-  # Zeilen — hier steht bewusst nichts aus den Assigns, sonst wüchse er in den
-  # Socket (#1146). `phx-update="ignore"` schützt ihn davor, dass morphdom ihn
-  # beim nächsten Diff leert; genau deshalb überlebt er auch die Antwort.
+  attr(:lauf_id, :string, required: true)
+
+  # Der Denkstrom EINES Laufs, adressiert über seine Lauf-ID. Der Hook füllt
+  # ihn per push_event — hier steht bewusst nichts aus den Assigns, sonst
+  # wüchse er in den Socket (#1146). `phx-update="ignore"` schützt ihn davor,
+  # dass morphdom ihn beim nächsten Diff leert; deshalb überlebt er die
+  # Antwort und bleibt auch stehen, wenn die nächste Frage kommt.
+  #
+  # **Kein Scrollbalken und kein Deckel** (Maintainer, 25.09.2026): Er wächst
+  # mit. Gescrollt wird im Fenster, nicht im Strom — ein Kasten mit eigenem
+  # Balken verbirgt genau das, was man lesen will.
   defp strom(assigns) do
     ~H"""
     <div
-      id="frag-strom"
+      id={"frag-strom-#{@lauf_id}"}
+      data-lauf-id={@lauf_id}
       phx-hook="FragStrom"
       phx-update="ignore"
-      class="mr-8 max-h-40 overflow-y-auto rounded-lg bg-bg-0/60 px-2 py-1.5 space-y-0.5 font-mono text-[10px] leading-snug empty:hidden empty:p-0"
+      class="mr-8 rounded-lg bg-bg-0/60 px-2 py-1.5 space-y-0.5 font-mono text-[10px] leading-snug empty:hidden empty:p-0"
     >
     </div>
     """
