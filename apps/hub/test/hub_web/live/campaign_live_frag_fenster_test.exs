@@ -101,8 +101,8 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     test "JS.ignore_attributes(\"open\") hält den Zustand gegen morphdom" do
       code = nur_code(@fenster, "#")
 
-      assert code =~ ~s|JS.ignore_attributes("open")|,
-             "ohne das diffed der nächste Server-Render das offene Fenster zu"
+      assert code =~ ~s|JS.ignore_attributes(["open", "style"])|,
+             "beide Namen sind nötig: `open` hält das Fenster offen, `style` hält es an seinem Platz"
 
       refute code =~ ~s|phx-update="ignore"|,
              "das fröre den Inhalt ein — die Antwort erschiene nie"
@@ -110,6 +110,18 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
 
     test "die CampaignLive hat eine Klausel für den Timer-Tick (sie hat keinen Auffangzweig)" do
       assert File.read!(@live) =~ "def handle_info({:frag_schritt,"
+    end
+
+    test "der Hook speichert keine Position, die nicht vom Betrachter stammt" do
+      # Sonst schreibt der ResizeObserver die zurückgesetzte Lage nach
+      # localStorage und der Sprung überlebt das Neuladen.
+      js = nur_code(@hook, "//")
+      assert js =~ "if (!this.el.style.left || !this.el.open) return;"
+    end
+
+    test "das Eingabefeld wird nicht bei jedem Tastendruck zum Server geschickt" do
+      refute nur_code(@fenster, "#") =~ "phx-change",
+             "ein Event je Tastendruck ist die #1200-Klasse — und jedes davon ein Diff am Fenster"
     end
 
     test "ein zweiter Lauf bricht den Timer des ersten ab" do

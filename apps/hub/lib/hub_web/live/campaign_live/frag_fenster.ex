@@ -22,11 +22,22 @@ defmodule HubWeb.CampaignLive.FragFenster do
   * In der Stapelordnung liegt es **unter** dem Modal (`z-40` gegen dessen
     `z-50`): Ein Modal ist eine Entscheidung, die man zuerst trifft.
 
-  **`JS.ignore_attributes("open")` ist Pflicht, nicht Kosmetik.** Der Hook
-  öffnet den Dialog auf dem Client; rendert der Server danach irgendetwas,
-  diffte morphdom das `open`-Attribut weg und das Fenster schlösse sich bei
-  der nächsten Antwort von selbst. `phx-update="ignore"` wäre die falsche
-  Abhilfe — es fröre den **Inhalt** ein, und die Antwort erschiene nie.
+  **`JS.ignore_attributes(["open", "style"])` ist Pflicht, nicht Kosmetik** —
+  und **beide** Namen sind es. Der Hook öffnet den Dialog auf dem Client und
+  setzt Position wie Größe über `style`; rendert der Server danach
+  irgendetwas, diffte morphdom beides weg: Das Fenster schlösse sich bei der
+  nächsten Antwort von selbst und spränge vorher in die Ecke, weil ohne
+  `left`/`top` nur noch die Klassen gelten.
+
+  `style` zu vergessen war genau dieser Fehler (gemeldet 25.09.2026: „das
+  Fenster springt manchmal einfach in eine Ecke"), und er wurde **dauerhaft**:
+  Der `ResizeObserver` im Hook feuert auf das zurückgesetzte Element und
+  schreibt die falsche Position nach localStorage — beim nächsten Öffnen
+  steht sie schon dort. Deshalb merkt der Hook nur noch, was aus einer
+  Bewegung des Betrachters stammt.
+
+  `phx-update="ignore"` wäre die falsche Abhilfe — es fröre den **Inhalt**
+  ein, und die Antwort erschiene nie.
 
   **Der Verlauf ist flüchtig** (Maintainer, 25.09.2026): Spieler fragt,
   bekommt Antwort, fertig. Kein Ereignis, kein Speicher, kein `☰`. Was
@@ -58,9 +69,6 @@ defmodule HubWeb.CampaignLive.FragFenster do
   @doc "Dispatch der `frag_*`-Events aus dem CampaignLive-handle_event."
   def event(socket, "frag_oeffnen", _params), do: {:noreply, auf(socket, true)}
   def event(socket, "frag_schliessen", _params), do: {:noreply, auf(socket, false)}
-
-  def event(socket, "frag_tippen", %{"frage" => f}),
-    do: {:noreply, Phoenix.Component.update(socket, :frag, &%{&1 | frage: f})}
 
   def event(socket, "frag_senden", %{"frage" => frage}) do
     frage = String.trim(frage)
@@ -186,7 +194,7 @@ defmodule HubWeb.CampaignLive.FragFenster do
     <dialog
       id="frag-fenster"
       phx-hook="FragFenster"
-      phx-mounted={JS.ignore_attributes("open")}
+      phx-mounted={JS.ignore_attributes(["open", "style"])}
       data-offen={to_string(@frag.offen?)}
       data-campaign-id={@campaign_id}
       aria-label="Frag die Runde"
@@ -248,12 +256,11 @@ defmodule HubWeb.CampaignLive.FragFenster do
         <.konsole :if={@frag.lauf} lauf={@frag.lauf} />
       </div>
 
-      <form phx-submit="frag_senden" phx-change="frag_tippen" class="shrink-0 border-t border-ink-2/20 p-2">
+      <form phx-submit="frag_senden" class="shrink-0 border-t border-ink-2/20 p-2">
         <div class="flex gap-2">
           <input
             type="text"
             name="frage"
-            value={@frag.frage}
             placeholder="Deine Frage…"
             autocomplete="off"
             class="grow bg-bg-0 border border-ink-2/25 rounded-lg px-3 py-1.5 text-sm text-ink-0 placeholder:text-ink-2/40"

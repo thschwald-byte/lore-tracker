@@ -33,6 +33,11 @@ export const FragFenster = {
 
   updated() {
     this.spiegleOffen();
+    // Gürtel zum Hosenträger: `JS.ignore_attributes(["open", "style"])` hält
+    // morphdom von beidem fern. Ginge das style trotzdem einmal verloren
+    // (anderer Pfad, künftiger Umbau), stünde das Fenster in der Ecke — hier
+    // fällt es auf und wird sofort zurückgeholt.
+    if (this.el.open && !this.el.style.left) this.stelleHer();
   },
 
   destroyed() {
@@ -117,6 +122,12 @@ export const FragFenster = {
   },
 
   merke() {
+    // Der ResizeObserver feuert auch, wenn NICHT der Betrachter die Größe
+    // geändert hat. Ohne `left` im style ist die gemessene Lage die eines
+    // zurückgesetzten Elements — sie zu speichern machte den Sprung dauerhaft
+    // (25.09.2026: „das Fenster springt manchmal einfach in eine Ecke").
+    if (!this.el.style.left || !this.el.open) return;
+
     const r = this.el.getBoundingClientRect();
     if (!r.width) return;
     try {
