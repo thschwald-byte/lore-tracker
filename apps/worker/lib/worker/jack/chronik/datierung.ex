@@ -181,6 +181,11 @@ defmodule Worker.Jack.Chronik.Datierung do
   defp prec(atom) when is_atom(atom), do: Atom.to_string(atom)
 
   defp prec_atom(%{precision: p}) when is_atom(p) and not is_nil(p), do: p
-  defp prec_atom(%{precision: p}) when is_binary(p), do: String.to_existing_atom(p)
+  # Dieselbe Klasse wie in `Worker.Repo.Zeit.schluessel/1`: `to_existing_atom`
+  # hängt daran, dass ein anderes Modul das Atom schon genannt hat. Die drei
+  # Werte kommen aus `precision_fuer/1` darüber — also stehen sie hier.
+  defp prec_atom(%{precision: "day"}), do: :day
+  defp prec_atom(%{precision: "month"}), do: :month
+  defp prec_atom(%{precision: "year"}), do: :year
   defp prec_atom(_), do: :day
 end

@@ -122,10 +122,23 @@ defmodule Worker.Repo.Zeit do
 
   # Nur bekannte Schlüssel werden zu Atomen — die Atom-Tabelle ist endlich und
   # wird nie aufgeräumt, und die Daten kommen aus einem Ereignis.
+  #
+  # **Die Liste steht als ATOME da, und die Übersetzung geht über eine Map.**
+  # Der erste Wurf schrieb sie als Strings und rief `String.to_existing_atom/1`
+  # — eine Absicherung, die sich selbst nicht trägt: Eine String-Whitelist
+  # erzeugt die Atome nicht, sie entstehen nur, wenn irgendein geladenes Modul
+  # sie literal nennt. Am 25.09.2026 an einem frisch gestarteten Worker
+  # aufgeschlagen: `:beleg` existierte noch nicht, `anker/1` warf `:badarg`,
+  # und damit fiel der EINZIGE Leser der Anker aus — für den Zeit-Jack und für
+  # die Zeitlinie der Chronik (Z3). Dieselbe Klasse wie #646 (Materializer)
+  # und #611 (Hub-Icons), beide dort schon mit Begründung notiert. `~w(…)a`
+  # legt die Atome zur Compile-Zeit an; danach ist „existiert" keine Frage
+  # mehr, und die Map kennt nur diese.
   @bekannt ~w(utterance_ids art wert welt zweifel beleg quelle abgesegnet_von
-              abgesegnet_am ziel richtung halbtag)
-  defp schluessel(k) when k in @bekannt, do: String.to_existing_atom(k)
-  defp schluessel(k), do: k
+              abgesegnet_am ziel richtung halbtag)a
+  @bekannt_map Map.new(@bekannt, &{Atom.to_string(&1), &1})
+
+  defp schluessel(k), do: Map.get(@bekannt_map, k, k)
 
   # ─── Die menschlich gesetzten Anker ─────────────────────────────────
 

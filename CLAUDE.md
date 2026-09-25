@@ -2407,6 +2407,28 @@ man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
 Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
 `mahnung`), nicht über `bericht.nachrichten`.
 
+#### Eine String-Whitelist erzeugt keine Atome
+
+Beim Neustart der Teststage am 25.09.2026 warf `Worker.Repo.Zeit.anker/1`
+`:badarg` in `binary_to_existing_atom("beleg")` — und damit fiel der **einzige**
+Leser der Anker aus, für den Zeit-Jack und für die Zeitlinie der Chronik (Z3).
+
+Die Absicherung trug sich selbst nicht: Die erlaubten Schlüssel standen als
+**Strings** in `@bekannt`, und `String.to_existing_atom/1` gelingt nur, wenn
+irgendein **geladenes** Modul dasselbe Atom literal nennt. Nach einem Neustart
+ist das Zufall — genau die Klasse, die #646 (Materializer, „beim ersten
+`UserRoleSet` u.U. noch nicht geladen") und #611 (Hub-Icons) im selben Repo
+schon je einmal notiert haben. Seitdem steht die Liste als `~w(…)a` da und die
+Übersetzung geht über eine Map; `Chronik.Datierung.prec_atom/1` hatte dieselbe
+Stelle und hat jetzt drei Klauseln.
+
+**Ein Verhaltenstest kann das nicht fangen** — in der Testumgebung ist alles
+geladen, also existieren die Atome. `speicher_test.exs` liest seit dem 24.09.
+einen Anker samt `beleg` zurück und war grün. Der Nachweis ist deshalb ein
+Quelltext-Wächter (`repo/zeit_schluessel_test.exs`, gegengeprüft): kein
+`to_existing_atom` im Code dieser Datei. Dieselbe Lehre wie bei den Wächtern
+(s. „Ein Wächter, der nie anschlägt, ist unbewiesen").
+
 #### Ehrliche Grenzen
 
 * **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
