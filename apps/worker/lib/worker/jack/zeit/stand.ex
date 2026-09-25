@@ -71,6 +71,16 @@ defmodule Worker.Jack.Zeit.Stand do
             kette: nil,
             einordnung: %{},
             kette_geladen?: false,
+            # #1247: der Blick über die Sitzungsgrenze (`Worker.Jack.Zeit.Frueher`).
+            # `sitzung_nr` ist die eigene Nummer — sie trennt „meine Zeilen" von
+            # „fremde, nur lesbare"; `lader` baut den Mitschnitt einer früheren
+            # Sitzung beim ersten Zugriff (vorgeladen wären es bei seattleV5 rund
+            # 12.000 Zeilen im Stand, meist ungelesen).
+            sitzung_nr: nil,
+            sitzungen: [],
+            lader: nil,
+            mitschnitte: %{},
+            vorige_notizen: %{},
             gesehen: MapSet.new(),
             anker: %{},
             offene: %{},
@@ -122,6 +132,11 @@ defmodule Worker.Jack.Zeit.Stand do
       # Kette allein sind die beiden Fälle nicht zu trennen — beide haben am
       # Ende keine eigenen Glieder.
       kette_geladen?: not is_nil(opts[:kette]),
+      sitzung_nr: opts[:sitzung_nr],
+      sitzungen: opts[:sitzungen] || [],
+      lader: opts[:lader],
+      mitschnitte: opts[:mitschnitte] || %{},
+      vorige_notizen: opts[:vorige_notizen] || %{},
       anker: Map.new(opts[:anker] || [], &{&1[:anker_id] || &1["anker_id"], &1}),
       notizen: opts[:notizen] || %{},
       # Ein Konflikt ist ein Befund für die Kuration. Erbte der Prüf-Lauf ihn

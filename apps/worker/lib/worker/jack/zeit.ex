@@ -165,6 +165,15 @@ defmodule Worker.Jack.Zeit do
       gelesen: stand.gelesen,
       einordnung: stand.einordnung,
       kette: stand.kette,
+      # #1247: der Blick über die Sitzungsgrenze reist mit. Ohne das hätte der
+      # Prüf-Lauf keine Sitzungsübersicht, keinen Lader und keine schon
+      # geladenen Mitschnitte — er lüde jeden fremden Mitschnitt ein zweites
+      # Mal, und `sitzungen()` wüsste nichts.
+      sitzung_nr: stand.sitzung_nr,
+      sitzungen: stand.sitzungen,
+      lader: stand.lader,
+      mitschnitte: stand.mitschnitte,
+      vorige_notizen: stand.vorige_notizen,
       konflikte: stand.konflikte
     }
   end

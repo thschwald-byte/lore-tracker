@@ -59,9 +59,83 @@ defmodule Worker.Jack.Zeit.Eingabe do
          # ganze Kampagne sieht).
          kette: Worker.Repo.Zeit.kette(campaign.id),
          kalender: Worker.Repo.get_campaign_calendar(campaign.id)
-       }}
+       }
+       |> Map.merge(ueber_sitzungen(session, campaign))}
     end
   end
+
+  # #1247: was der Lauf über die anderen Sitzungen wissen kann
+  # (`Worker.Jack.Zeit.Frueher`). Maintainer, 25.09.2026: „er muss die Sachen,
+  # die vor vorherigen Sessions erarbeitet wurden, lesen/bearbeiten können."
+  #
+  # Die Übersicht wird **vorgeladen** (vier Zahlen je Sitzung), die Mitschnitte
+  # **nicht** — dafür gibt es den Lader. Bei seattleV5 wären das rund 12.000
+  # Zeilen im Stand, die ein Lauf meist nie ansieht.
+  defp ueber_sitzungen(session, campaign) do
+    alle = campaign.id |> Worker.Repo.list_sessions() |> List.wrap()
+    staende = notizen_je_sitzung(alle)
+
+    uebersicht =
+      alle
+      |> Enum.map(fn s ->
+        %{
+          nummer: nummer(s),
+          zeilen: s.id |> Worker.Repo.list_utterances(limit: :all) |> List.wrap() |> length(),
+          glieder: Worker.Timeline.Kette.anzahl(Worker.Repo.Zeit.kette(campaign.id, s.id)),
+          notizen?: Map.has_key?(staende, nummer(s)),
+          eigene?: s.id == session.id
+        }
+      end)
+      |> Enum.sort_by(& &1.nummer)
+
+    %{
+      sitzung_nr: nummer(session),
+      sitzungen: uebersicht,
+      lader: lader(campaign.id, Enum.reject(alle, &(&1.id == session.id))),
+      vorige_notizen: Map.delete(staende, nummer(session))
+    }
+  end
+
+  # Die Notizen früherer Zeit-Läufe, aus `JackZeitStandAbgelegt`. Ein Stand
+  # ohne Notizen zählt nicht als vorhanden — sonst verspräche `sitzungen()`
+  # etwas, das `vorige_gedanken()` nicht liefert.
+  defp notizen_je_sitzung(alle) do
+    for s <- alle,
+        stand = Worker.Repo.Zeit.jack_stand(s.id),
+        is_map(stand),
+        notizen = Map.get(stand, "notizen") || Map.get(stand, :notizen),
+        is_map(notizen) and map_size(notizen) > 0,
+        into: %{},
+        do: {nummer(s), notizen}
+  end
+
+  # Der Lader baut die Kontextliste einer fremden Sitzung — dieselbe Form wie
+  # der eigene Mitschnitt, damit `Frueher` sie ohne Sonderfall anzeigen kann.
+  defp lader(cid, andere) do
+    ids = Map.new(andere, &{nummer(&1), &1.id})
+
+    fn nr ->
+      case Map.fetch(ids, nr) do
+        :error ->
+          {:error, :keine_sitzung}
+
+        {:ok, sid} ->
+          case Worker.Repo.get_session(sid) do
+            nil -> {:error, :keine_sitzung}
+            s -> mitschnitt_oder_fehler(s, cid)
+          end
+      end
+    end
+  end
+
+  defp mitschnitt_oder_fehler(session, cid) do
+    case mitschnitt(session, %{id: cid}) do
+      {:ok, zeilen} -> {:ok, zeilen}
+      {:error, grund} -> {:error, grund}
+    end
+  end
+
+  defp nummer(s), do: Map.get(s, :number) || Map.get(s, :session_number)
 
   defp session(session_id) do
     case Worker.Repo.get_session(session_id) do

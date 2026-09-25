@@ -127,7 +127,15 @@ defmodule Worker.Jack.Zeit.ErbeTest do
         gelesen: MapSet.new(["u1"]),
         einordnung: %{"u1" => :ingame},
         kette: Kette.neu() |> then(fn k -> elem(Kette.anhaengen(k, ["u1"]), 1) end),
-        konflikte: [%{text: "widerspruch"}]
+        konflikte: [%{text: "widerspruch"}],
+        # #1247: der Blick über die Sitzungsgrenze. Sie gehören hierher, weil
+        # die Prüfung unten JEDES Erbstück verlangt — ein neues Feld in
+        # `erbe/1` ohne Wert hier wäre rot, und das ist der Zweck.
+        sitzung_nr: 2,
+        sitzungen: [%{nummer: 1, zeilen: 10, glieder: 2, notizen?: true, eigene?: false}],
+        lader: fn _nr -> {:error, :keine_sitzung} end,
+        mitschnitte: %{1 => []},
+        vorige_notizen: %{1 => %{"ABLAUF" => %{"text" => "damals"}}}
       }
 
       erbe = Zeit.erbe(voll)

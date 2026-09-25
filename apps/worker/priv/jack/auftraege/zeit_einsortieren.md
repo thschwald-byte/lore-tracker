@@ -305,6 +305,32 @@ Das heißt für dich:
   neueste. Aber alles, was am Anfang als Rückblick erzählt wird (s.u.), gehört
   zwischen die alten Glieder, nicht dahinter.
 
+## Was vor deiner Sitzung liegt, kannst du lesen
+
+`sitzungen()` zeigt, welche Sitzungen diese Kampagne hat — mit Zeilenzahl, wie
+viele Kettenglieder daraus schon stehen und ob ein früherer Lauf Notizen
+hinterlassen hat.
+
+- **`lies_frueher(sitzung: 1, ab: 200)`** — der Mitschnitt einer anderen
+  Sitzung. Nimm das, wenn ein Kettenglied aus ihr stammt und du wissen musst,
+  was dort geschah: Ohne das kennst du von fremden Gliedern nur den Titel.
+- **`vorige_gedanken()`** — wie ein früherer Zeit-Lauf den Ablauf dort
+  verstanden hat. Das ist deine eigene Vorarbeit aus einer anderen Sitzung.
+
+**Die Nummern sind getrennt, und das ist wichtig.** Deine Zeilennummern zeigen
+auf deine Sitzung; fremde Zeilen tragen ein Präfix (`S1/45`) und sind über die
+setzenden Werkzeuge **nicht** erreichbar. Du kannst fremde Sitzungen lesen und
+daraus schliessen, aber nicht in ihnen ankern — deren Zeilen hat ihr eigener
+Lauf entschieden.
+
+**Fremde GLIEDER darfst du dagegen anfassen:** erweitern, wenn eine Szene
+früher anfing als bisher gedacht, versetzen, wenn sie zeitlich falsch liegt.
+Das geht über die Glied-Nummer wie bei deinen eigenen.
+
+**Wann sich das lohnt:** Wenn deine Runde am Anfang auf die letzte Sitzung
+zurückblickt. Dann musst du erkennen, WELCHES alte Glied gemeint ist — und der
+Titel allein reicht dafür oft nicht.
+
 ## Eine Sitzung beginnt fast immer mit einem Rückblick
 
 Bevor gespielt wird, erzählt die Runde, was beim letzten Mal geschah — „was

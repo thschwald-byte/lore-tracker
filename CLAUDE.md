@@ -2209,10 +2209,61 @@ legitimen Fall „Jack löscht sein letztes Glied" — ein bestehender Test hat 
 gefangen. Der Riegel loggt laut; ein stiller Riegel erzeugte dieselbe Klasse
 wie die Lücke, die er schliesst.
 
-**Ehrliche Grenze:** Ob Jack den Bestand tatsächlich nutzt — seine Sitzung
-relativ zu den alten Gliedern einordnet, statt sie zu ignorieren und hinten
-anzuhängen — ist **nicht gemessen**. In den bisherigen Läufen gab es keinen
-Bestand, den er hätte sehen können.
+**Er liest auch die früheren Sitzungen** (Maintainer, 25.09.2026: „er muss die
+Sachen, die vor vorherigen Sessions erarbeitet wurden, lesen/bearbeiten
+können"). Seit die Kette kampagnenweit lädt, **sah** er fremde Glieder — aber
+nur deren Titel; sein Mitschnitt ist die eigene Sitzung, und `suche_bisher`,
+`fakten` und `vorige_gedanken` der anderen Jacks hat er nicht. Für den
+einfachen Fall reicht das; erzählt die Runde am Anfang einen **Rückblick**,
+muss er erkennen, WELCHES alte Glied gemeint ist, und dafür braucht er dessen
+Inhalt.
+
+`Worker.Jack.Zeit.Frueher` gibt ihm drei Werkzeuge, in **allen drei Läufen**
+(auch im Gedächtnis-Lauf, der gerade dort den Ablauf verstehen soll):
+`sitzungen()` (Nummer, Zeilen, Glieder, ob Notizen da sind), `lies_frueher`
+(Mitschnitt einer anderen Sitzung) und `vorige_gedanken` (die Notizen früherer
+Zeit-Läufe).
+
+**Die Nummern bleiben getrennt, und das ist die wichtigste Entscheidung
+dabei.** Jacks Zeilennummer n ist Position n in **seiner** Liste — nur so zeigt
+sie auf die richtige Utterance. Eine fremde Zeile mit derselben Nummer setzte
+einen Anker an die falsche Stelle, lautlos. Fremde Zeilen tragen deshalb ein
+Präfix (`S1/45`) und sind über die setzenden Werkzeuge nicht erreichbar; die
+eigene Sitzung wird von `lies_frueher` abgewiesen, mit dem Verweis auf
+`lies_sprechlinie`. **Fremde GLIEDER** darf er dagegen erweitern und versetzen
+— das geht über die Glied-Kennung und ist seit der kampagnenweiten Kette
+möglich.
+
+Geladen wird **beim Zugriff** (Muster `Resuemee.Mitschnitte`, #1210): Die
+Übersicht reist vorgeladen mit (vier Zahlen je Sitzung), die Mitschnitte nicht
+— bei seattleV5 wären das rund 12.000 Zeilen im Stand, die ein Lauf meist nie
+ansieht. Der Prüf-Lauf erbt Übersicht, Lader und schon Geladenes über
+`Zeit.erbe/1`, sonst lüde er jeden fremden Mitschnitt ein zweites Mal.
+
+**Dabei bekam `worker_jack_zeit_staende` seinen ersten Leser**
+(`Worker.Repo.Zeit.jack_stand/1`): Die Tabelle wurde nach jedem Werkzeugaufruf
+geschrieben und nie gelesen — dieselbe Klasse wie `loesche_kettenplatz/2` in
+diesem Ticket, zum zweiten Mal.
+
+**Gemessen am ersten Lauf mit Bestand** (25.09.2026, seattleV5 S1, 14 Glieder
+standen):
+
+```
+zeilen=2168 gelesen=2168 -> anker=11  kette=14 Glieder
+(geschrieben=0 grabsteine=0)  geprueft=true  runden=9  ms=170815
+```
+
+**`grabsteine=0`** ist die Zeile, auf die es ankam — vorher hätte dort 13
+gestanden. Der Einsortier-Lauf brauchte 9 Runden und 2,8 Minuten statt einer
+Stunde: Er sah alle 2168 Zeilen als eingeordnet und ergänzte ein Glied, statt
+alles neu zu entscheiden. `geschrieben=0` beim Abschluss, weil die
+Zwischenstände nach jedem Werkzeugaufruf längst geschrieben hatten.
+
+**Ehrliche Grenze:** Dass ein zweiter Lauf **derselben** Sitzung den Bestand
+respektiert, ist gemessen (s.o.). Offen bleibt der Fall, um den es eigentlich
+geht: ob er seine Sitzung relativ zu den Gliedern einer **anderen** einordnet,
+statt sie hinten anzuhängen. Dafür hat er seit diesem Cut die Werkzeuge; ob er
+sie nutzt, zeigt der Lauf auf einer Sitzung ohne eigene Kette.
 
 #### Die Chronik sieht die Kette — als Angebot mit Prüfpflicht (Z3)
 

@@ -27,13 +27,13 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
 
   alias Worker.Jack.Resuemee.Halter
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
-  alias Worker.Jack.Zeit.{Abschluss, Anker, Kettenwerkzeuge, Lesen, Notizen, Stand}
+  alias Worker.Jack.Zeit.{Abschluss, Anker, Frueher, Kettenwerkzeuge, Lesen, Notizen, Stand}
 
   # `hilfe` steht hier NICHT: `Gemeinsam.aus/3` stellt es jedem Lauf von
   # selbst voran (Maintainer, 18.09.2026 — die Beschreibungen tragen die
   # Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
   # der Wortlaut weg).
-  @lesend ~w(lies_sprechlinie lies_kette offen zahlen)
+  @lesend ~w(lies_sprechlinie lies_kette offen zahlen sitzungen lies_frueher vorige_gedanken)
   # Nur der Gedächtnis-Lauf notiert: Er SETZT nichts, und sein Ergebnis ist
   # genau diese Notiz — ohne sie wäre er wirkungslos (Befund des zweiten
   # echten Laufs, 19.09.2026). Die beiden anderen Läufe legen ihr Ergebnis in
@@ -87,6 +87,7 @@ defmodule Worker.Jack.Zeit.Werkzeuge do
   @doc false
   def definitionen(%Stand{} = s) do
     Lesen.werkzeuge(s) ++
+      Frueher.werkzeuge() ++
       Notizen.werkzeuge() ++
       Kettenwerkzeuge.werkzeuge() ++
       Anker.werkzeuge() ++ abschluss_werkzeuge(s.lauf)

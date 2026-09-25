@@ -114,6 +114,10 @@ defmodule Worker.Jack.Zeit.WerkzeugeTest do
   defp beispiel("haenge_an_kette"), do: %{"von" => 1, "bis" => 2}
   defp beispiel("unterhaenge_kettenglied"), do: %{"glied" => 1, "zeilen" => [3]}
 
+  defp beispiel("sitzungen"), do: %{}
+  defp beispiel("lies_frueher"), do: %{"sitzung" => 9, "ab" => 1}
+  defp beispiel("vorige_gedanken"), do: %{}
+
   defp beispiel("nimm_anker_zurueck"),
     do: %{"zeilen" => [1], "art" => "zeitpunkt", "grund" => "trägt nicht"}
 

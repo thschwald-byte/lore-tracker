@@ -194,6 +194,35 @@ defmodule Worker.Repo.Zeit do
   end
 
   @doc """
+  Der abgelegte Stand eines Zeit-Laufs (`worker_jack_zeit_staende`), oder `nil`.
+
+  **Bis #1247 hatte diese Tabelle keinen Leser** — sie wurde nach jedem
+  Werkzeugaufruf geschrieben und nie gelesen, ein Apparat ohne Leser (dieselbe
+  Klasse wie `loesche_kettenplatz/2` im selben Ticket). Gebraucht wird er, seit
+  der Zeit-Jack die Gedanken seiner früheren Läufe sehen soll: „er muss die
+  Sachen, die vor vorherigen Sessions erarbeitet wurden, lesen können"
+  (Maintainer, 25.09.2026).
+
+  Liefert die Map, wie sie publiziert wurde (String-Schlüssel).
+  """
+  @spec jack_stand(String.t()) :: map() | nil
+  def jack_stand(session_id) when is_binary(session_id) do
+    transaction(fn -> :mnesia.read(S.jack_zeit_staende(), session_id) end)
+    |> List.wrap()
+    |> Enum.find_value(fn row ->
+      with true <- tuple_size(row) >= 4,
+           json when is_binary(json) <- elem(row, 3),
+           {:ok, %{} = stand} <- Jason.decode(json) do
+        stand
+      else
+        _ ->
+          Logger.warning("Zeit: Jack-Stand von #{session_id} nicht lesbar — übersprungen")
+          nil
+      end
+    end)
+  end
+
+  @doc """
   Die gespeicherten Zeilen der Kette, ohne sie zusammenzubauen — **Grabsteine
   schon entfernt**.
 
