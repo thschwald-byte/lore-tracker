@@ -146,6 +146,29 @@ defmodule HubWeb.CampaignLive.FragFenster.Synthetisch do
       }
     ]
 
+  @doc """
+  Welcher Befund an einer Fakt-Zeile hängt — oder `nil`.
+
+  **Im Prototyp gestreut, nicht gemeint:** Ein echter Befund entsteht in
+  einem Lauf und zeigt auf die Fakten, die er betrifft (#1243). Hier
+  entscheidet ein Hash über der Fakt-ID, damit ungefähr jede zehnte Zeile ein
+  Zeichen trägt — deterministisch, also beim Neuladen dieselben, und dünn
+  genug, dass die Spalte nicht zur Christbaumbeleuchtung wird.
+
+  Der Zweck ist allein die **Interaktion**: Klick am Objekt öffnet das Fenster
+  mit genau diesem Befund, statt ihn in einer Liste suchen zu lassen.
+  """
+  @spec befund_an_fakt(term()) :: String.t() | nil
+  def befund_an_fakt(nil), do: nil
+
+  def befund_an_fakt(fakt_id) do
+    case :erlang.phash2(fakt_id, 11) do
+      0 -> "bf-1"
+      5 -> "bf-2"
+      _ -> nil
+    end
+  end
+
   @doc "Startfragen unter den Befunden — sie zeigen, was das Fenster kann."
   @spec vorschlaege() :: [String.t()]
   def vorschlaege,

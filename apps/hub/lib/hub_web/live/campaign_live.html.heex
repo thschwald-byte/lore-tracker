@@ -1207,6 +1207,21 @@
                       class="text-ink-2/40 hover:text-warning"
                       title="Unstimmigkeit an diesem Fakt melden (Span)"
                     >⚠ melden</button>
+                    <%!-- #850 (Prototyp): der zweite Eingang ins Frag-Fenster. Wer
+                         das Objekt vor sich hat, soll den Befund nicht in einer
+                         Liste suchen müssen. Das Ziel ist das Zeichen, NICHT die
+                         Zeile — die ist seit #916 schon klickbar (Kuration), und
+                         ein zweiter Klick-Sinn auf derselben Fläche wäre eine
+                         stille Kollision. --%>
+                    <% befund = HubWeb.CampaignLive.FragFenster.befund_an_fakt(f["id"]) %>
+                    <button
+                      :if={befund}
+                      type="button"
+                      phx-click="frag_befund"
+                      phx-value-id={befund}
+                      class="text-primary/70 hover:text-primary"
+                      title="Offener Befund zu diesem Fakt — im Fenster ansehen"
+                    >💬</button>
                     <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
                   </div>
                 </li>

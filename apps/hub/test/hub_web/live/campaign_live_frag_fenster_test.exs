@@ -82,6 +82,52 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     end
   end
 
+  describe "Der zweite Eingang: Befund am Objekt" do
+    test "nicht jede Fakt-Zeile trägt ein Zeichen, aber immer dieselben" do
+      ids = for n <- 1..200, do: "f_#{n}"
+      mit = Enum.filter(ids, &Synthetisch.befund_an_fakt/1)
+
+      assert mit != [], "ohne Marker ist der zweite Eingang unerreichbar"
+      assert length(mit) < div(length(ids), 3), "zu viele — die Spalte würde blinken"
+
+      # Deterministisch: beim Neuladen stehen die Zeichen an denselben Zeilen.
+      assert Enum.map(ids, &Synthetisch.befund_an_fakt/1) ==
+               Enum.map(ids, &Synthetisch.befund_an_fakt/1)
+    end
+
+    test "jeder gestreute Marker zeigt auf einen Befund, den es gibt" do
+      bekannte = MapSet.new(Synthetisch.befunde(), & &1.id)
+
+      for n <- 1..200, bf = Synthetisch.befund_an_fakt("f_#{n}") do
+        assert MapSet.member?(bekannte, bf), "#{bf} zeigt ins Leere"
+      end
+    end
+
+    test "ein Fakt ohne id bekommt kein Zeichen" do
+      refute Synthetisch.befund_an_fakt(nil)
+    end
+
+    test "zweimal auf dasselbe Zeichen klicken legt den Befund nicht doppelt ab" do
+      sock = %Phoenix.LiveView.Socket{assigns: %{frag: FragFenster.initial(), __changed__: %{}}}
+      [b | _] = Synthetisch.befunde()
+
+      {:noreply, s1} = FragFenster.event(sock, "frag_befund", %{"id" => b.id})
+      assert length(s1.assigns.frag.verlauf) == 1
+      assert s1.assigns.frag.offen?
+
+      # Zweiter Klick — in der Spalte hin und her, oder schlicht nochmal.
+      {:noreply, s2} = FragFenster.event(s1, "frag_befund", %{"id" => b.id})
+      assert length(s2.assigns.frag.verlauf) == 1, "der Befund stünde sonst zweimal da"
+      assert s2.assigns.frag.offen?, "und das Fenster muss trotzdem aufgehen"
+    end
+
+    test "ein Zeichen, dessen Befund es nicht gibt, tut nichts" do
+      sock = %Phoenix.LiveView.Socket{assigns: %{frag: FragFenster.initial(), __changed__: %{}}}
+      {:noreply, s} = FragFenster.event(sock, "frag_befund", %{"id" => "gibt-es-nicht"})
+      assert s.assigns.frag.verlauf == []
+    end
+  end
+
   describe "Wartetext" do
     alias HubWeb.CampaignLive.FragFenster.Warten
 

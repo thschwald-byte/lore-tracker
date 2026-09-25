@@ -63,6 +63,18 @@ defmodule HubWeb.CampaignLive.FragFenster do
   def initial,
     do: %{offen?: false, verlauf: [], lauf: nil, frage: "", befunde: Synthetisch.befunde()}
 
+  @doc """
+  Der Befund an einer Fakt-Zeile, für das Zeichen in der Spalte. Fassade für
+  das Template, das keine Aliase kennt.
+
+  **Das Ziel des Klicks ist das Zeichen, nicht die Zeile.** Die Fakt-Zeile ist
+  seit #916 bereits klickbar (claim, Figur, Strang, ausblenden); ein zweiter
+  Klick-Sinn auf derselben Fläche wäre eine stille Kollision — man will
+  kuratieren und bekommt ein Gesprächsfenster.
+  """
+  @spec befund_an_fakt(term()) :: String.t() | nil
+  defdelegate befund_an_fakt(fakt_id), to: Synthetisch
+
   @doc "Zahl am Knopf: offene Befunde. Nicht die Länge des Gesprächs — das ist flüchtig."
   @spec offene(map()) :: non_neg_integer()
   def offene(%{befunde: b}), do: length(b)
@@ -85,20 +97,30 @@ defmodule HubWeb.CampaignLive.FragFenster do
   def event(socket, "frag_befund", %{"id" => id}) do
     frag = socket.assigns.frag
 
-    case Enum.find(frag.befunde, &(&1.id == id)) do
-      nil ->
-        {:noreply, socket}
+    cond do
+      # Schon im Verlauf: nur aufmachen. Wer in der Spalte zwischen zwei
+      # Zeichen hin und her klickt, soll den Befund nicht doppelt bekommen.
+      Enum.any?(frag.verlauf, &(Map.get(&1, :befund_id) == id)) ->
+        auf(socket, true) |> then(&{:noreply, &1})
 
-      b ->
-        eintrag = %{art: :befund, titel: b.titel, text: b.text, belege: b.belege}
+      b = Enum.find(frag.befunde, &(&1.id == id)) ->
+        eintrag = %{
+          art: :befund,
+          befund_id: b.id,
+          titel: b.titel,
+          text: b.text,
+          belege: b.belege
+        }
 
         {:noreply,
-         socket
-         |> Phoenix.Component.assign(:frag, %{
+         Phoenix.Component.assign(socket, :frag, %{
            frag
            | offen?: true,
              verlauf: frag.verlauf ++ [eintrag]
          })}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
