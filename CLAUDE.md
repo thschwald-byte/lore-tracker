@@ -1901,6 +1901,14 @@ Datum, wo keiner einen Tag trägt. **Und vor allem: ob die Flughöhe auf echten
 Daten stimmt, ist nicht gemessen** — das zeigt erst ein Lauf mit dem echten
 Modell.
 
+**Seit Z3 (#1247) sieht der Chronik-Jack die Zeitlinie der Kette** — je Fakt,
+mit dem Zitat, aus dem sie gelesen wurde, und **neben** dessen eigenem
+`in_game_date`. Es ist ein Angebot mit Prüfpflicht: Er darf begründet
+abweichen, soll nichts ungeprüft übernehmen, und wo etwas verdächtig aussieht,
+liest er selbst im Mitschnitt nach. Details im Abschnitt „Die Zeit hängt an den
+Äußerungen" weiter unten; der Session-Anker-Fallback in `feste_punkte/3` bleibt
+davon unberührt, weil eine Chronik auch ohne Kette datieren können muss.
+
 **Einstellung:** `chronik_jack_model`, leer = Jacks Modell.
 
 ### Die Zeit hängt an den Äußerungen: der Zeit-Jack und die Kette (Issue #1247)
@@ -2089,6 +2097,80 @@ und nennt nur, was aufgeht — „um 7" bekommt „sag es eindeutig, ‚7 Uhr' o
 ausdrücklich **keine** Bedeutungserkennung (#1109/#1213: zweimal gescheitert,
 zweimal abgeschaltet), sondern eine Umformung mit anschliessender Prüfung.
 
+#### Zurücknehmen können, ohne Ersatz
+
+Ein Anker, der nicht trägt, muss weg — und das war bis zum 24.09. nicht
+möglich. Im Denkstrom des Laufs steht fünfzehnmal derselbe Gedanke: die
+Spanne „60 Jahre her" zieht die Linie auf 2055 zurück, sie braucht einen
+Bezugspunkt, den es nicht gibt, *„the cleanest solution is to remove this span
+entirely"*. Sechs Minuten, fachlich richtig erkannt — und `anker_ersetzen`
+verlangt einen Ersatz, „nichts" ist keiner. Die Spanne stand am Ende des Laufs
+unverändert da.
+
+**Die Mechanik war längst gebaut**: `Setzen.loesche_kettenplatz/2` schreibt
+die Rücknahme unter derselben Adresse mit Art `geloest`, samt der Begründung,
+warum sie die Content-Adressierung dabei bewusst bricht — mit **null
+Aufrufern**. Die Klasse „Apparat ohne Producer", zum dritten Mal in diesem
+Repo (#724, #1109).
+
+`nimm_anker_zurueck(zeilen, art, grund)` ist dieser Aufrufer. Das `art`-Feld
+ist Pflicht, weil an einer Zeile mehrere Anker hängen dürfen (Spanne und
+Zeitpunkt ergänzen sich, `Stand.an/3`); abgesegnetes bleibt, und die Absage
+nennt Datum, Wortlaut und `melde_konflikt` als Weg. Der Grund steht danach an
+der Stelle — ohne ihn wäre nicht nachvollziehbar, was Jack gesehen hat.
+
+**Nebenwirkung: `anker.ex` riss die 600-Code-Zeilen-Grenze** (648).
+Geschnitten ist nach der Frage, die ein Leser stellt — *setzt dieses Werkzeug
+eine Zeit, oder hält es fest, dass keine gesetzt wird?* —, nicht nach Zeilen:
+`Worker.Jack.Zeit.Vorbehalte` trägt `melde_konflikt`,
+`kettenplatz_unklar` und `zweifel`. Der billige Schnitt (Definitionen gegen
+Ausführung) hätte zwei Hälften derselben Sache getrennt. Dass die drei zusammen
+knapp reichen, war Glück; dass sie zusammengehören, ist es nicht (#1097).
+
+#### Die Chronik sieht die Kette — als Angebot mit Prüfpflicht (Z3)
+
+Maintainer, 25.09.2026: „die chronik soll sich entscheiden können die kette zu
+benutzen — aber soll sich auch dagegen entscheiden dürfen", und schärfer: „er
+kann und darf abweichen — und er soll nicht ungeprüft übernehmen."
+
+`Chronik.Eingabe.mit_zeitlinie/2` hängt an jeden Fakt die Zeit, die die Kette
+für seine Äußerungen kennt — **neben** dessen `in_game_date`, nicht statt
+dessen. `Lesen.zeit_text/1` zeigt beides; wo sie sich widersprechen, sieht das
+Modell den Widerspruch. Würde eines das andere ersetzen, gäbe es nichts zu
+prüfen, und ein falscher Anker verbiegt die Chronik lautlos.
+
+**Jede Angabe trägt ihren Beleg** — das wörtliche Zitat, aus dem die Zeit
+gelesen wurde; ohne das wäre die Prüfpflicht nicht erfüllbar. Und **belegt und
+gerechnet sind unterschieden**: Ein interpolierter Wert heisst „(gerechnet)",
+und der Auftrag sagt, dass er für die Reihenfolge taugt, nicht für ein Datum —
+genau der Fehler, der die Chronik einmal auf einen einzigen Tag gelegt hat
+(#1092).
+
+**Der Rang ist benannt, nicht dem Gefühl überlassen:** Die Zeitlinie ist
+*meistens* die bessere Angabe (am gesprochenen Wort gelesen, von einem Lauf,
+der nichts anderes tut), das Fakt-Datum ist ein Nebenprodukt der Extraktion.
+Und wo etwas verdächtig aussieht, **liest Jack selbst nach** — `block(n)`,
+`bloecke`, `suche_sitzung`, `fakt(id)`. Der Satz, um den es geht: zwei Angaben
+gegeneinander abwägen ist ein Münzwurf, im Mitschnitt nachlesen ist eine
+Prüfung. „Verdächtig" ist mit Beispielen unterlegt (Zitat aus einer anderen
+Szene, Zeiten Jahre auseinander im selben Abschnitt, Datum gegen die gelesene
+Reihenfolge, Zeitrede am Tisch).
+
+**Der Befund, ohne den Z3 wirkungslos geblieben wäre:** `Linie.aus_kette/3`
+rechnet auf **Gliedern**, und `auf_glieder/2` ersetzt dafür die
+`utterance_ids` eines Ankers durch Glied-IDs. Damit lag `anker_an` unter
+Glied-IDs, und `anker_fuer/2` fand für eine Äußerung **nie** einen Anker — es
+lieferte nur die gerechnete Stelle, ohne Ausdruck und ohne Beleg. Unsichtbar,
+solange niemand die Details braucht. Gefunden hat es der Test, weil er den
+Beleg **einforderte**; ein Test auf „das Feld ist gesetzt" wäre grün gewesen.
+
+**Best-effort auf beiden Seiten:** Läuft der Zeit-Jack nicht, fehlt das Feld,
+und die Chronik arbeitet wie vor #1247. Ein Fehler beim Lesen der Kette wird
+laut geloggt und lässt die Fakten unverändert — still wäre er nicht von „die
+Kette hatte eben nichts" zu unterscheiden. Der Session-Anker-Fallback in
+`Datierung.feste_punkte/3` bleibt bewusst stehen: Wer sich gegen die Kette
+entscheiden darf, muss auch ohne sie datieren können.
+
 #### Ehrliche Grenzen
 
 * **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
@@ -2101,14 +2183,28 @@ zweimal abgeschaltet), sondern eine Umformung mit anschliessender Prüfung.
 * **`verschiebungen: 0`** — die Weltgeschichte steht in Erzählreihenfolge, die
   hier zufällig chronologisch ist. Ein Rückblick mitten in der Sitzung würde
   heute am falschen Platz landen.
-* **Ein abgebrochener Lauf schliesst seine Ollama-Verbindung nicht.** Ollama
-  hält daraufhin den `llama-server` samt VRAM, obwohl `ollama ps` leer ist;
-  am 24.09. waren das 12,5 GB über Stunden. `ss -tnp | grep 11434` zeigt den
-  Halter, ein Worker-Neustart löst es.
-* **Z3 fehlt:** Die Chronik liest die Linie noch nicht — `Chronik.Eingabe`
-  reicht weiterhin die Fakt-Felder durch, nicht `Linie.anker_fuer/2`.
-* **Z5 fehlt:** Die Zeitfelder stehen weiterhin in Jacks Extraktionsschema
-  (`Worker.Jack.Felder`).
+* **Ein abgebrochener Lauf hielt seine Ollama-Verbindung offen** — am 24.09.
+  hing daran ein `llama-server` mit 12,5 GB über Stunden, obwohl `ollama ps`
+  leer war, und eine andere Session wartete auf die Karte. Der Ollama-Client
+  hat seitdem einen **eigenen** HTTP-Pool mit Idle-Frist
+  (`Worker.Agent.Modell.Pool`, eine Minute) statt Reqs geteiltem Default-Pool,
+  dessen Verbindungen ohne Frist offen bleiben. **Die Kausalität ist dabei
+  nicht belegt:** dass die offene Verbindung den Runner gehalten hat, ist
+  plausibel und nicht gemessen — ob mit der Frist auch der Speicher fällt,
+  zeigt der nächste Lauf. Diagnose weiterhin über `ss -tnp | grep 11434`; ein
+  `beam.smp` als Halter bei leerem `ollama ps` ist der Fall.
+* **Z3 ist eingelöst** (s. Abschnitt darüber) — mit einer Einschränkung, die
+  bleibt: Ob das Modell die Prüfpflicht tatsächlich erfüllt, statt die
+  Zeitlinie zu schlucken, ist **nicht gemessen**. Die Regeln stehen im
+  Auftrag, die Wirkung zeigt ein Lauf. Dazu kostet der Aufbau der Linie samt
+  Block-Index je Chronik-Lauf einen vollen Kampagnen-Read.
+* **Z5 bleibt bewusst liegen** (Maintainer, 25.09.2026: „lass es drin"): Die
+  Zeitfelder stehen weiterhin in Jacks Extraktionsschema
+  (`Worker.Jack.Felder`). Mein Einwand dagegen — ohne sie könne die Chronik
+  nur zustimmen oder schweigen — war falsch, und die Korrektur steht im
+  Abschnitt darüber: Jack kann in den Mitschnitt sehen, und das ist die
+  bessere Prüfung. Die Felder bleiben trotzdem, solange die Kette nur einen
+  gemessenen Lauf hinter sich hat.
 
 
 **Zeitstrahl / Datums-Auflösung (#724) — HISTORIE, mit #1211 ersetzt.** Der folgende Absatz beschreibt den deterministischen Pfad, den der Chronik-Jack abgelöst hat (s. Abschnitt darüber). Er bleibt stehen, weil Kalender, Session-Anker und die Tageszähler-Rechnung weiterleben — nur der Weg von den Fakten zur Chronik ist ein anderer. Der Timeline-Publish war verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (primärer Sort-Schlüssel) + `precision` + seit #1092 `source_pos` (Zweitschlüssel innerhalb eines Tages, s.u.). UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Seit #911/#958 filtert der Timeline-Publish VOR `Graph.resolve` Vorstufen weg** (zwei damals, seit #1068 E3 drei — der Typ-Filter `Graph.datierbar?/2` kam dazu), die die Chronik sonst zum Fakten-Dump machten (Free-Seattle-Befund: 544 von 548 verifizierten Fakten wurden Chronik-Einträge): `Graph.time_signal?/1` (pure) verlangt ein EIGENES Zeit-Signal des Fakts (Anker/Offset/`in_game_date`-Bridge #676/#729) statt des reinen Präsens-Fallbacks (`narration_time == "present"` ohne jedes Signal sitzt sonst automatisch am Session-Anker-Tag), und `Repo.filter_arc_kind/2` lässt nur `kind == "arc"`-Fakten durch (gleiche Zuordnung wie Resümee/Epos seit #909, `fact_render_assignments/2`) — die Chronik ist ein Bogen-Zeitstrahl, kein Protokoll-Abzug.
