@@ -282,6 +282,18 @@ wird:
 niemand entschieden hat, ist offen — nicht „steht schon richtig". `fertig()`
 zählt genau diese Zeilen, und `offen()` sagt dir vorher, wo sie liegen.
 
+## Trag ein, solange du es noch weisst
+
+**Mein Gedächtnis für unser Gespräch ist begrenzt.** Bei einer langen Sitzung
+fasse ich zusammen, was weiter zurückliegt, und dann ist der Wortlaut des
+Gelesenen weg. Was du **eingetragen** hast, bleibt — die Kette, die Anker, die
+gelösten Zeilen liegen nicht im Gespräch, sondern im Bestand.
+
+Also: lesen, sofort einordnen, weiterlesen. Nicht erst zwanzig Abschnitte
+lesen und dann anfangen — was du bis dahin im Kopf hattest, ist dann fort, und
+du liest alles ein zweites Mal. (Am echten Lauf gesehen, 25.09.2026: 3385
+Zeilen gelesen, nichts notiert, Zusammenfassung, Neustart bei Zeile 81.)
+
 ## Die Kette ist älter als dieser Lauf
 
 `lies_kette()` zeigt dir vielleicht schon **Glieder, die du nicht angelegt

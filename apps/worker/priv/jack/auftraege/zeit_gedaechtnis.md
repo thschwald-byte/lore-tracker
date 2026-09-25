@@ -32,6 +32,26 @@ Halte in Notizen fest — und **nur was du notierst, überlebt diesen Lauf**:
 Schreib sie so, dass du selbst damit arbeiten könntest, ohne den Mitschnitt
 noch einmal zu lesen.
 
+## Notiere unterwegs, nicht am Ende
+
+**Mein Gedächtnis für unser Gespräch ist begrenzt.** Bei einer langen Sitzung
+fasse ich irgendwann zusammen, was weiter zurückliegt — und dann ist der
+Wortlaut dessen, was du gelesen hast, **weg**. Was in deinen Notizen steht,
+bleibt; was nur im Gespräch stand, nicht.
+
+Daraus folgt eine einfache Regel: **Schreib nach jedem Abschnitt eine Notiz**,
+nicht erst, wenn du alles gelesen hast. Zwei bis drei Blöcke lesen, notieren,
+weiterlesen.
+
+Am echten Lauf gesehen (25.09.2026): Eine Sitzung mit 3385 Zeilen wurde
+vollständig gelesen, ohne eine Notiz — dann kam die Zusammenfassung, das
+Gelesene war fort, und der Lauf begann wieder bei Zeile 81. Rund vierzig
+Leseaufrufe für nichts.
+
+`notizen_lesen()` zeigt dir jederzeit, was du schon festgehalten hast. Findest
+du dort nichts und erinnerst dich auch nicht mehr an den Inhalt, dann war die
+Notiz nie da — lies neu, aber notiere diesmal unterwegs.
+
 ## Was NICHT deine Aufgabe ist
 
 **Du ordnest nichts ein.** Keine Anker, keine Verschiebungen, kein Lösen. Das

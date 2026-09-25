@@ -2351,6 +2351,25 @@ Kette hatte eben nichts" zu unterscheiden. Der Session-Anker-Fallback in
 `Datierung.feste_punkte/3` bleibt bewusst stehen: Wer sich gegen die Kette
 entscheiden darf, muss auch ohne sie datieren können.
 
+#### Die Kompaktierung frisst das Gelesene, nicht die Notizen
+
+Am Lauf auf seattleV5 S2 gesehen (25.09.2026, 3385 Zeilen): Jack las den
+ganzen Mitschnitt, ohne eine Notiz zu schreiben — dann fasste die Laufzeit den
+Verlauf zusammen (`kompaktierungen: 1`), das Gelesene war fort, und er begann
+wieder bei Zeile 81. Rund vierzig Leseaufrufe für nichts. Sein Satz dazu: „Ich
+habe die Notizen verloren und muss den mittleren Abschnitt neu lesen."
+
+**Der Fehler liegt im Ablauf, nicht in der Kompaktierung.** Notizen liegen im
+**Stand** und überleben sie; das Gespräch nicht. Wer erst alles liest und dann
+notiert, verliert bei einer langen Sitzung genau dazwischen. Beide Aufträge
+sagen jetzt: nach jedem Abschnitt notieren beziehungsweise sofort eintragen,
+nicht am Ende.
+
+Bemerkenswert an dem Lauf ist, was er **richtig** machte: `notizen_lesen()`
+gerufen, nichts gefunden, neu gelesen — kein Raten, keine
+Wiederholungsschleife. Die Sperre hat nicht gegriffen, weil er tatsächlich
+etwas Neues tat.
+
 #### Ehrliche Grenzen
 
 * **Ob die Korrekturen an den Ankerwerten greifen, ist nicht gemessen.** Den
