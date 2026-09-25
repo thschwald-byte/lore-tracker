@@ -47,6 +47,19 @@ defmodule Worker.Agent.Modell.Strom do
   @spec neu() :: t()
   def neu, do: %__MODULE__{}
 
+  @doc """
+  Bricht den Strom mit einem eigenen Grund ab — das Bisherige gilt als
+  Antwort.
+
+  #1247: Der Abbruch von aussen (`Worker.Agent.Modell.Schleife`) ist der eine
+  Fall, in dem ein unvollständiger Strom **keine** Störung ist: Wir haben ihn
+  selbst beendet, und was bis dahin kam, soll die Laufzeit sehen. Ohne das
+  liefe er in `{:strom_unvollstaendig, …}` — ein Fehler, der nach Netzproblem
+  aussieht, wo eine Entscheidung stand.
+  """
+  @spec abbrechen(t(), String.t()) :: t()
+  def abbrechen(%__MODULE__{} = s, grund), do: %{s | fertig: true, grund: grund}
+
   @doc "Neue Bytes einlesen. Liefert den Zustand und die Deltas in Reihenfolge."
   @spec einlesen(t(), binary()) :: {t(), [delta()]}
   def einlesen(%__MODULE__{} = s, bytes) do

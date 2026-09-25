@@ -2407,6 +2407,75 @@ man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
 Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
 `mahnung`), nicht über `bericht.nachrichten`.
 
+#### Eine Schleife im Denken — und was ein Befund verschweigt
+
+Am 25.09.2026 lief der Prüf-Lauf auf seattleV5 S2 in eine Schleife, die
+**keine der bestehenden Sperren sehen konnte**: 52.962 Zeichen Denktext in
+EINER Runde, darin dreissigmal wörtlich derselbe Absatz, elf Minuten
+Rechenzeit — und `wiederholungen: 0`. Die Wiederholungssperre zählt gleiche
+**Werkzeugaufrufe**, der Rundendeckel zählt Runden, und hier war es eine
+Runde ohne einen einzigen wiederholten Aufruf.
+
+**Die Ursache war ein Werkzeug, nicht das Modell.** Jack hatte sechs Befunde
+vor sich und keine Möglichkeit, einen davon einem Anker zuzuordnen; er hat es
+aus den Zahlen zurückzurechnen versucht („*The Befunde list doesn't indicate
+positions … seems to be global and constant*") und dabei geraten. Drei
+Korrekturen, alle aus diesem einen Lauf:
+
+**1. Ein Befund nennt seine Stelle** (`Befunde.mit_stellen/2`,
+`Zeit.Lesen.befund_zeile/2`). Die Adresse war die ganze Zeit da — jeder Befund
+trägt `anker_id`, die Anzeige gab nur `text` aus. Genannt wird jetzt, was für
+das Modell eine Adresse IST: die **Zeilennummer** (fremd als „andere
+Sitzung") und der gesetzte Ausdruck, nicht die `anker_id`, die für ihn ein
+Hash ist. Der Spannen-Überlauf gilt einer Strecke und hat keinen eigenen
+Anker — er trägt seitdem `anker_ids` mit beiden Endpunkten, ohne die er
+unauflösbar ist.
+
+**Dabei dieselbe Falle ein zweites Mal:** `Befunde.aus/1` läuft in `bauen/2`,
+sieht also die von `auf_glieder/2` umgeschriebenen Anker — die Stellen trügen
+Glied-IDs, und jede hiesse „andere Sitzung". `aus_kette/3` setzt sie deshalb
+mit den echten Ankern neu, genau wie schon `anker_an`. Gefunden hat es der
+Test, weil er die **Zeilennummer** einforderte; ein Test auf „das Feld ist
+gesetzt" wäre grün gewesen.
+
+**2. `sitzungen()` zählt die eigene Gliederzahl live**
+(`Stand.eigene_glieder/1`). Die Zahlen entstehen beim Bau der Eingabe, und der
+Prüf-Lauf erbt sie — dort stand „S2: 2 Kettenglied(er)", während Jack sieben
+vor sich hatte. Er hat drei Absätze gerätselt und erwogen, seine Sitzung sei
+eine andere. Für **fremde** Sitzungen bleibt es der Stand vom Lauf-Beginn: Ihr
+Mitschnitt liegt nicht im Stand, und dieser Lauf ändert sie nicht.
+
+**3. Die Wiederholung wird erkannt und der Strom abgebrochen**
+(`Worker.Agent.Modell.Schleife`, pur). Alle 2.000 Zeichen wird geprüft, ob der
+letzte 300-Zeichen-Block im Text davor schon dreimal vorkommt; dann `{:halt,
+…}` auf den Req-Strom, `Strom.abbrechen/2` macht aus dem Bisherigen eine
+Antwort mit dem Stoppgrund `:schleife`, und `Lauf` behandelt sie wie eine
+ohne Werkzeugaufruf — Aufrufe darin werden **verworfen** (ein abgebrochener
+Strom garantiert kein vollständiges Argument-JSON). Das Nachhaken sagt dann,
+worauf es ankommt: **dass es nicht an den Angaben liegt** (dieselbe Lehre wie
+beim inneren Werkzeugfehler, #1211). Nach drei Anläufen endet der Lauf.
+
+Vier Entscheidungen daran:
+
+- **Der Client streamt seitdem IMMER.** Der Strom hing an `:bei_delta`, und
+  das setzt `Lauf` nur bei vorhandenem Beobachter (Laufsicht, #1202) — eine
+  Erkennung, die daran hängt, wäre genau die #1163-Klasse: ein Wächter, der
+  nur anschlägt, wenn ohnehin jemand hinsieht. `ganz/3` ist damit toter Code
+  und entfernt (der Pool-Wächter aus #1247 zählt seitdem eine Aufrufstelle
+  statt zwei).
+- **Abgebrochen wird wegen Wiederholung, nie wegen Länge.** Ein langer
+  Denkstrom ist legitim; ein Token-Deckel auf die Denkphase träfe ihn mit.
+- **Nur wörtliche Wiederholung**, kein Ähnlichkeitsmaß — „exakt" ist nichts,
+  worüber man streiten kann. Die benannte Grenze: Ein Modell, das dieselbe
+  Überlegung in anderen Worten dreht, läuft weiter.
+- **Sichtbar** als `modell_schleife` in `Worker.Telemetry`, ab dem ersten Mal
+  laut. Ohne das sieht der nächste Loop wieder aus wie „dauert eben lange" —
+  dieser fiel nur auf, weil gerade jemand in die Laufsicht sah.
+
+**Nicht gemacht:** `jack_frequency_penalty` hochziehen. Der Regler wirkt auf
+Token-, nicht auf Absatz-Ebene, hätte hier kaum geholfen, und er verstellt die
+gemessenen Defaults der Messreihe C ohne neue Messung.
+
 #### Eine String-Whitelist erzeugt keine Atome
 
 Beim Neustart der Teststage am 25.09.2026 warf `Worker.Repo.Zeit.anker/1`
@@ -2441,6 +2510,11 @@ Quelltext-Wächter (`repo/zeit_schluessel_test.exs`, gegengeprüft): kein
 * **`verschiebungen: 0`** — die Weltgeschichte steht in Erzählreihenfolge, die
   hier zufällig chronologisch ist. Ein Rückblick mitten in der Sitzung würde
   heute am falschen Platz landen.
+* **Ob die Schleifen-Erkennung im Betrieb greift, ist nicht gemessen.** Die
+  Schwelle (dreimal derselbe 300-Zeichen-Block) ist gegriffen; am echten Fall
+  hätte sie nach wenigen Runden gegriffen, nicht nach dreissig Absätzen, weil
+  Jack zwischen den identischen Blöcken variierte. Und sie rettet die Runde
+  nicht, nur die Zeit — der Anlass war die fehlende Befund-Adresse.
 * **Ob die Mahnung ankommt, ist nicht gemessen.** Die 75 % sind gegriffen (ein
   Viertel Fenster als Sicherungsreserve), und dass ein Modell auf die
   Aufforderung tatsächlich sichert und `jetzt_kompaktieren()` ruft statt sie

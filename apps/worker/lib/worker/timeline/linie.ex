@@ -233,6 +233,14 @@ defmodule Worker.Timeline.Linie do
         # Die Chronik soll die Zeit der Kette prüfen können, und das geht nur
         # am Wortlaut. Gefunden hat es der Test, der den Beleg einforderte.
         anker_an: anker_an(anker, MapSet.new(Map.keys(kette.draussen))),
+        # **Und die Stellen der Befunde ebenso** (#1247, 25.09.2026, zweiter
+        # Fall derselben Klasse). `Befunde.aus/1` läuft in `bauen/2`, sieht
+        # also die glied-umgeschriebenen Anker — die `utterance_ids` einer
+        # Stelle wären Glied-IDs, und der Leser (`Zeit.Lesen`) könnte daraus
+        # keine Zeilennummer machen: Jede Stelle hiesse „andere Sitzung".
+        # Genau die Art Fehler, die man erst sieht, wenn ein Test die Angabe
+        # einfordert statt nur ihr Vorhandensein.
+        befunde: Enum.map(roh.befunde, &Befunde.mit_stellen(&1, anker)),
         geloest: MapSet.new(Map.keys(kette.draussen))
     }
     |> Map.put(:glieder, roh.kette)

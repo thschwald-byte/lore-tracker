@@ -33,6 +33,47 @@ defmodule Worker.Timeline.Befunde do
        grosse_spruenge(feste) ++
        zweifel(anker))
     |> Enum.map(&Map.put(&1, :id, kennung(&1)))
+    |> Enum.map(&mit_stellen(&1, anker))
+  end
+
+  @doc """
+  Hängt an einen Befund die **Stellen**, auf die er sich bezieht: je Anker
+  seine `utterance_ids` und den gesetzten Ausdruck.
+
+  #1247, am laufenden Lauf gefunden (25.09.2026): Die Adresse war da und wurde
+  weggeworfen. Jack bekam sechs Befunde als reinen Text, konnte keinen einem
+  Anker zuordnen und hat dreissig Mal denselben Absatz geschrieben, um sie aus
+  den Zahlen zurückzurechnen („*The Befunde list doesn't indicate positions*")
+  — bis die neue Schleifen-Erkennung greifen würde. Ein Befund ohne Stelle ist
+  keine Meldung, sondern ein Rätsel.
+
+  `anker_id` allein trägt nicht: Für das Modell ist sie ein Hash. Seine
+  Adresse ist die **Zeilennummer**, und die entsteht erst beim Leser
+  (`Worker.Jack.Zeit.Lesen`), der den Mitschnitt hat — hier reisen deshalb die
+  `utterance_ids`, die stabile Form.
+
+  Der Spannen-Überlauf betrifft zwei Anker (`anker_ids`) und hat selbst
+  keinen; er bekommt beide Stellen.
+  """
+  @spec mit_stellen(map(), [map()]) :: map()
+  def mit_stellen(befund, anker) do
+    ids =
+      case befund do
+        %{anker_ids: [_ | _] = liste} -> liste
+        %{anker_id: id} when is_binary(id) and id != "" -> String.split(id, ", ")
+        _ -> []
+      end
+
+    stellen =
+      for id <- ids,
+          a = Enum.find(anker, &(Map.get(&1, :anker_id) == id)),
+          do: %{
+            anker_id: id,
+            utterance_ids: Map.get(a, :utterance_ids) || [],
+            wert: Map.get(a, :wert)
+          }
+
+    Map.put(befund, :stellen, stellen)
   end
 
   @doc """
@@ -93,7 +134,7 @@ defmodule Worker.Timeline.Befunde do
     feste
     |> Enum.sort_by(fn {i, _} -> i end)
     |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.flat_map(fn [{vi, %{minute: vm}}, {ni, %{minute: nm}}] ->
+    |> Enum.flat_map(fn [{vi, %{minute: vm} = vp}, {ni, %{minute: nm} = np}] ->
       summe = Linie.gelaufen(vi, ni, spannen)
       abstand = nm - vm
 
@@ -102,6 +143,9 @@ defmodule Worker.Timeline.Befunde do
           %{
             art: :spannen_ueberlauf,
             anker_id: nil,
+            # Der Befund gilt der STRECKE und hat keinen eigenen Anker — aber
+            # er hat zwei Endpunkte, und ohne sie ist er unauflösbar (#1247).
+            anker_ids: Enum.reject([vp[:anker_id], np[:anker_id]], &is_nil/1),
             text:
               "Zwischen zwei Ankern liegen #{dauer_wort(abstand)}, die genannten Dauern " <>
                 "ergeben #{dauer_wort(summe)}. Entweder ist eine Dauer falsch gelesen " <>

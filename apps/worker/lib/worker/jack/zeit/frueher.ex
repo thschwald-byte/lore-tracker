@@ -127,26 +127,30 @@ defmodule Worker.Jack.Zeit.Frueher do
         {s, {:ok, "Ich kenne nur deine Sitzung — es gibt keine früheren."}}
 
       liste ->
+        # **Die eigene Gliederzahl wird live gezählt** (#1247, 25.09.2026, am
+        # Lauf gefunden). Die Zahlen entstehen beim Bau der Eingabe, und der
+        # Prüf-Lauf erbt sie — dort stand „S2: 2 Kettenglied(er)", während
+        # Jack sieben vor sich hatte. Er hat drei Absätze gerätselt („maybe
+        # the node count is stale") und erwogen, seine Sitzung sei S4. Eine
+        # Zahl, die dem widerspricht, was er sieht, kostet mehr als sie sagt.
+        #
+        # Für FREMDE Sitzungen bleibt es der Stand vom Lauf-Beginn — ihr
+        # Mitschnitt liegt nicht im Stand, und dieser Lauf ändert sie nicht.
+        eigene_jetzt = Stand.eigene_glieder(s)
+
         zeilen =
           Enum.map_join(liste, "\n", fn i ->
             eigen = if i.eigene?, do: "  ← deine", else: ""
             notiz = if i.notizen?, do: ", Notizen vorhanden", else: ""
+            glieder = if i.eigene?, do: eigene_jetzt, else: i.glieder
 
-            "S#{i.nummer}: #{i.zeilen} Zeilen, #{i.glieder} Kettenglied(er)#{notiz}#{eigen}"
+            "S#{i.nummer}: #{i.zeilen} Zeilen, #{glieder} Kettenglied(er)#{notiz}#{eigen}"
           end)
 
-        # **Die Gliederzahlen sind der Stand bei Lauf-Beginn** (#1247,
-        # 25.09.2026, am Lauf gefunden). Sie entstehen beim Bau der Eingabe;
-        # was dieser Lauf seitdem angelegt hat, steht nicht darin. Jack sah
-        # den Widerspruch und hielt ihn für einen Datenfehler: „the session
-        # shows 2660 lines with 34 chain elements, but the earlier output
-        # indicated zero chain elements for S4". Er hatte recht — die Zahl war
-        # vom Start, die Kette inzwischen gewachsen. Also sagt die Antwort es
-        # jetzt, statt eine veraltete Zahl als aktuell auszugeben.
         {s,
          {:ok,
-          "Sitzungen dieser Kampagne (Gliederzahlen vom Beginn dieses Laufs — " <>
-            "was du selbst angelegt hast, zeigt lies_kette()):\n#{zeilen}"}}
+          "Sitzungen dieser Kampagne (deine Gliederzahl ist aktuell, die der " <>
+            "anderen vom Beginn dieses Laufs):\n#{zeilen}"}}
     end
   end
 

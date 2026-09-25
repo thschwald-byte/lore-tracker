@@ -267,6 +267,15 @@ defmodule Worker.Agent.Lauf do
 
   defp nach_antwort(s, %{aufrufe: []} = a), do: gestoppt(s, a)
 
+  # #1247: Der Strom wurde wegen einer Wiederholung abgebrochen
+  # (`Worker.Agent.Modell.Schleife`). Etwaige Werkzeugaufrufe darin werden
+  # **verworfen** — ein abgebrochener Strom kann kein vollständiges
+  # Argument-JSON garantieren, und ein halber Aufruf ist schlimmer als keiner.
+  # Behandelt wird es wie eine Antwort ohne Aufruf: `bei_stopp` entscheidet,
+  # und dort liegt auch der Deckel.
+  defp nach_antwort(s, %{stopp: :schleife} = a),
+    do: gestoppt(s, %{a | aufrufe: []})
+
   defp nach_antwort(s, %{stopp: :laenge, aufrufe: aufrufe}) do
     %{s | ohne_aufruf: 0}
     |> ergebnisse_anhaengen(Enum.map(aufrufe, &{&1, {:error, abgeschnitten(&1)}}))

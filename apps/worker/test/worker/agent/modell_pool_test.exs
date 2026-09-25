@@ -23,12 +23,16 @@ defmodule Worker.Agent.Modell.PoolTest do
   end
 
   test "und JEDER Aufruf des Ollama-Clients nennt ihn" do
-    # Zwei Aufrufstellen (ganz, gestreamt). Die eine, die ihn vergisst, läuft
-    # still über den Default-Pool — genau der Zustand, der behoben werden soll.
+    # **Eine** Aufrufstelle, seit der Client immer streamt (#1247: der
+    # nicht gestreamte Pfad `ganz/3` ist entfallen, weil die
+    # Schleifen-Erkennung den Strom braucht und nicht daran hängen darf, ob
+    # ein Beobachter zusieht). Vorher waren es zwei — und die eine, die den
+    # Pool vergisst, läuft still über den Default-Pool, genau der Zustand, der
+    # behoben werden sollte.
     quelle = File.read!("lib/worker/agent/modell/ollama.ex")
 
     posts = quelle |> String.split("|> Req.post(") |> tl()
-    assert length(posts) == 2, "die Zahl der Aufrufstellen hat sich geändert — Wächter prüfen"
+    assert length(posts) == 1, "die Zahl der Aufrufstellen hat sich geändert — Wächter prüfen"
 
     for {abschnitt, i} <- Enum.with_index(posts, 1) do
       kopf = String.slice(abschnitt, 0, 400)

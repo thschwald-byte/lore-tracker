@@ -379,6 +379,32 @@ defmodule Worker.Jack.Zeit.Stand do
     %{anzahl: length(fehlend), zeilen: fehlend}
   end
 
+  @doc """
+  Wie viele Glieder der Kette zu **dieser** Sitzung gehören — live gezählt.
+
+  #1247, am Lauf gefunden (25.09.2026): `sitzungen()` nannte die Zahlen vom
+  Beginn des Laufs (sie entstehen beim Bau der Eingabe), und der Prüf-Lauf
+  erbt sie — er sah also den Stand VOR dem Einsortieren. Dort stand „S2: 2
+  Kettenglieder", während Jack sieben vor sich hatte; er hat drei Absätze
+  gerätselt und ernsthaft erwogen, seine Sitzung sei eine andere.
+
+  Ein Glied gehört zu dieser Sitzung, wenn mindestens eine seiner Äußerungen
+  im eigenen Mitschnitt steht — dieselbe Regel, mit der `Lesen` fremde
+  Glieder erkennt. Für **fremde** Sitzungen lässt sich das hier nicht sagen
+  (ihr Mitschnitt liegt nicht im Stand), und es muss auch nicht: Dieser Lauf
+  ändert fremde Glieder nicht.
+  """
+  @spec eigene_glieder(t()) :: non_neg_integer()
+  def eigene_glieder(%__MODULE__{} = s) do
+    eigene = MapSet.new(s.mitschnitt, & &1.utterance_id)
+
+    s.kette
+    |> Kette.flach()
+    |> Enum.count(fn {g, _tiefe} ->
+      g |> Kette.alle_utts() |> Enum.any?(&MapSet.member?(eigene, &1))
+    end)
+  end
+
   @doc "Die Zählwerte des Laufs — dieselben, die `fertig` prüft."
   @spec zahlen(t()) :: map()
   def zahlen(%__MODULE__{} = s) do

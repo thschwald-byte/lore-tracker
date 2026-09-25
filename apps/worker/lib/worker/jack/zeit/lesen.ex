@@ -246,6 +246,50 @@ defmodule Worker.Jack.Zeit.Lesen do
     end
   end
 
+  # **Ein Befund nennt seine Stelle** (#1247, 25.09.2026, am laufenden Lauf
+  # gefunden). Vorher stand nur `text` da; die Adresse trug der Befund bereits
+  # (`stellen`, s. `Worker.Timeline.Befunde.mit_stellen/2`) und wurde hier
+  # weggeworfen. Jack konnte keinen der sechs Befunde einem Anker zuordnen,
+  # hat es aus den Zahlen zurückzurechnen versucht und dabei dreissig Mal
+  # denselben Absatz geschrieben.
+  #
+  # Genannt wird, was für ihn eine Adresse IST: die Zeilennummer seines
+  # Mitschnitts, und dazu der gesetzte Ausdruck — nicht die `anker_id`, die
+  # für ihn ein Hash ist. Eine Stelle aus einer anderen Sitzung heisst
+  # „andere Sitzung", wie bei den Gliedern: Sie ist über Zeilennummern nicht
+  # ansprechbar, und ein Strich sagte nicht, warum.
+  defp befund_zeile(befund, %Stand{} = s) do
+    case stellen_wort(Map.get(befund, :stellen) || [], s) do
+      "" -> befund.text
+      wo -> "#{wo}: #{befund.text}"
+    end
+  end
+
+  defp stellen_wort(stellen, %Stand{} = s) do
+    stellen
+    |> Enum.map(&stelle_wort(&1, s))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" / ")
+  end
+
+  defp stelle_wort(%{utterance_ids: utts} = stelle, %Stand{mitschnitt: m}) do
+    nrs = for u <- utts, z = Enum.find(m, &(&1.utterance_id == u)), do: z.nr
+
+    ort =
+      case Enum.sort(nrs) do
+        [] -> "andere Sitzung"
+        [n] -> "Zeile #{n}"
+        liste -> "Zeilen #{List.first(liste)}–#{List.last(liste)}"
+      end
+
+    case Map.get(stelle, :wert) do
+      w when is_binary(w) and w != "" -> "#{ort} („#{w}“)"
+      _ -> ort
+    end
+  end
+
+  defp stelle_wort(_, _), do: ""
+
   @befund_deckel 15
 
   @doc false
@@ -329,7 +373,7 @@ defmodule Worker.Jack.Zeit.Lesen do
               true -> ""
             end
 
-          "\n\nBefunde:\n" <> Enum.map_join(b, "\n", &("- " <> &1.text)) <> rest
+          "\n\nBefunde:\n" <> Enum.map_join(b, "\n", &("- " <> befund_zeile(&1, s))) <> rest
       end
 
     z = Stand.zahlen(s)
