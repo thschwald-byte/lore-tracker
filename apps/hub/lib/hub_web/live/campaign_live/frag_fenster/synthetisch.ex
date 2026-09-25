@@ -88,7 +88,65 @@ defmodule HubWeb.CampaignLive.FragFenster.Synthetisch do
       f("formuliere die Antwort", 900)
     ]
 
-  @doc "Die Antwort eines Laufs: Text und die Belege, auf die sie sich stützt."
+  @doc """
+  Die Antwort eines Laufs mit **echten** Belegen, wenn die Fakten-Spalte
+  geladen ist.
+
+  Der Antworttext bleibt erfunden — aber die Fundstellen darunter sind
+  Fakten der Kampagne, und ihr `↗` springt an die echte Stelle im Protokoll.
+  Erst damit lässt sich beurteilen, worum es beim beweglichen Fenster geht:
+  einen Beleg nachlesen, ohne das Gespräch zu verlieren.
+
+  Ohne geladene Fakten (Lesemodus, leere Kampagne) bleiben die erfundenen
+  Belege — dann ist der Sprung tot, aber die Form sichtbar.
+  """
+  @spec antwort(:figur | :verbindung | :leer, [map()], [map()]) :: %{
+          text: String.t(),
+          belege: [map()]
+        }
+  def antwort(art, fakten, sessions \\ [])
+
+  def antwort(art, fakten, sessions) when is_list(fakten) and fakten != [] do
+    nummern = Map.new(sessions, fn s -> {s["id"] || s[:id], s["number"] || s[:number]} end)
+
+    # Deterministisch wählen, damit dieselbe Frage dieselben Belege zeigt.
+    gewaehlt =
+      fakten
+      |> Enum.filter(&((&1["quell_utterance_ids"] || []) != []))
+      |> Enum.sort_by(&:erlang.phash2({art, &1["id"]}))
+      |> Enum.take(if art == :leer, do: 0, else: 2)
+
+    %{text: text_zu(art, gewaehlt), belege: Enum.map(gewaehlt, &beleg_aus(&1, nummern))}
+  end
+
+  def antwort(art, _leer, _), do: antwort(art)
+
+  defp beleg_aus(f, nummern) do
+    uid = f["quell_utterance_ids"] |> List.first()
+    nr = Map.get(nummern, f["session_id"])
+
+    %{
+      id: f["id"],
+      sitzung: if(nr, do: "S#{nr}", else: "?"),
+      block: "",
+      text: f["claim"] || "",
+      utterance_id: uid
+    }
+  end
+
+  defp text_zu(:leer, _), do: "Steht nicht in den Aufzeichnungen."
+
+  defp text_zu(:verbindung, _),
+    do:
+      "Dazu steht nichts in den Aufzeichnungen. Es gibt Aussagen zu beiden " <>
+        "Seiten, aber keine, die sie verbindet."
+
+  defp text_zu(_, fakten) do
+    "In den Aufzeichnungen steht dazu: " <>
+      (fakten |> Enum.map_join(" — ", & &1["claim"]) |> String.slice(0, 400))
+  end
+
+  @doc "Die Antwort eines Laufs ohne geladene Fakten: Text und erfundene Belege."
   @spec antwort(:figur | :verbindung | :leer) :: %{text: String.t(), belege: [map()]}
   def antwort(:figur),
     do: %{
@@ -179,5 +237,5 @@ defmodule HubWeb.CampaignLive.FragFenster.Synthetisch do
   defp f(text, ms), do: %{art: :fertig, text: text, treffer: nil, ms: ms}
 
   defp beleg(id, sitzung, block, text),
-    do: %{id: id, sitzung: sitzung, block: block, text: text}
+    do: %{id: id, sitzung: sitzung, block: block, text: text, utterance_id: nil}
 end

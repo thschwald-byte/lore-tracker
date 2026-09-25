@@ -82,6 +82,60 @@ defmodule HubWeb.CampaignLiveFragFensterTest do
     end
   end
 
+  describe "Belege zeigen auf echte Stellen, sobald es welche gibt" do
+    defp fakt(n),
+      do: %{
+        "id" => "f_#{n}",
+        "claim" => "Aussage #{n}",
+        "session_id" => "s-1",
+        "quell_utterance_ids" => ["u-#{n}-a", "u-#{n}-b"]
+      }
+
+    test "mit geladenen Fakten trägt jeder Beleg ein Sprungziel" do
+      a = Synthetisch.antwort(:figur, Enum.map(1..8, &fakt/1), [%{"id" => "s-1", "number" => 3}])
+
+      assert a.belege != []
+
+      for b <- a.belege do
+        assert b.utterance_id, "ohne Ziel ist der ↗ tot"
+        assert b.sitzung == "S3", "die Sitzungsnummer kommt aus der Sitzungsliste"
+        assert b.text != ""
+      end
+    end
+
+    test "dieselbe Frage zeigt dieselben Belege" do
+      f = Enum.map(1..12, &fakt/1)
+      assert Synthetisch.antwort(:figur, f) == Synthetisch.antwort(:figur, f)
+    end
+
+    test "verschiedene Fragen greifen verschiedene Fakten" do
+      f = Enum.map(1..12, &fakt/1)
+      a = Synthetisch.antwort(:figur, f).belege |> Enum.map(& &1.id)
+      b = Synthetisch.antwort(:verbindung, f).belege |> Enum.map(& &1.id)
+      refute a == b, "sonst sieht jede Antwort gleich aus"
+    end
+
+    test "ohne Fakten bleibt der erfundene Beleg — und sein Ziel ist ausdrücklich leer" do
+      a = Synthetisch.antwort(:figur, [])
+      assert a.belege != []
+      for b <- a.belege, do: refute(b[:utterance_id], "ein erfundener Beleg darf nicht springen")
+    end
+
+    test "Fakten ohne Quellen taugen nicht als Beleg" do
+      ohne = [
+        %{"id" => "f_x", "claim" => "x", "session_id" => "s-1", "quell_utterance_ids" => []}
+      ]
+
+      assert Synthetisch.antwort(:figur, ohne).belege == []
+    end
+
+    test "die Nicht-Antwort bleibt eine Nicht-Antwort, auch mit Fakten" do
+      a = Synthetisch.antwort(:leer, Enum.map(1..8, &fakt/1))
+      assert a.text =~ "nicht in den Aufzeichnungen"
+      assert a.belege == [], "eine Nicht-Antwort belegt nichts"
+    end
+  end
+
   describe "Der zweite Eingang: Befund am Objekt" do
     test "nicht jede Fakt-Zeile trägt ein Zeichen, aber immer dieselben" do
       ids = for n <- 1..200, do: "f_#{n}"

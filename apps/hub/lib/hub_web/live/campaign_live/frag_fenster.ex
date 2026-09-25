@@ -141,7 +141,15 @@ defmodule HubWeb.CampaignLive.FragFenster do
         {:noreply, Phoenix.Component.assign(socket, :frag, %{frag | lauf: lauf})}
 
       %{id: ^lauf_id, rest: []} = lauf ->
-        a = Synthetisch.antwort(lauf.art)
+        # Echte Belege, sobald die Fakten-Spalte geladen ist — der `↗` springt
+        # dann an eine echte Stelle. Ohne sie bleiben die erfundenen.
+        a =
+          Synthetisch.antwort(
+            lauf.art,
+            Map.get(socket.assigns, :facts, []),
+            Map.get(socket.assigns, :sessions, [])
+          )
+
         eintrag = %{art: :antwort, text: a.text, belege: a.belege, zeilen: lauf.zeilen}
 
         {:noreply,
@@ -352,12 +360,27 @@ defmodule HubWeb.CampaignLive.FragFenster do
       <li :for={b <- @belege} class="flex items-start gap-1.5 text-xs text-ink-2/70">
         <button
           type="button"
-          class="text-accent/70 hover:text-accent shrink-0"
-          title="Zur Stelle springen (im Prototyp ohne Wirkung — die Belege sind erfunden)"
+          phx-click={b[:utterance_id] && "focus_utterance"}
+          phx-value-id={b[:utterance_id]}
+          disabled={is_nil(b[:utterance_id])}
+          class={[
+            "shrink-0",
+            if(b[:utterance_id],
+              do: "text-accent/70 hover:text-accent",
+              else: "text-ink-2/25 cursor-default"
+            )
+          ]}
+          title={
+            if b[:utterance_id],
+              do: "Zur Stelle im Protokoll springen",
+              else: "Kein Ziel — dieser Beleg ist erfunden (keine Fakten geladen)"
+          }
         >
           ↗
         </button>
-        <span class="font-mono text-[10px] text-ink-2/50 shrink-0">{b.sitzung}·{b.block}</span>
+        <span class="font-mono text-[10px] text-ink-2/50 shrink-0">
+          {b.sitzung}{if b.block != "", do: "·#{b.block}"}
+        </span>
         <span class="truncate">{b.text}</span>
       </li>
     </ul>
