@@ -124,7 +124,7 @@ defmodule Worker.Jack.Zeit.Stand do
       # gewinnt (der Prüf-Lauf erbt sie samt Zweifeln, und `:zweifel` ist aus
       # der Kette allein nicht ableitbar: eine unklare Zeile liegt drin wie
       # eine sichere).
-      einordnung: opts[:einordnung] || aus_kette(opts[:kette]),
+      einordnung: opts[:einordnung] || aus_kette(opts[:kette], mitschnitt),
       # **Ob eine Kette geladen wurde, ist eine andere Frage als, ob sie leer
       # ist** (#1247). Der Speicher braucht die Unterscheidung: Ein Lauf ohne
       # geladene Kette darf NICHTS begraben (er weiss nichts vom Bestand), ein
@@ -209,13 +209,28 @@ defmodule Worker.Jack.Zeit.Stand do
   # Eine Zeile, die in einem Glied liegt, ist eingeordnet; eine gelöste ist
   # Tischgespräch. `nil` (kein `kette:`) ergibt eine leere Map — dann ist
   # nichts eingeordnet, und das ist für eine frische Kampagne richtig.
-  defp aus_kette(nil), do: %{}
+  #
+  # **Gezählt werden nur die EIGENEN Zeilen** (#1247, 25.09.2026, am laufenden
+  # Lauf gefunden). Die Kette ist kampagnenweit, der Mitschnitt ist die eine
+  # Sitzung — ohne den Filter trug `einordnung` 8.213 Einträge bei 3.385
+  # eigenen Zeilen, und `zahlen()` meldete „eingeordnet 8213, ohne Einordnung
+  # -4828". Die Schranke von `fertig()` blieb richtig (`ohne_einordnung/1`
+  # rechnet über eine Liste), aber der **Hinweis** war still tot: `anker.ex`
+  # prüft `> 0` und zeigte deshalb nie etwas, `lesen.ex` zeigte eine negative
+  # Zahl. Genau die Führung, die Jack beim Einsortieren braucht.
+  #
+  # Fremde Zeilen gehören ohnehin nicht hinein: Er darf sie nicht entscheiden.
+  defp aus_kette(nil, _mitschnitt), do: %{}
 
-  defp aus_kette(kette) do
-    drin = for u <- Kette.reihenfolge(kette), into: %{}, do: {u, :ingame}
+  defp aus_kette(kette, mitschnitt) do
+    eigene = MapSet.new(mitschnitt, & &1.utterance_id)
+    drin = for u <- Kette.reihenfolge(kette), MapSet.member?(eigene, u), into: %{}, do: {u, :ingame}
     # `draussen` ist laut `Kette.t()` immer eine Map — ein `|| %{}` daneben
     # wäre toter Code, und der Dialyzer sagt das auch (er hat es hier gefangen).
-    Enum.into(Map.keys(kette.draussen), drin, &{&1, :tisch})
+    kette.draussen
+    |> Map.keys()
+    |> Enum.filter(&MapSet.member?(eigene, &1))
+    |> Enum.into(drin, &{&1, :tisch})
   end
 
   @doc """

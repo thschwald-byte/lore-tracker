@@ -2407,6 +2407,32 @@ man nachweisen will; der erste Wurf des Tests sah eine, wo zwei waren.
 Gezählt wird deshalb über den Beobachter (`beobachter:`-Option, Ereignis
 `mahnung`), nicht über `bericht.nachrichten`.
 
+#### Die Einordnung zählt nur die eigenen Zeilen
+
+Ein Folgefehler des Kette-Erbes (s. „Die Kette ist persistent"), am laufenden
+Lauf aufgeschlagen: `aus_kette/1` leitete die Einordnung aus der
+**kampagnenweiten** Kette ab, `utterances` meint die **eine Sitzung**. An
+seattleV5 S2 trug `einordnung` damit 8.213 Einträge bei 3.385 eigenen Zeilen,
+und `zahlen()` meldete „eingeordnet 8213, ohne Einordnung **-4828**".
+
+**Die Schranke von `fertig()` blieb dabei richtig** — `ohne_einordnung/1`
+rechnet über eine Liste, nicht über die Zahl. Kaputt war der **Hinweis**:
+`anker.ex` prüft `> 0` und zeigte deshalb nie etwas, `lesen.ex` zeigte eine
+negative Zahl. Also genau die Führung, die Jack beim Einsortieren braucht, und
+zwar still.
+
+Seitdem filtert `aus_kette/2` auf die Utterances des Mitschnitts. Fremde Zeilen
+gehören ohnehin nicht in Jacks Entscheidungsbuch: Er darf sie nicht
+entscheiden. Der Test von zuvor pinnte das Gegenteil (`einordnung["v1"] ==
+:ingame`) — das war die Folge der Implementierung, nicht die Absicht des Tests
+(„stört nicht"); er prüft jetzt die Abwesenheit und zusätzlich, dass die Zahlen
+möglich bleiben (`eingeordnet <= utterances`, `ohne_einordnung >= 0`).
+
+**Offen geblieben:** Die Klammer von `lies_kette()` mischt weiterhin drei
+kampagnenweite Zahlen mit einer eigenen („41 Glieder, 6.235 Zeilen drin, 1.978
+draussen, 0 unentschieden"). Jack hat in zwei Läufen darüber gerätselt, welche
+Zahl seine ist.
+
 #### Eine Schleife im Denken — und was ein Befund verschweigt
 
 Am 25.09.2026 lief der Prüf-Lauf auf seattleV5 S2 in eine Schleife, die

@@ -86,14 +86,39 @@ defmodule Worker.Jack.Zeit.EinordnungAusKetteTest do
       assert s.einordnung == geerbt
     end
 
-    test "eine Zeile, die nicht im Mitschnitt steht, stört nicht" do
+    test "eine fremde Zeile kommt NICHT in die Einordnung" do
       # Die Kette der KAMPAGNE trägt auch Glieder anderer Sitzungen; ihre
       # Äußerungen kommen im Mitschnitt dieser Sitzung nicht vor.
+      #
+      # **Die Erwartung hat sich gedreht** (#1247, 25.09.2026): Bis dahin
+      # stand hier `s.einordnung["v1"] == :ingame` — die fremde Zeile wurde
+      # eingetragen. Das war die Folge der Implementierung, nicht die Absicht
+      # des Tests („stört nicht"), und es hatte eine Wirkung, die am
+      # laufenden Lauf aufschlug: `einordnung` trug 8.213 Einträge bei 3.385
+      # eigenen Zeilen, `zahlen()` meldete „ohne Einordnung -4828", und der
+      # Hinweis „noch ohne Einordnung" war still tot (`anker.ex` prüft
+      # `> 0`). Die Schranke von `fertig()` blieb richtig, weil sie über eine
+      # Liste rechnet — nur die Zahl war unmöglich.
+      #
+      # Fremde Zeilen gehören nicht in Jacks Entscheidungsbuch: Er darf sie
+      # nicht entscheiden.
       {:ok, fremd, _} = Kette.anhaengen(bestand(), ["v1", "v2"], grund: "andere Sitzung")
       s = Stand.neu(:einsortieren, mitschnitt(), kette: fremd)
 
       assert Stand.ohne_einordnung(s).anzahl == 2, "die fremden Zeilen ändern nichts"
-      assert s.einordnung["v1"] == :ingame
+      refute Map.has_key?(s.einordnung, "v1")
+      refute Map.has_key?(s.einordnung, "v2")
+    end
+
+    test "und die Zahlen bleiben dadurch möglich" do
+      # Der eigentliche Schaden war eine negative Zahl in `zahlen()`.
+      {:ok, fremd, _} = Kette.anhaengen(bestand(), ["v1", "v2"], grund: "andere Sitzung")
+      z = Stand.zahlen(Stand.neu(:einsortieren, mitschnitt(), kette: fremd))
+
+      assert z.eingeordnet <= z.utterances,
+             "mehr eingeordnete Zeilen als Zeilen der Sitzung kann es nicht geben"
+
+      assert z.ohne_einordnung >= 0, "eine negative Zahl ist keine Auskunft"
     end
   end
 end
