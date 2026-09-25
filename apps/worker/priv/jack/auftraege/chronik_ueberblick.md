@@ -139,6 +139,15 @@ längeren Faktenliste), in eine neue — oder begründet unter
 ohnehin mit. `fertig()` nennt dir die offenen Fakten beim
 Namen, falls doch noch welche übrig sind.
 
+## Manche Fakten tragen eine Zeitlinie
+
+An manchen Fakten steht `Zeitlinie: …` — ein anderer Lauf hat im Gesprochenen
+nach Zeitangaben gesucht und sie dort eingetragen, mit ihrem Beleg oder als
+`(gerechnet)`. **Für deinen Auftrag ist das ein Hinweis, keine Vorgabe:** Sie
+kann dir helfen zu sehen, was zusammen geschah und was weit auseinanderliegt.
+Einordnen tust du nach dem Inhalt; die Zeitlinie prüft der Schreib-Lauf an
+ihrem Beleg, nicht du hier.
+
 ## Wie hier gearbeitet wird
 
 Du sitzt **nicht in einem Chatfenster**. Niemand liest, was du in deine Antwort

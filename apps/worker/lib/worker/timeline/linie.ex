@@ -222,6 +222,17 @@ defmodule Worker.Timeline.Linie do
       roh
       | kette: Enum.flat_map(alle, fn g -> for u <- g.utts, do: je_utterance[u] end),
         nach_utterance: je_utterance,
+        # **`anker_an` wird auf die ÄUSSERUNGEN zurückgeschlüsselt** (#1247,
+        # 25.09.2026). `roh` entsteht auf Gliedern, weil die Rechnung dort
+        # läuft — `auf_glieder/2` ersetzt dafür die `utterance_ids` eines
+        # Ankers durch Glied-IDs. Damit lag `anker_an` unter Glied-IDs, und
+        # `anker_fuer/2` fand für eine Äußerung **nie** einen Anker: Es
+        # lieferte nur die gerechnete Stelle, ohne Ausdruck und ohne Beleg.
+        #
+        # Unsichtbar, solange niemand die Details braucht — Z3 braucht sie:
+        # Die Chronik soll die Zeit der Kette prüfen können, und das geht nur
+        # am Wortlaut. Gefunden hat es der Test, der den Beleg einforderte.
+        anker_an: anker_an(anker, MapSet.new(Map.keys(kette.draussen))),
         geloest: MapSet.new(Map.keys(kette.draussen))
     }
     |> Map.put(:glieder, roh.kette)
@@ -300,6 +311,12 @@ defmodule Worker.Timeline.Linie do
             |> Map.put(:art, art(a))
             |> Map.put(:wert, Map.get(a, :wert))
             |> Map.put(:welt, Map.get(a, :welt))
+            # **Der Beleg reist mit** (#1247, 25.09.2026). Ein Leser soll die
+            # Zeit prüfen können, nicht nur glauben — und das geht nur am
+            # Wortlaut, aus dem sie gelesen wurde. Der Chronik-Jack bekommt sie
+            # als Angebot und ist ausdrücklich nicht verpflichtet, sie zu
+            # übernehmen; ohne Zitat hätte er dafür keine Grundlage.
+            |> Map.put(:beleg, Map.get(a, :beleg) || "")
             |> Map.put(:zweifel, Map.get(a, :zweifel) || stelle.zweifel)
           end)
       end

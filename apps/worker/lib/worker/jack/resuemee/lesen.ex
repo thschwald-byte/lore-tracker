@@ -287,10 +287,33 @@ defmodule Worker.Jack.Resuemee.Lesen do
   defp boegen_text([]), do: "—"
   defp boegen_text(bs), do: Enum.map_join(bs, "; ", &"#{&1.titel} (#{&1.art})")
 
+  # **Die Zeit eines Fakts kann aus zwei Quellen kommen, und beide stehen da.**
+  #
+  # `datum`/`erzaehlzeit` stammen aus der Extraktion (Felder am Fakt),
+  # `zeit_linie` aus der Kette (#1247) — der Zeit-Jack hat sie am gesprochenen
+  # Wort gelesen und ihren Beleg mitgegeben.
+  #
+  # Maintainer, 25.09.2026: „er kann und darf abweichen — und er soll nicht
+  # ungeprüft übernehmen." Deshalb verdrängt die Kette das Fakt-Feld NICHT:
+  # Wo beide etwas sagen, sieht das Modell beides und entscheidet am Beleg.
+  # Würde eines das andere ersetzen, gäbe es nichts zu prüfen — und ein
+  # falscher Anker der Kette verbiegt die Chronik lautlos.
+  #
+  # Nur der Chronik-Jack bekommt das Feld überhaupt gefüllt
+  # (`Chronik.Eingabe.mit_zeitlinie/2`); für Resümee und Epos ist die Zeile
+  # byte-gleich wie zuvor.
   defp zeit_text(f) do
-    case Enum.reject([f.datum, @erzaehlzeit[f.erzaehlzeit]], &is_nil/1) do
+    case Enum.reject([f.datum, @erzaehlzeit[f.erzaehlzeit], kette_text(f)], &is_nil/1) do
       [] -> "—"
       teile -> Enum.join(teile, " · ")
+    end
+  end
+
+  defp kette_text(f) do
+    case Map.get(f, :zeit_linie) do
+      nil -> nil
+      "" -> nil
+      text -> "Zeitlinie: #{text}"
     end
   end
 

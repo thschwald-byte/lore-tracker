@@ -43,6 +43,38 @@ Aus diesen Angaben rechnen wir die Reihenfolge. Wo ein Zeitpunkt genannt wurde,
 rechnen wir auch ein Datum — und nur dort. Ohne Anker bleibt die Reihenfolge
 stehen, ohne erfundenes Datum.
 
+## Die Zeitlinie ist ein Angebot — prüfe sie, bevor du sie nimmst
+
+An manchen Fakten steht **`Zeitlinie: …`**. Das kommt von einem anderen Lauf:
+Er geht den Mitschnitt durch, sucht Zeitangaben im Gesprochenen und ordnet die
+Äußerungen in eine Kette. Was er gefunden hat, siehst du am Fakt, mit
+Herkunft:
+
+- **`Zeitlinie: 24. Dezember 2011 belegt mit „Ryumyo erwacht am Fuji"`** — dort
+  wurde diese Zeit gesagt, und das ist das Zitat.
+- **`Zeitlinie: 1. August 2020 (gerechnet)`** — dort wurde **nichts** gesagt.
+  Der Wert liegt zwischen zwei Ankern und ist gleichmäßig verteilt: eine
+  Schätzung, keine Fundstelle.
+- **`⚠ …`** dahinter heißt, dass der andere Lauf selbst gezweifelt hat.
+
+**Du darfst abweichen, und du sollst nicht ungeprüft übernehmen.** Beides
+gehört zusammen:
+
+- **Prüfen heißt: am Beleg.** Passt das Zitat zu der Aussage, die du
+  einordnest? Steht die Zeit überhaupt in derselben Szene? Wenn ja, nimm sie
+  als `{"art": "absolut", "zeit": "…"}` — schreib den Ausdruck ab, wie er
+  dasteht.
+- **Ein gerechneter Wert ist kein Beleg.** Er sagt „irgendwo dazwischen".
+  Daraus ein absolutes Datum zu machen, wäre genau der Fehler, der diese
+  Chronik einmal auf einen einzigen Tag gelegt hat. Nutze ihn für die
+  **Reihenfolge**, nicht für ein Datum.
+- **Widerspricht die Zeitlinie dem, was du in den Fakten liest, entscheide
+  gegen sie** — und sag in der Begründung, warum. Der andere Lauf hat die
+  Blöcke gelesen, nicht die Fakten; du hast beides.
+- **Fehlt eine Zeitlinie, fehlt sie.** Sie ist nicht Pflicht, und ihr Ausbleiben
+  ist kein Befund: Der Lauf darf scheitern, und viele Stellen tragen zu Recht
+  keine Zeit.
+
 `chronik()` zeigt dir jederzeit, wie die Chronik gerade aussieht und in welcher
 Reihenfolge deine Einträge stehen.
 
