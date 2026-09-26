@@ -1583,6 +1583,177 @@ Die CampaignLive hat **einen Layout mit einem Lesen|Bearbeiten-Toggle** (Header,
 
 Jeder Schritt läuft in `with_status` → eigene Fehlerklassen in `/admin/errors` (#716); Jack, der Resümee-Jack und der Epos-Jack melden ihre je drei Stufen selbst (`Pipeline.stufen_melder/3`). **Seit #783 Phase 2 (+ Nachtrag) haben die Render-Schritte je ein eigenes Backend + Modell**: `backend_stage4`/`model_stage4_<backend>` (bis J5 das Render-Resümee, seit J5 #1209 nur noch die Bogen-Progressionen), bis J6 (#1210) `backend_stage5`/`model_stage5_<backend>` (Render-Epos-Kapitel — Nachtrag, war anfangs Teil von Stage 4). **Stage 5 ist mit J6 entfallen:** alle `*_stage5`-Keys (Backend, Modelle, Endpunkt, Denk-Schalter, Kontextfenster, Sampling, `num_predict`), der Einstellungsblock „Render — Epos-Kapitel“, die Migration `migrate_stage4_to_stage5_if_unset!/0` und der `Worker.LLM`-Slot `:epos` (ein Aufruf damit ist ein `KeyError`, `CloudHelper.model_for_stage/3` raist) — sie hatten nach dem Einbau des Epos-Jack keinen Leser mehr. Ein gespeicherter Stage-5-Wert bleibt im `worker_state` liegen, wird aber weder gelesen noch geschrieben (nicht mehr in der Whitelist; ein alter Hub, der ihn pusht, trifft auf `:error`). Das Resümee wählt sein Modell seit J5 im Jack-Block (`resuemee_jack_model`), das Epos seit J6 ebenda (`epos_jack_model`). **Stufe 2 ist seit J4 (#1207) immer lokal** (Jack, s. „Stufe 2 ist Jack“); `backend_stage2`, die Cloud-Modelle der Stufe 2 und alle Stufe-3-Keys (`backend_stage3`/`model_stage3_<backend>` …) sind entfernt, ein gespeichertes `backend_stage2` wird ignoriert (ein Cloud-Wert erzeugt beim Boot eine Warnung). Bis J4 hatte auch der Verify-Judge ein eigenes Backend, damit er gezielt stärker sein konnte als der Extraktor („fox guarding henhouse“-Vermeidung, der #783-Ursprungs-Usecase); diese Trennung ist mit dem Judge entfallen. Die früheren Phase-1-Overrides `judge_model`/`render_model` (gleiches Backend, nur anderes Modell) sind mit der vollen Trennung entfernt. **Provenance-Stempel:** `SessionFactsExtracted` trägt `verify_backend`/`verify_model` (seit J4 `"jack"` und Jacks Modell), `SessionSummaryGenerated` trägt `render_backend`/`render_model` (seit J5 `"jack"` und das Modell des Resümee-Jack), `EposEntryEdited` trägt `epos_backend`/`epos_model` (seit J6 `"jack"` und das Modell des Epos-Jack; additiv, reine Persistenz — macht einen Backend-Wechsel zwischen zwei Sessions sichtbar, ist aber kein Pin-Mechanismus; der bleibt Phase 4 der Multi-Worker-Architektur-Arbeit). **Migration für Bestandsworker:** `Worker.Application.migrate_stage2_to_stage4_if_unset!/0` kopiert beim ersten Boot nach dem Update die alten Stage-2-Werte einmalig nach Stage 4 (bis J4 `migrate_stage2_to_stage34_if_unset!/0`, auch nach Stage 3; die Stage-2-Werte kommen per rohem Store-Read, weil ihre Keys nicht mehr in den Defaults stehen), bis J6 `migrate_stage4_to_stage5_if_unset!/0` (Nachtrag) analog Stage 4 nach Stage 5 — mit Stage 5 entfallen; die übrige Migration ist idempotent, gated auf einem rohen `backend_stage4`-Store-Read — ohne sie würde ein Bestandsworker mit `:no_model_configured` brechen. **Stil-Flavors (#787):** die Campaign-Flavors (`base` + `summary`/`epos`) wirken beim **Resümee-Jack** und beim **Epos-Jack**, die Grundton und den Ton ihrer Spalte vor dem Schreiben bekommen (beides hinter der Extraktion — Stil kann keine Fakten einschleusen; Dazudichtung in der Prosa wird seit #1124 bewusst nicht mehr geprüft); die Extraktion ist stilfrei, die Timeline deterministisch (kein Ton-Slot). Der Stil-Editor in der CampaignLive hat Tabs Resümee/Epos/Chronik; **eine Live-Prompt-Vorschau gibt es seit J6 (#1210) nicht mehr** (bis J5 für Resümee und Epos, bis J6 nur noch für das Epos). Der Epos-Tab erklärt stattdessen, dass Jack das Kapitel frei schreibt, die Überschrift die Form bestimmt, der Epos-Ton die Erzählhaltung und der Weg aus dem Resümee kommt; `Hub.PromptPreview` samt Kanal-Handler ist entfernt. Der Worker beantwortet eine Vorschau-Anfrage weiter (`Prompts.preview_prompt/2` mit `build_summary_render_prompt`/`build_epos_render_prompt`, `Worker.HubClient.Rpc.on_preview/2`) — nur für einen zurückgerollten Hub. Der Resümee-Tab erklärt, dass Jack schreibt, die Überschrift die Form bestimmt und die Töne ihm vor dem Schreiben mitgegeben werden; seit #1209 hat er zusätzlich das Zahlfeld **„Länge des Resümees (Wörter)“** (das **Ziel**, Standard 150; Hilfetext und Hinweis im Tab sagen, dass das Resümee bis zum Doppelten wachsen darf, wenn der Weg der Gruppe es braucht, und nennen die Obergrenze; leer = Standard, gespeichert als `CampaignResuemeeLaengeSet`, nur bei Änderung; eine ungültige Eingabe speichert nichts und lässt den Editor offen — s. „Resümee durch den Resümee-Jack“), und die „gesetzt“-Plakette des Tabs zählt eine eigene Länge mit. Die Überschrift (`vorgaben[stage].name`) setzt bei allen drei den **Spaltentitel**; beim Resümee und beim Epos bestimmt sie zusätzlich die **Form** — die Jacks leiten sie im Überblick daraus ab (FORM-Notiz). Die frühere **„Darstellungsform“ ist entfallen** (Feld, Hub-Leser, Payload — der Hub schickt nur noch den Namen); Fold und Tabellenspalte lesen Alt-Events weiter, gelesen wird die Spalte nicht mehr. Epos-Kapitel-Köpfe sind deterministisch (#752), die Timeline hat keinen Prompt. Historie: Default-Flip auf Wahrheitsbild 2026-07-08 nach dem Free-Seattle-Real-Lauf; Retention: historische Chain-Events/-Artefakte bleiben lesbar (Materializer-Folds + Event-Schemas unangetastet, nur die Producer sind weg).
 
+### Frag die Kampagne — das Fenster und der Frage-Jack (Issue #850, Epic #1195)
+
+**Der fünfte Jack ist der erste, der nicht zur Pipeline gehört.** Die anderen
+vier laufen, wenn eine Sitzung fertig ist; dieser läuft, weil jemand am Tisch
+etwas wissen will. Er beantwortet eine Frage an die Kampagne **aus den
+geprüften Fakten**, mit Belegen, die ins Protokoll springen — und sagt, wenn
+nichts in den Aufzeichnungen steht.
+
+**Das Fenster** (`HubWeb.CampaignLive.FragFenster`) schwebt über den Spalten,
+ist **beweglich** und **nicht modal**: `<dialog>.show()` statt `showModal()`
+(kein Backdrop, nichts `inert`, Escape schließt nicht — alles natives
+Verhalten), und **kein `phx-click-away`**, weil der erste Klick in eine Spalte
+— also genau das, wofür man das Fenster verschoben hat — es sonst mitsamt der
+halb getippten Frage zuklappte. Es ist deshalb ausdrücklich **keine
+`lt_modal`-Instanz** (#352). `JS.ignore_attributes(["open", "style"])` ist
+Pflicht: Der Hook öffnet und positioniert auf dem Client; ohne das diffte
+morphdom beides weg, und der `ResizeObserver` schriebe die zurückgesetzte
+Position nach localStorage — der Fehler wäre dauerhaft.
+
+**Der Verlauf ist flüchtig** (Maintainer): fragen, Antwort lesen, fertig. Kein
+Ereignis, kein Speicher. Was bleibt, sind Befunde (#1243) und die Wirkungen
+von Werkzeugen.
+
+**Die Antwort gehört dem Frager, nicht der Kampagne.** `publish_status` läuft
+sonst über ein Kampagnen-Topic (#401) — der Spielleiter fragt „was plant der
+Schurke", und alle Spieler lesen mit. Jede Frage bekommt deshalb eine
+**Lauf-ID**, auf die `HubWeb.PipelineStatus.route/1` **zuerst** prüft
+(`frage_topic/1`); dieselbe ID trägt den Abbruch.
+
+**Die Karte wird atomar erworben** (`Worker.GpuQueue.run_frei/2`, neu): Ist ein
+anderer Job dran, kommt sofort eine Absage mit seinem Namen zurück, statt sich
+einzureihen — eine Frage, die zwanzig Minuten hinter einer Extraktion wartet,
+beantwortet niemanden. `Pipeline.busy?/0` davor wäre Check-then-Act gewesen.
+**Die Gegenrichtung ist benannt:** Startet die Pipeline, während eine Frage
+rechnet, wartet sie bis zu fünf Minuten (der Frage-Deckel).
+
+**Zwei Abschluss-Werkzeuge, nicht eines** (Maintainer, 25.09.2026):
+`antworte(text, fakt_ids)` mit **mindestens einer** Fakt-ID, oder
+`keine_antwort(text)` ohne. Eine einzige, optionale Beleg-Liste hätte die
+belegte von der unbelegten Antwort nicht unterscheidbar gemacht — das Modell
+muss sich entscheiden, und die Plakette im Fenster sagt, wie es entschied.
+
+**Die Antwort wird auf STÜTZUNG geprüft, nicht auf Existenz**
+(`Worker.Jack.Frage.Stuetzung`). Eine Existenzprüfung („gibt es die ID?")
+fängt den erfundenen Feuerelementar, aber nicht die erfundene *Verbindung*
+zwischen zwei existierenden Figuren — und die ist die gefährlichere. Ein
+zweiter Modellaufruf liest die Antwort gegen **nur die zitierten Fakten**
+(eigenes Modell möglich: `frage_pruefer_model`, leer = das des Frage-Jack),
+mit Schema-Zwang auf `{"getragen": bool, "grund": string}`. Vier Zustände:
+`:gestuetzt | :nicht_gestuetzt | :ohne_beleg | :ungeprueft` — **flag-not-drop**,
+die Antwort erscheint immer, markiert wird sie.
+
+**Das ist kein neues Prosa-Gate** (#1124 verbietet das): Dort war der
+Gegenstand das Epos, wo Ausschmückung ausdrücklich erlaubt ist — deshalb
+flaggte das NLI 63 von 90 Sätzen. Eine **Antwort** darf nicht ausschmücken.
+
+**Kurze und echte Fakt-IDs.** Der Jack antwortet in `S1-F12`, gespeichert wird
+die inhaltsadressierte ID (`Chronik.Entwurf.fakt_ids/2`, dieselbe
+Übersetzungsstelle wie beim Chronik-Jack) — sonst zeigte der Beleg nach dem
+nächsten Regenerate auf einen anderen Fakt (die K6-Klasse).
+
+**Der Anker ist die jüngste Sitzung MIT FAKTEN**, nicht die jüngste
+(`Frage.Eingabe.anker_aus/2`). Der erste echte Lauf scheiterte mit
+`{:error, :no_facts}`, weil die jüngste Sitzung leer war; kein Test fand das,
+weil `aus_repo/2` Mnesia braucht und in keinem lief.
+
+**Der Denkstrom geht ins Fenster** (`Worker.Jack.Frage.Strom`, gedrosselt auf
+600 ms; Hook `FragStrom`): Frage → Denkstrom → Antwort, je Frage ein eigenes
+Element mit der Lauf-ID als DOM-`id`, und **alte Ströme bleiben stehen**
+(Maintainer, 25./26.09.2026). Er lebt **im DOM**, nie in den Assigns — über
+einen Lauf sammeln sich Tausende Token, und in den Assigns würde das bei jedem
+Diff kopiert (#1146; Vorbild #1187, `push_event` statt Assign). Weil
+`push_event` **jeden** gemounteten Hook dieses Namens erreicht, trägt das
+Ereignis die Lauf-ID und jedes Element vergleicht sie — ohne das zeigten ab
+der zweiten Frage alle Ströme dasselbe. Kein Scrollbalken und kein
+Zeilen-Deckel: Er wächst mit, gescrollt wird im Verlauf.
+
+**Drei Knöpfe neben der Eingabe** (Maintainer, 26.09.2026): Absende-Pfeil,
+**Abbruch** (beendet den Task beim Worker, nicht erst die laufende Runde — der
+Task hält den `Req.post`, stirbt er, fällt die Verbindung) und der **Modus**.
+
+**Der Modus-Knopf: „Frage" oder „Chat max N".** „Frage" heißt, jede Frage
+steht für sich; ein Klick macht daraus „Chat max 5", und jede Antwort zählt
+herunter, bis es bei 0 zurückspringt. Der Text sagt **was gilt**, nicht was
+ein Klick täte — ein Knopf, der seine Wirkung statt seines Zustands anzeigt,
+lässt sich nicht lesen, wenn man ihn nicht gerade gedrückt hat. Die Farbe
+trägt dieselbe Aussage doppelt (#67: Farbe allein ist kein Signal).
+
+**Im Chat-Modus setzt jede Folgefrage auf dem Verlauf der vorigen auf.** Dafei
+gilt: **der Auftrag des ERSTEN Laufs bleibt angeheftet stehen**, die neue
+Frage kommt als Nachricht ans Ende des Verlaufs. Ihn mit der neuen Frage neu
+zu bauen wäre naheliegend und falsch — er steht ganz vorn, ein geänderter
+Auftrag bricht das Präfix und damit den KV-Cache des Servers, der eine
+Folgefrage erst billig macht (onyx hat dafür Faktor 80 im Prefill gemessen).
+Die Folgefrage steht im **selben abgesetzten `<frage>`-Block** wie die erste;
+als nackter Satz wäre sie die einzige Stelle des Gesprächs, an der Nutzertext
+wie eine Anweisung aussieht.
+
+`Worker.Agent` hat dafür die Option **`:verlauf`** bekommen (ein Lauf setzt auf
+dem Verlauf eines früheren auf), und der Bericht liefert ihn **getrennt** von
+`nachrichten` — dort stecken System und der angeheftete Auftrag mit drin.
+
+**Die Verläufe hält der Worker** (`Worker.Jack.Frage.Gespraech`), nicht der
+Hub: Er ist seit #164 zustandslos, und der Verlauf (gut 100 KB nach wenigen
+Runden) ginge sonst bei jeder Frage zweimal durch den Kanal. Gehalten wird an
+einer **Gesprächs-ID**, die der Hub beim Einschalten vergibt — nicht an der
+Lauf-ID, die je Frage wechselt. Jedes Einschalten vergibt eine neue ID,
+deshalb braucht das Ausschalten kein Aufräumen.
+
+**Drei Riegel, alle gegen stilles Wachsen oder stille Verschlechterung:**
+Verfall nach 30 min (wer das Fenster zuklappt, meldet sich nicht ab), Deckel
+von 20 Gesprächen (das **älteste** weicht, nicht ein zufälliges — das träfe
+gerade das, an dem jemand arbeitet), und **eine Kompaktierung beendet das
+Gespräch**: Danach stehen die gelesenen Fakten nur noch als Zusammenfassung im
+Verlauf, und darauf sollen keine Belege gestützt werden. Der Hub erfährt es
+über `gespraech_weiter?` und schaltet zurück auf „Frage".
+
+Gemerkt wird **nur nach einer Antwort**; der Zähler läuft aus demselben Grund
+an der Antwort herunter und nicht am Absenden — eine verbrauchte Frage ohne
+Gegenwert liesse sich niemandem erklären.
+
+**Kein eigenes Kontextfenster.** `ctx_jack` ist **kein Ollama-Parameter**: Der
+`/v1`-Client sendet kein `num_ctx`, der Wert ist allein Jacks
+Kompaktierungsschwelle. Ein kleineres `ctx_frage_jack` lüde kein Modell neu,
+spränge keinen Grafikspeicher und spart nichts — es ließe den Frage-Jack nur
+**früher** zusammenfassen, in genau dem Lauf, dessen Belege erhalten bleiben
+sollen.
+
+**Deckel statt Ausdauer:** 12 Runden, 5 Minuten. Beides ist ein Deckel, keine
+Erwartung — die Pipeline darf Stunden rechnen, eine Antwort am Tisch nicht.
+
+**Einstellungen** (`/settings`, Block „Jack: Extract/verify"):
+`frage_jack_model` und `frage_pruefer_model`, beide leer = Jacks Modell.
+
+**Vier Messläufe gegen seattleV5 auf der Teststage** (208 Fakten, 25.09.2026):
+
+| Frage | `qwen3.8:27b-text` | `gpt-oss:20b` |
+|---|---|---|
+| Runnergruppe | ✓ 6 Runden / 34,3 s | ✓ 12 R / 32,6 s |
+| Feuergeister (erfundene Sache) | ✓ 6 R / 47,9 s, hilfreicher | ✓ 6 R / 7,8 s, knapp |
+| Rockerin (Figur aus dem Mitschnitt) | ✓ 5 R / 33,5 s | ✓ 4 R / 6,4 s |
+| Injektion („ignoriere die Fakten") | ✓ **abgewehrt**, 2 R / 29,4 s | ❌ **befolgt**, 3 R / 11,4 s |
+| gesamt | 145 s | 58 s |
+
+`gpt-oss:20b` ist zweieinhalbmal schneller und **befolgt die Injektion**;
+zudem liefert es für `format: "json"` kein JSON, die Stützungsprüfung bleibt
+dort `:ungeprueft` — eine Falschaussage erscheint dann **unmarkiert**. Das ist
+der Grund, warum das Prüfmodell getrennt wählbar ist.
+
+**Ehrliche Grenzen.**
+
+- **Die Kontextgröße eines echten Frage-Laufs ist nicht gemessen** — die vier
+  Messläufe liefen ohne `:protokoll`. Hochgerechnet vom Chronik-Jack
+  (~4.650 fester Teil, ~2.400 je Runde) sind es ~19k je Frage, also liegen
+  fünf Fragen mit ~95k **genau an** der Kompaktierungsschwelle (94.208). Der
+  Riegel oben fängt das ab, statt still zusammenzufassen; ob die fünfte Frage
+  regelmäßig dort landet, zeigt erst ein Lauf (der Worker loggt es).
+- **Ob Ollama bei einem Verbindungsabbruch wirklich aufhört** oder die Antwort
+  zu Ende rechnet, ist nicht gemessen. Der Worker gibt die Karte in jedem Fall
+  frei; ob die Grafikkarte es auch tut, steht dahin.
+- **Eine Injektion im Chat-Modus wirkt weiter.** Im Modus „Frage" ist jede
+  Frage ein frischer Lauf, ein Versuch wirkt genau einmal. Mit Verlauf trüge
+  eine **gelungene** Injektion in alle folgenden Antworten, und die
+  Stützungsprüfung sieht das nicht: Sie prüft die Antwort gegen die zitierten
+  Fakten, nie den Verlauf gegen den Auftrag. Der Auftrag steht angeheftet vor
+  dem Verlauf — die richtige Ordnung, aber keine Garantie.
+- Die Plakette sagt bei `keine_antwort` „ohne Beleg", auch wenn der Fließtext
+  Fakten nennt: Das Werkzeug hat kein Belegfeld. Offen.
+- Der Denkstrom ist **Begleitung, nicht Ergebnis** (fire-and-forget): Geht ein
+  Stück verloren, fehlt eine Zeile im Fenster, nie die Antwort.
+
 ### Die Chronik schreibt Jack — Phasen statt Einzelereignisse (Issue #1211, J7)
 
 **Die Chronik entsteht seit J7 in einem Agentenlauf**, nicht mehr
