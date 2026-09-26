@@ -1331,7 +1331,7 @@ Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only
 
 
 ```bash
-mix lore.pr_test.spawn                          # Default: current branch, Hub + 1 Worker + Romeo-Schlegel, cwd-Slot-Port
+mix lore.pr_test.spawn                          # Default: current branch, Hub + 1 Worker + seattleV5, cwd-Slot-Port
 mix lore.pr_test <branch> --seed                # explizite Variante (Branch + Flags)
 mix lore.pr_test <branch>                       # leere Mnesia — nur für Onboarding-Flow-Tests
 mix lore.pr_test <branch> --seed --admins id1,id2   # Multi-Worker (z.B. pull_since-Tests)
@@ -1341,7 +1341,26 @@ mix lore.pr_test <branch> --seed --admins id1,id2   # Multi-Worker (z.B. pull_si
 
 **Der Stage-Worker hält NIE das Prod-Discord-Gateway — außer mit `--discord` (Issue #1156).** Am 07.09.2026 fingen Teststages zweimal `/lore`-Befehle ab (Discord stellt eine Interaction genau EINEM verbundenen Worker zu; der Stage-Worker antwortete falsch, Tom verlor einen `/lore start`). Ursache: `load_dotenv/0` in `lore.pr_test.ex` schrieb JEDE `.env`-Zeile per `System.put_env` ins OS-Env — auch über eine in der Shell gesetzte Variable hinweg —, und der detached Worker erbte das echte `DISCORD_BOT_TOKEN`. Das war die Umkehrung von `config/runtime.exs` (dort gewinnt das OS-Env). Seit #1156: `.env` setzt nur noch, was im OS-Env fehlt (`dotenv_neu/2`, pur), und `Runner.worker_env/5` gibt dem Stage-Worker **fest** `DISCORD_BOT_TOKEN=invalid-prtest-token` mit — ein sicherer Default, keine Konvention. Nachweis im Worker-Log: `Discord.BotGate` meldet `:rejected`, nicht „Gateway verbunden". Wer das echte Gateway auf einer Stage braucht, sagt `mix lore.pr_test.spawn --discord` — und weiß dann, dass `worker_prod` es gleichzeitig hält. Port kommt aus dem **cwd-spezifischen Slot** in `CLAUDE.local.md` (siehe Local-Setup-Skelett) — jeder Worktree hat zwei reservierte Ports.
 
-**`--seed` ist Default**: ohne Daten zeigt die UI praktisch nichts (leeres Dashboard, kein Klick auf REC / Edit / Promote / Regenerate möglich). Romeo-Schlegel hat 5 Sessions à mehrere Utterances, pre-generated Resümees / Epos / Chronik — voll-bestückt für jeden Spalten- und Button-Test.
+**`--seed` ist Default**: ohne Daten zeigt die UI praktisch nichts (leeres Dashboard, kein Klick auf REC / Edit / Promote / Regenerate möglich).
+
+**Der Stand ist seit #1260 seattleV5, nicht mehr Romeo** (`--daten v5|romeo`, Default `v5`). Nur an vier echten Sitzungen zeigen sich die Dinge, um die es seit Monaten geht — Speicherspitzen (#1087 ff.), die Fenster, Jack-Läufe, der Trichter der Chronik; Romeo hat auf Prod 174 Blöcke und erreicht die Pfade nicht, die an echten Daten brechen. `--daten romeo` bleibt für Onboarding- und Leerlauf-Tests (5 Sessions, pre-generated Resümees/Epos/Chronik, voll-bestückt für jeden Spalten- und Button-Test).
+
+**seattleV5 liegt AUSSERHALB des Repos und ist nicht eingecheckt** — der Mitschnitt trägt die echten Namen, Discord-IDs und Gespräche der Runde, und das Repo ist öffentlich. Der Abzug liegt unter **`~/.local/share/lore-jack/teststage/`** (`Shared.TeststageAbzug.standard_verzeichnis/0`; der Pfad wohnt in `shared`, weil der Hub-Task ihn ebenso braucht wie der Worker-Leser — zwei Konstanten an zwei Orten laufen auseinander, ohne dass etwas rot wird, #1090):
+
+```bash
+mix lore.teststage.abzug [--von worker_prod@<host>] [--nach <dir>]   # erzeugen
+mix lore.teststage.einspielen --nach <knoten> [--trocken]            # einspielen
+```
+
+**Ereignisse, nicht Mnesia** — und das ist der Punkt: Ein Mnesia-Archiv hängt am Knotennamen, ein Abzug von Port 4005 lässt sich auf 4001 nicht starten (daran ist der Versuch am 26.09.2026 gescheitert). Ereignisse sind die kanonische Quelle; `Worker.Materializer.apply_batch/1` lässt die Artefakte daraus **entstehen**, statt Tabellen roh zu kopieren. Deshalb ist das Einspielen auch wiederholbar: Was am Ziel schon liegt, wird übersprungen.
+
+**Eine Zeile je Ereignis, vier Schlüssel** (`event_id`, `hub_seq`, `payload`, `ts`) — **String-Keys, und `ts` gehört dazu**: Mit Atom-Keys wirft `Materializer.do_apply/1` `FunctionClauseError` und reisst den Worker um (am 25.09. genau so passiert), ohne `ts` greift der Auffangzweig und das Ereignis wird **still** verworfen. `seq: nil` ist richtig (kein Hub-Cursor). Sortiert wird über **alle** Dateien zusammen nach `ts`: Die Dateien sind je Tabelle getrennt und überlappen nicht (nachgezählt), aber die Kausalität läuft quer — eine Glättung liegt global, die Fakten dazu in der Kampagnentabelle.
+
+**Drei Riegel:** Ein Ziel im Arbeitsbaum wird abgewiesen (der Abzug darf nicht einchecken können), ein Knotenname mit `worker_prod` ebenso (die Ereignisse eines Teststands würden sich dort mit den echten mischen), und `MIX_ENV=prod` bricht beide Tasks ab. Doppelte `event_id` werden beim Lesen entfernt — am 25.09. entstand ein Abzug, in dem jedes Ereignis zweimal stand.
+
+**Fehlt der Abzug, fällt `spawn` LAUT auf Romeo zurück.** Auf einer frischen Maschine ist er nicht da; still zurückzufallen wäre schlimmer als ein Abbruch — man arbeitet eine Stunde an einer Stage, die nicht enthält, was man messen wollte.
+
+**Ehrliche Grenzen:** Der Abzug ist ein Stand vom 18.09.2026 (Sitzung 1 und 2 vollständig durch die Pipeline); die Zeit-Kette (#1247) und die Jack-Läufe von S3/S4 sind **nicht** drin. Und er altert — wer einen neueren Stand braucht, erzeugt ihn mit `lore.teststage.abzug` neu.
 
 Default-Admin-Discord-ID kommt aus `LORE_LOCAL_ADMIN_DISCORD_ID` (.env). Der Task:
 

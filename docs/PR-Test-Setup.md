@@ -175,15 +175,38 @@ Ports.allocate!()
   │     :rpc.call hub_node Hub.WorkerRegistry.list alle 2s, max 60s
   │     warten bis list != []
   │
-  ├─ ⑧ wenn seed?:
-  │     seed_romeo!(worktree, port, first_admin)
-  │       System.cmd("mix",
-  │         ["lore.seed.romeo",
-  │          "--hub", "http://localhost:4005",
-  │          "--as-admin", admin],
-  │         cd=worktree)
-  │       → applied 1500+ events via POST /dev/event → EventBridge
-  │         → online Worker materialisiert
+  ├─ ⑧ wenn seed?: daten_einspielen!(daten, …)   (#1260, Default :v5)
+  │
+  │     :v5 — seattleV5, wenn Shared.TeststageAbzug.vorhanden?
+  │       seed_v5!(worktree, tag)
+  │         System.cmd("mix",
+  │           ["lore.teststage.einspielen",
+  │            "--nach", "<tag>-worker-0@<host>"],
+  │           cd=worktree/apps/worker)
+  │         → 12552 Ereignisse aus ~/.local/share/lore-jack/teststage/
+  │           per RPC → Materializer.apply_batch/1 auf dem Stage-Worker
+  │           → Artefakte ENTSTEHEN daraus (nicht roh kopiert)
+  │
+  │       Abzug fehlt → LAUTE Meldung, dann Rückfall auf Romeo.
+  │       Still zurückzufallen wäre schlimmer als ein Abbruch: Man
+  │       arbeitet eine Stunde an einer Stage, die nicht enthält,
+  │       was man messen wollte.
+  │
+  │     :romeo — die kleine Demo (--daten romeo)
+  │       seed_romeo!(worktree, port, first_admin)
+  │         System.cmd("mix",
+  │           ["lore.seed.romeo",
+  │            "--hub", "http://localhost:4005",
+  │            "--as-admin", admin],
+  │           cd=worktree)
+  │         → applied 1500+ events via POST /dev/event → EventBridge
+  │           → online Worker materialisiert
+  │
+  │     Warum der v5-Weg NICHT über /dev/event geht: Der Hub-Endpunkt
+  │     hängt an einem online Worker und schickt jedes Ereignis einzeln
+  │     durch den Kanal. 12552 Ereignisse so einzuspielen ist langsam,
+  │     und der Weg über den Materializer ist derselbe, den ein
+  │     Worker-zu-Worker-Sync nimmt.
   │
   ├─ ⑨ update_claude_local_md!(port, branch, admins)
   │     Sektion "Currently running PR-test instances":
