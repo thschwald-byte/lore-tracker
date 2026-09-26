@@ -86,6 +86,23 @@ defmodule Worker.Jack.Frage.Gespraech do
   @spec anzahl(GenServer.server()) :: non_neg_integer()
   def anzahl(server \\ __MODULE__), do: GenServer.call(server, :anzahl)
 
+  @doc """
+  Gibt es ein Gespräch, das noch fortgesetzt werden kann? (#1259)
+
+  **Der Selbstupdate-Riegel braucht das** (`Worker.Updater.idle?/0`): Zwischen
+  zwei Fragen läuft kein GPU-Job, der Worker hielte sich für untätig und
+  startete neu — und weil die Verläufe im Arbeitsspeicher leben, wäre der
+  Zusammenhang danach still weg. Im Fenster stünde weiter „Chat max 3", und
+  die nächste Antwort kennte die vorige Frage nicht.
+
+  Gezählt wird gegen die Frist, nicht gegen die schiere Anwesenheit: Ein
+  verfallener Eintrag, den der Sweep noch nicht geholt hat, ist kein Gespräch
+  mehr — sonst hielte er das Update bis zu fünf Minuten länger auf, ohne dass
+  es jemandem nützt.
+  """
+  @spec offen?(GenServer.server()) :: boolean()
+  def offen?(server \\ __MODULE__), do: GenServer.call(server, :offen?)
+
   @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)
@@ -109,6 +126,11 @@ defmodule Worker.Jack.Frage.Gespraech do
   end
 
   def handle_call(:anzahl, _from, state), do: {:reply, map_size(state), state}
+
+  def handle_call(:offen?, _from, state) do
+    grenze = jetzt() - @ttl_ms
+    {:reply, Enum.any?(state, fn {_id, %{ts: ts}} -> ts >= grenze end), state}
+  end
 
   @impl true
   def handle_cast({:merken, id, stand}, state) do

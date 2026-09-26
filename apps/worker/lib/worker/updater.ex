@@ -381,7 +381,9 @@ defmodule Worker.Updater do
     not Worker.Repo.any_active_recording?() and
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
       not gpu_busy?() and
-      not pipeline_busy?()
+      not pipeline_busy?() and
+      not frage_busy?() and
+      not jack_busy?()
   catch
     # Ein hängender/abgestürzter Status-GenServer → konservativ „nicht idle".
     _, _ -> false
@@ -428,6 +430,61 @@ defmodule Worker.Updater do
         true
     end
   end
+
+  # Issue #1259: der Frage-Jack (#850) zählt als busy — und zwar in ZWEI
+  # Zuständen, von denen `gpu_busy?` nur den ersten sieht.
+  #
+  # **Ein laufender Lauf** hält die Karte, steht also in `GpuQueue.running` und
+  # wäre schon gedeckt. Fast: Zwischen der Registrierung des Tasks und dem
+  # Erwerb der Karte (`run_frei/2`) liegt ein kurzes Fenster, in dem die Karte
+  # frei ist und der Task trotzdem existiert. Deshalb wird die Registry
+  # gefragt, nicht die Warteschlange.
+  #
+  # **Ein offenes Chat-Gespräch** ist der eigentliche Grund. Zwischen zwei
+  # Fragen rechnet nichts: Der Fragende denkt nach und tippt. Ohne diesen Riegel
+  # hielte sich der Worker in genau dieser Pause für untätig und startete neu —
+  # und weil `Worker.Jack.Frage.Gespraech` im Arbeitsspeicher lebt, wäre der
+  # Verlauf danach weg. **Still weg:** Im Fenster stünde weiter „Chat max 3",
+  # die nächste Frage bekäme eine Antwort, und die kennte die vorige nicht. Wer
+  # das erlebt, hält es für ein schwaches Modell, nicht für einen Neustart —
+  # dieselbe Klasse wie der abgeschossene Whisper-Lauf (#1055).
+  #
+  # Ein vergessenes Fenster verzögert das Update um höchstens die Frist des
+  # Gesprächs (`Gespraech.ttl_ms/0`, 30 min); der Updater versucht es danach
+  # wieder. Das ist die gleiche Abwägung wie bei einer laufenden Aufnahme.
+  #
+  # Fehlerfall ist konservativ busy, wie bei `gpu_busy?` — ein hängender
+  # Prozess darf kein Update durchlassen.
+  @doc false
+  def frage_busy? do
+    laeuft =
+      case safe_call(Worker.Jack.Frage.Dienst, :laeuft_etwas?) do
+        false -> false
+        _ -> true
+      end
+
+    gespraech =
+      case safe_call(Worker.Jack.Frage.Gespraech, :offen?) do
+        false -> false
+        _ -> true
+      end
+
+    laeuft or gespraech
+  end
+
+  # Issue #1259: läuft irgendein Agentenlauf? `gpu_busy?` sieht nur die, die
+  # innerhalb der Pipeline laufen (`pipeline.ex` wickelt den ganzen Lauf in
+  # `GpuQueue.run/2`) — ein von Hand gefahrener Jack ist dort unsichtbar. Am
+  # 26.09.2026 hat genau das auf worker_prod einen 50-Minuten-Lauf gekostet:
+  # `Pipeline.busy? == false`, Queue leer, `idle? == true`, Halt mitten im Lauf.
+  #
+  # Fail-OPEN, anders als die Nachbarn: `Laeufe.anzahl/0` liefert bei fehlender
+  # Registry 0, und das ist hier richtig — ohne Registry gibt es keinen
+  # registrierten Lauf, und ein erfundenes „busy" blockierte das Update
+  # dauerhaft. Der Schutz liegt darin, dass die Registry im Anwendungsbaum
+  # neben dem Updater startet: Ist der da, ist sie es auch.
+  @doc false
+  def jack_busy?, do: Worker.Agent.Laeufe.anzahl() > 0
 
   # GenServer.call mit Schutz: Timeout/Exit wird zu nil (Caller behandelt nil
   # als „nichts läuft" bzw. der idle?-catch greift).

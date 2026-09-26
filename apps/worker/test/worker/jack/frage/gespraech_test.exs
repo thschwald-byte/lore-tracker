@@ -79,14 +79,21 @@ defmodule Worker.Jack.Frage.GespraechTest do
   test "das Holen hält am Leben" do
     h = halter()
     Gespraech.merken("g1", stand("eins"), h)
+    %{"g1" => %{ts: vorher}} = :sys.get_state(h)
+
     Process.sleep(5)
     Gespraech.holen("g1", h)
 
     # Verfallen soll, was niemand mehr fortsetzt — nicht, was lange dauert.
     # Geprüft am Zeitstempel im Zustand, weil die echte Frist 30 Minuten ist.
-    zustand = :sys.get_state(h)
-    assert %{"g1" => %{ts: ts}} = zustand
-    assert ts >= System.monotonic_time(:millisecond) - 5
+    #
+    # **Verglichen wird VORHER gegen NACHHER, nicht gegen die Uhr.** Ein
+    # `ts >= jetzt() - 5` war die erste Fassung, und es ist die #1157-Klasse:
+    # In der vollen Suite lagen mehr als 5 ms zwischen Aufruf und Assertion,
+    # der Test wurde einmal rot und danach zweimal grün. Ein Vergleich zweier
+    # Stempel desselben Vorgangs kennt keine Last.
+    %{"g1" => %{ts: nachher}} = :sys.get_state(h)
+    assert nachher > vorher, "das Holen hat den Zeitstempel nicht erneuert"
   end
 
   test "der Sweep wirft Verfallenes weg" do

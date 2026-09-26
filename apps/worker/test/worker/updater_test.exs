@@ -165,4 +165,254 @@ defmodule Worker.UpdaterTest do
     refute s.updating?
     assert s.task_ref == nil
   end
+
+  describe "frage_busy?/0 (#1259)" do
+    alias Worker.Jack.Frage.{Dienst, Gespraech}
+
+    setup do
+      clear_all_tables!()
+
+      ensure_started(Worker.TaskSupervisor, fn ->
+        Task.Supervisor.start_link(name: Worker.TaskSupervisor)
+      end)
+
+      ensure_started(Dienst.registry(), fn ->
+        Registry.start_link(keys: :unique, name: Dienst.registry())
+      end)
+
+      :ok
+    end
+
+    # Der Halter ist ein Singleton im Anwendungsbaum und überlebt Testdateien:
+    # In der vollen Suite lagen Gespräche aus `dienst_test.exs` darin, und
+    # `anzahl() == 1` war eine Annahme über fremden Zustand. Geleert wird
+    # deshalb beim Start, nicht gezählt was zufällig übrig ist.
+    defp start_gespraech! do
+      ensure_started(Gespraech, fn -> Gespraech.start_link([]) end)
+      :sys.replace_state(Process.whereis(Gespraech), fn _ -> %{} end)
+      :ok
+    end
+
+    test "Gespraech-Prozess nicht erreichbar → konservativ busy (fail-closed)" do
+      # Wie bei `gpu_busy?`: ein hängender Prozess darf kein Update
+      # durchlassen. Die Gegenrichtung wäre schlimmer — ein Update mitten im
+      # Gespräch verliert den Verlauf still.
+      if pid = Process.whereis(Gespraech) do
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
+      assert Updater.frage_busy?()
+    end
+
+    test "nichts läuft, kein Gespräch → nicht busy" do
+      start_gespraech!()
+      refute Updater.frage_busy?()
+    end
+
+    test "ein offenes Gespräch verhindert das Update — auch ohne laufenden Job" do
+      # DER Fall dieses Tickets: Zwischen zwei Fragen rechnet nichts. Ohne
+      # diesen Riegel hielte sich der Worker für untätig, startete neu, und der
+      # Verlauf wäre weg — im Fenster stünde weiter „Chat max 3".
+      start_gespraech!()
+      refute Updater.frage_busy?()
+
+      Gespraech.merken("g-offen", %{auftrag: "A", verlauf: [%{role: :user, content: "x"}]})
+      # Der Merk-Weg ist ein Cast; auf die Antwort des nächsten Calls warten.
+      assert Gespraech.anzahl() == 1
+
+      assert Updater.frage_busy?(), "ein offenes Gespräch muss ein Update verhindern"
+
+      Gespraech.verwerfen("g-offen")
+      assert Gespraech.anzahl() == 0
+      refute Updater.frage_busy?()
+    end
+
+    test "ein verfallenes Gespräch zählt NICHT mehr" do
+      # Sonst hielte ein Eintrag, den der Sweep noch nicht geholt hat, das
+      # Update bis zu fünf Minuten länger auf, ohne dass es jemandem nützt.
+      start_gespraech!()
+
+      Gespraech.merken("g-alt", %{auftrag: "A", verlauf: []})
+      assert Gespraech.anzahl() == 1
+
+      :sys.replace_state(Process.whereis(Gespraech), fn st ->
+        Map.update!(
+          st,
+          "g-alt",
+          &%{&1 | ts: System.monotonic_time(:millisecond) - 10 * Gespraech.ttl_ms()}
+        )
+      end)
+
+      refute Updater.frage_busy?()
+      assert Gespraech.anzahl() == 1, "gezählt wird gegen die Frist, nicht gelöscht"
+    end
+
+    test "ein registrierter Lauf verhindert das Update, auch vor dem Karten-Erwerb" do
+      # Zwischen `Registry.register` und `GpuQueue.run_frei` ist die Karte frei
+      # und der Task existiert trotzdem. `gpu_busy?` sieht dieses Fenster nicht.
+      start_gespraech!()
+      refute Updater.frage_busy?()
+
+      me = self()
+
+      task =
+        Task.async(fn ->
+          {:ok, _} = Registry.register(Dienst.registry(), "lauf-1", :frage)
+          send(me, :registriert)
+
+          receive do
+            :fertig -> :ok
+          after
+            5_000 -> :timeout
+          end
+        end)
+
+      assert_receive :registriert, 2_000
+      assert Updater.frage_busy?(), "ein registrierter Frage-Lauf muss ein Update verhindern"
+
+      send(task.pid, :fertig)
+      Task.await(task)
+    end
+  end
+
+  describe "die Verdrahtung (#1259)" do
+    @updater "lib/worker/updater.ex"
+
+    test "idle?/0 ruft frage_busy?/0 — ohne das ist der Riegel wirkungslos" do
+      # Ein fehlender Aufruf erzeugt keinen Fehler: `frage_busy?/0` wäre nur
+      # eine Funktion, die niemand ruft, und ein Update mitten im Gespräch
+      # käme weiterhin durch. Nichts würde rot (#1090-Klasse).
+      code = File.read!(@updater)
+      [idle, _] = String.split(code, "def gpu_busy?", parts: 2)
+
+      assert idle =~ "not frage_busy?()",
+             "idle?/0 fragt den Frage-Pfad nicht — der Riegel ist tot"
+    end
+  end
+
+  describe "jack_busy?/0 (#1259, der Prod-Vorfall vom 26.09.2026)" do
+    alias Worker.Agent.Laeufe
+
+    setup do
+      ensure_started(Laeufe.registry(), fn ->
+        Registry.start_link(keys: :duplicate, name: Laeufe.registry())
+      end)
+
+      :ok
+    end
+
+    test "kein Lauf → nicht busy" do
+      refute Updater.jack_busy?()
+    end
+
+    test "ein Agentenlauf verhindert das Update — auch ohne GPU-Queue-Eintrag" do
+      # DER Vorfall: Ein Hub-Deploy löste das Selbstupdate aus, und der Updater
+      # hielt den Node mitten in einem 50-Minuten-Zeit-Jack-Lauf. Live gemessen:
+      # Pipeline.busy? == false, Queue leer, idle? == true. Der Schutz der Jacks
+      # hing daran, dass `pipeline.ex` den ganzen Lauf in `GpuQueue.run/2`
+      # wickelt — wer einen Jack von Hand fährt, war ungeschützt.
+      me = self()
+
+      task =
+        Task.async(fn ->
+          Laeufe.anmelden("Worker.Agent.Modell.Ollama")
+          send(me, :laeuft)
+
+          receive do
+            :fertig -> :ok
+          after
+            5_000 -> :timeout
+          end
+        end)
+
+      assert_receive :laeuft, 2_000
+      assert Updater.jack_busy?(), "ein laufender Jack muss ein Update verhindern"
+      assert Laeufe.liste() == ["Worker.Agent.Modell.Ollama"]
+
+      send(task.pid, :fertig)
+      Task.await(task)
+    end
+
+    test "ein abgestürzter Lauf hält das Update NICHT für immer auf" do
+      # Der Grund für eine Registry statt eines Zählers: Der Eintrag hängt am
+      # Prozess. Ein Zähler, den ein abgestürzter Lauf nicht herunterzählt,
+      # blockierte das Update dauerhaft — schlimmer als der Vorfall selbst.
+      {:ok, pid} =
+        Task.start(fn ->
+          Laeufe.anmelden("stirbt")
+          Process.sleep(:infinity)
+        end)
+
+      ref = Process.monitor(pid)
+      # Warten, bis die Anmeldung wirklich durch ist.
+      Process.sleep(50)
+      assert Updater.jack_busy?()
+
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
+
+      # Die Registry räumt asynchron auf; kurz nachfassen statt zu raten.
+      wait_until(fn -> not Updater.jack_busy?() end)
+      refute Updater.jack_busy?()
+    end
+
+    test "ohne Registry ist es NICHT busy (fail-open, mit Absicht)" do
+      # Anders als `gpu_busy?` und `frage_busy?`: Ohne Registry gibt es keinen
+      # registrierten Lauf. Ein erfundenes „busy" blockierte das Update auf
+      # jeder Maschine ohne laufenden Worker — der Schutz liegt darin, dass die
+      # Registry im Anwendungsbaum neben dem Updater startet.
+      if pid = Process.whereis(Laeufe.registry()) do
+        try do
+          Supervisor.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
+      refute Updater.jack_busy?()
+    end
+
+    defp wait_until(pruefung, versuche \\ 40) do
+      cond do
+        pruefung.() -> :ok
+        versuche <= 0 -> :timeout
+        true -> Process.sleep(25) && wait_until(pruefung, versuche - 1)
+      end
+    end
+  end
+
+  describe "die Verdrahtung des Agenten-Riegels (#1259)" do
+    @lauf_ex "lib/worker/agent/lauf.ex"
+
+    test "laufen/1 meldet an UND ab — beides an EINER Stelle" do
+      # Angemeldet wird in `laufen/1`, nicht bei den Aufrufern: Läge es dort,
+      # müsste jeder Einstieg es kennen, und der eine, der es vergisst, ist
+      # wieder ungeschützt (#1153/#1204/#1090-Lehre). Ohne `abmelden` im
+      # `after` bliebe ein langlebiger Aufrufer für immer als „läuft" stehen.
+      code = File.read!(@lauf_ex)
+
+      assert code =~ "Worker.Agent.Laeufe.anmelden(",
+             "kein Anmelden in laufen/1 — jeder von Hand gefahrene Jack ist ungeschützt"
+
+      assert code =~ "Worker.Agent.Laeufe.abmelden()",
+             "kein Abmelden — ein langlebiger Aufrufer blockiert das Update dauerhaft"
+
+      [_, nach_try] = String.split(code, "after", parts: 2)
+
+      assert nach_try =~ "Laeufe.abmelden()",
+             "das Abmelden muss im after-Block stehen, sonst überlebt es einen Fehler nicht"
+    end
+
+    test "idle?/0 ruft jack_busy?/0" do
+      code = File.read!("lib/worker/updater.ex")
+      [idle, _] = String.split(code, "def gpu_busy?", parts: 2)
+
+      assert idle =~ "not jack_busy?()",
+             "idle?/0 fragt die Agentenläufe nicht — der Riegel ist tot"
+    end
+  end
 end

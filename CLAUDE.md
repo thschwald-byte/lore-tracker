@@ -939,6 +939,11 @@ schoss den laufenden Whisper ab. `gpu_busy?/0` zählt jetzt **laufende und
 wartende** Jobs (ein Halt verliert wartende ersatzlos — die Queue hält
 Closures) und ist im Fehlerfall **konservativ busy**; der abgelöste Check war
 an dieser Stelle fail-**open** und liess bei hängender Queue ein Update durch.
+**Seit #1259 stehen `jack_busy?/0` und `frage_busy?/0` daneben** — die Karte zu
+beobachten genügt nicht: Ein Jack ausserhalb der Pipeline steht in keiner
+Warteschlange (Prod-Vorfall 26.09.2026, 50 Minuten Lauf verloren), und ein
+offenes Chat-Gespräch (#850) rechnet zwischen zwei Fragen gar nichts, während
+ein Neustart seinen Verlauf trotzdem verliert (s. „Frag die Kampagne").
 
 **Warum die Queue nicht persistiert wird.** Naheliegend wäre „Warteschlange auf
 Platte". Geht nicht: sie hält **Closures**, und eine Closure überlebt keinen
@@ -1703,6 +1708,54 @@ Verlauf, und darauf sollen keine Belege gestützt werden. Der Hub erfährt es
 Gemerkt wird **nur nach einer Antwort**; der Zähler läuft aus demselben Grund
 an der Antwort herunter und nicht am Absenden — eine verbrauchte Frage ohne
 Gegenwert liesse sich niemandem erklären.
+
+**Ein Selbstupdate reisst keinen Agentenlauf mehr mit** (#1259). Der Riegel
+gilt für **jeden** Jack, nicht nur für den Frage-Jack: `Worker.Agent.laufen/1`
+meldet sich in `Worker.Agent.Laeufe` an, und `Updater.jack_busy?/0` fragt
+daran. **Anlass war ein Prod-Vorfall** (26.09.2026, 12:06): Ein Hub-Deploy löste
+das Selbstupdate aus, und der Updater hielt `worker_prod` mitten in einem
+50-minütigen Zeit-Jack-Lauf. `idle?/0` prüfte Aufnahme, Replay, GPU-Queue und
+Pipeline — **keines davon sieht einen Jack ausserhalb der Pipeline**; live
+gemessen war `Pipeline.busy? == false`, die Queue leer, `idle? == true`. Der
+Schutz der Jacks hing bis dahin an einem Zufall: `pipeline.ex` wickelt den
+**ganzen** Pipeline-Lauf in `GpuQueue.run/2`, und die Jacks darin waren
+mitgedeckt; in `worker/jack/` und `worker/agent/` gibt es keinen einzigen
+`GpuQueue`-Aufruf. Wer einen Jack von Hand fährt (`Zeit.Pipeline.einordnen`,
+`Epos.Pipeline.schreiben/3`, die Messläufe — alle in dieser Datei als Weg
+genannt), lief ungeschützt. **Angemeldet wird in `laufen/1`**, dem einen Punkt,
+durch den jeder Lauf geht, nicht bei den Aufrufern (#1153/#1204-Lehre). **Eine
+Registry, kein Zähler:** Der Eintrag hängt am Prozess und verschwindet bei
+einem Absturz von selbst — ein Zähler, den ein abgestürzter Lauf nicht
+herunterzählt, hielte das Update für immer auf. Dort **fail-open** (ohne
+Registry kein registrierter Lauf), anders als bei den Nachbarn; der Schutz
+liegt darin, dass die Registry neben dem Updater im Anwendungsbaum startet.
+**Offen: die Serialisierung (#1261).** Ein von Hand gefahrener Jack läuft nicht
+durch die `GpuQueue` und kann deshalb gleichzeitig mit Pipeline-Arbeit auf der
+Karte liegen — der Riegel schützt vor dem Update, nicht vor Gleichzeitigkeit.
+Ein Schaden daraus ist **nicht beobachtet**, belegt ist nur der fehlende
+Schutz; zwei Fallen stehen dort benannt (ein geschachteltes `GpuQueue.run`
+wäre ein Deadlock, s. `gap_fill.ex:18`, und ein stundenlanger Jack als
+Queue-Eintrag hielte jede Whisper-Transkription auf — welche Bahn er bekäme,
+ist eine eigene Entscheidung).
+
+Dazu speziell für den Frage-Jack (`Updater.frage_busy?/0`). Zwei Zustände, von denen
+`gpu_busy?` nur den ersten sieht: Ein **laufender Lauf** hält die Karte, steht
+also in `GpuQueue.running` — fast vollständig, denn zwischen der Registrierung
+des Tasks und dem Erwerb der Karte liegt ein kurzes Fenster, in dem die Karte
+frei ist und der Task trotzdem existiert (deshalb wird die Registry gefragt,
+`Dienst.laeuft_etwas?/0`). Der eigentliche Grund ist aber das **offene
+Chat-Gespräch**: Zwischen zwei Fragen rechnet nichts, der Fragende denkt nach
+und tippt. Ohne den Riegel hielte sich der Worker in genau dieser Pause für
+untätig und startete neu — und weil die Verläufe im Arbeitsspeicher leben, wäre
+der Zusammenhang **still** weg: Im Fenster stünde weiter „Chat max 3", die
+nächste Frage bekäme eine Antwort, und die kennte die vorige nicht. Wer das
+erlebt, hält es für ein schwaches Modell, nicht für einen Neustart (dieselbe
+Klasse wie der abgeschossene Whisper-Lauf, #1055). `Gespraech.offen?/0` zählt
+gegen die **Frist**, nicht gegen die schiere Anwesenheit — ein verfallener
+Eintrag, den der Sweep noch nicht geholt hat, hielte das Update sonst bis zu
+fünf Minuten länger auf. Beide Abfragen sind im Fehlerfall **konservativ
+busy**; ein vergessenes Fenster verzögert das Update um höchstens die
+Gesprächs-Frist (30 min), danach versucht der Updater es wieder.
 
 **Kein eigenes Kontextfenster.** `ctx_jack` ist **kein Ollama-Parameter**: Der
 `/v1`-Client sendet kein `num_ctx`, der Wert ist allein Jacks

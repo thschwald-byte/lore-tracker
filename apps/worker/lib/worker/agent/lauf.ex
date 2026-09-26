@@ -167,6 +167,14 @@ defmodule Worker.Agent.Lauf do
     protokoll = Protokoll.oeffnen(Keyword.get(opts, :protokoll), Keyword.get(opts, :beobachter))
     s = %{s | protokoll: protokoll}
 
+    # Issue #1259: HIER anmelden, nicht bei den Aufrufern — dies ist der eine
+    # Punkt, durch den jeder Jack-Lauf geht. `Worker.Updater.idle?/0` fragt
+    # daran, ob ein Lauf im Gange ist; ohne das hält ein Selbstupdate den Node
+    # mitten im Lauf an (am 26.09.2026 auf worker_prod passiert, 50 Minuten
+    # Arbeit verloren).
+    {modul_fuer_label, _} = s.modell
+    Worker.Agent.Laeufe.anmelden(inspect(modul_fuer_label))
+
     try do
       {modul, modell_opts} = s.modell
 
@@ -182,6 +190,7 @@ defmodule Worker.Agent.Lauf do
 
       s |> schleife() |> abschluss()
     after
+      Worker.Agent.Laeufe.abmelden()
       Protokoll.schliessen(protokoll)
     end
   end

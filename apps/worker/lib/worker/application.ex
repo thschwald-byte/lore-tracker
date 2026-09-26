@@ -107,6 +107,10 @@ defmodule Worker.Application do
             # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
             # interne campaign_id.
             {Registry, keys: :unique, name: Worker.Discord.Registry},
+            # Issue #1259: Registry der laufenden AGENTENLÄUFE (jeder Jack, auch
+            # von Hand gefahren). Der Updater fragt daran, ob er halten darf —
+            # `gpu_busy?` sieht nur Jacks innerhalb der Pipeline.
+            {Registry, keys: :duplicate, name: Worker.Agent.Laeufe.registry()},
             # Issue #850: Registry der laufenden Frage-Läufe, Key = Lauf-ID des
             # Hub. Ein Lauf ist ein Task; die Registry macht ihn zum Abbrechen
             # wiederauffindbar und verhindert, dass dieselbe ID zweimal läuft.
