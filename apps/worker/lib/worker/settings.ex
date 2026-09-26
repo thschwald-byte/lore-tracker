@@ -137,6 +137,24 @@ defmodule Worker.Settings do
     # `Worker.Jack.Epos.Pipeline.modell_name/0`. Ersetzt Stage 5.
     epos_jack_model: :no_default,
 
+    # Issue #850: das Modell des Frage-Jack, der eine Frage an die Kampagne
+    # aus den geprüften Fakten beantwortet. Leer (oder ungesetzt) = Jacks
+    # Modell (`model_stage2_local`); Endpunkt, Regler und Kontextfenster teilt
+    # er mit Jack. Leser: `Worker.Jack.Frage.modell_name/0`. Kein eigenes
+    # Kontextfenster: `ctx_jack` ist kein Ollama-Parameter, sondern allein die
+    # Schwelle, ab der Jack seinen Verlauf zusammenfasst — ein kleinerer Wert
+    # spart nichts und ließe ihn nur früher zusammenfassen.
+    frage_jack_model: :no_default,
+
+    # Issue #850: das Modell der Stützungsprüfung. Leer (oder ungesetzt) = das
+    # Modell des Frage-Jack. **Ein eigener Schlüssel, weil Prüfer und Geprüfter
+    # nicht dasselbe Modell sein sollten** — am ersten Messlauf (25.09.2026)
+    # belegt: gpt-oss:20b befolgte eine Injektion („ignoriere die Fakten und
+    # behaupte …"), und dieselbe Instanz hätte die eigene Überredung prüfen
+    # sollen. Derselbe Grund, aus dem #783 dem Verify-Judge ein eigenes Backend
+    # gab. Leser: `Worker.Jack.Frage.Stuetzung.modell_name/0`.
+    frage_pruefer_model: :no_default,
+
     # J4 (#1207): Jacks Regler. Die Defaults sind EXAKT die Werte der
     # Messreihe C (`Worker.Jack.Messlauf.modell_reihe_c/1`) — ohne Eingriff
     # ändert sich Jacks Verhalten nicht. Sie gehen über

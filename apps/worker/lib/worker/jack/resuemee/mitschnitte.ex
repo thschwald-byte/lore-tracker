@@ -69,6 +69,14 @@ defmodule Worker.Jack.Resuemee.Mitschnitte do
       " In der Chronik dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die " <>
         "Fakten."
 
+  # Issue #850: beim Frage-Jack ist der Mitschnitt das, worin man nachliest,
+  # wenn ein Fakt allein die Frage nicht beantwortet — es gibt kein Werk, für
+  # das er „der Stoff" wäre.
+  defp zum_verstehen(%{art: :frage}),
+    do:
+      " Der Mitschnitt zeigt, wie eine Stelle wirklich gefallen ist — nimm ihn, wenn ein " <>
+        "Fakt allein die Frage nicht beantwortet."
+
   defp zum_verstehen(_s),
     do: " Im Resümee dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die Fakten."
 

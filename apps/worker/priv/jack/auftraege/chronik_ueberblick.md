@@ -115,7 +115,7 @@ Jede Gruppe ist eine `notiz()` mit:
   zugleich die Wichtigkeit des späteren Eintrags — ein eigenes Feld dafür
   gibt es nicht.
 - einem **Schlüssel**, unter dem du sie wiedererkennst (`insel-auftrag`,
-  `tod-kodex`). Derselbe Schlüssel erneut geschrieben ersetzt die Gruppe —
+  `tod-fixer`). Derselbe Schlüssel erneut geschrieben ersetzt die Gruppe —
   so nimmst du später Fakten hinzu.
 - einer **Zeile**, die sagt, worum es geht,
 - den **Fakten**, die dazugehören.

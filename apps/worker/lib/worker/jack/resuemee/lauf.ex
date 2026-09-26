@@ -33,14 +33,16 @@ defmodule Worker.Jack.Resuemee.Lauf do
 
   Optionen: `:modell` (ohne es `Worker.Jack.Pipeline.modell/0`),
   `:kontext_fenster` (ohne es `Worker.Jack.Pipeline.kontext_fenster/0`;
-  mindestens `Worker.Jack.Phase.mindestfenster/0`), `:auftrag`,
+  mindestens `Worker.Jack.Phase.mindestfenster/0`), `:auftrag`, `:verlauf`
+  (ein Verlauf, auf dem dieser Lauf aufsetzt — siehe `Worker.Agent`),
   `:denken_zurueck` (Default `false`), `:max_runden` (5000), `:max_ms`
   (6 Stunden), `:beobachter`, `:stand_beobachter`, `:protokoll`, `:bei_stopp`
   (Default `Worker.Jack.Phase.nachhaken/1`).
 
-  Liefert `{:ok, %{stand:, runden:, ms:}}`, wenn der Jack mit `fertig`
-  abschloss, sonst `{:error, {fehler, ende}}`; ohne Fakten
-  `{:error, :keine_fakten}`.
+  Liefert `{:ok, %{stand:, runden:, ms:, verlauf:, kompaktierungen:}}`, wenn
+  der Jack mit `fertig` abschloss, sonst `{:error, {fehler, ende}}`; ohne
+  Fakten `{:error, :keine_fakten}`. `verlauf` ist der Verlauf, den ein
+  Folgelauf über `:verlauf` fortsetzen kann (#850).
   """
   @spec starten(map(), keyword(), (-> Stand.t()), (-> term()), atom(), map()) ::
           {:ok, map()} | {:error, term()}
@@ -101,6 +103,7 @@ defmodule Worker.Jack.Resuemee.Lauf do
         modell: modell,
         system: Systemprompt.pi(),
         nachrichten: [%{role: :user, content: auftrag}],
+        verlauf: Keyword.get(opts, :verlauf, []),
         denken_zurueck: Keyword.get(opts, :denken_zurueck, false),
         werkzeuge: jack.werkzeuge.(halter),
         kontext: Phase.kontext(fenster, jack.zusammenfassung.(halter)),
@@ -115,8 +118,18 @@ defmodule Worker.Jack.Resuemee.Lauf do
     Agent.stop(halter)
 
     case ergebnis do
-      {:ok, %{ende: :halt} = b} -> {:ok, %{stand: stand, runden: b.runden, ms: b.ms}}
-      _ -> {:error, Phase.ende(ergebnis)}
+      {:ok, %{ende: :halt} = b} ->
+        {:ok,
+         %{
+           stand: stand,
+           runden: b.runden,
+           ms: b.ms,
+           verlauf: b.verlauf,
+           kompaktierungen: b.kompaktierungen
+         }}
+
+      _ ->
+        {:error, Phase.ende(ergebnis)}
     end
   end
 

@@ -159,6 +159,13 @@ defmodule Worker.Jack.Resuemee.Stand do
             # BESTAND, den er vorfindet; `eintraege` ist sein Ergebnis.
             eintraege: [],
             durchsicht: nil,
+            # Issue #850 (Frage-Jack): die Frage und die Antwort darauf.
+            # `frage` ist der einzige Teil des Stands, der von aussen kommt —
+            # sie steht im Auftrag als abgesetzter Datenblock, nie als
+            # Anweisungssatz. `antwort` traegt das Ergebnis von `antworte`
+            # (Text, zitierte Fakten, Stuetzung), sobald der Lauf abschliesst.
+            frage: nil,
+            antwort: nil,
             abschluss_zahlversuche: 0,
             journal: []
 
@@ -252,6 +259,15 @@ defmodule Worker.Jack.Resuemee.Stand do
   @spec fuer_schreiben(map(), map() | nil) :: t()
   def fuer_schreiben(eingabe, ablage),
     do: %{neu(eingabe) | lauf: :schreiben, notizen: aus_ablage(ablage)}
+
+  @doc """
+  Der Stand des Frage-Jack (#850): frisch aus der Eingabe wie `neu/1`,
+  `lauf: :antworten`, dazu die Frage. Ein einziger Lauf — kein Ueberblick,
+  kein Schreiben, keine Durchsicht: Wer eine Frage stellt, wartet am Tisch.
+  """
+  @spec fuer_frage(map()) :: t()
+  def fuer_frage(eingabe),
+    do: %{neu(eingabe) | lauf: :antworten, frage: Map.get(eingabe, :frage) || ""}
 
   defp aus_ablage(ablage) do
     for r <- notizliste(ablage), is_map(r) do

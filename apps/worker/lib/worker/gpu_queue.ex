@@ -60,6 +60,28 @@ defmodule Worker.GpuQueue do
     GenServer.call(@name, {:enq, :sync, fun, label, priority}, :infinity)
   end
 
+  @doc """
+  Wie `run/2`, aber **ohne zu warten**: Ist die Karte frei, läuft der Job
+  sofort und der Aufrufer bekommt sein Ergebnis; ist sie belegt, kommt sofort
+  `{:belegt, label}` mit dem, was gerade läuft.
+
+  Für den Frage-Jack (#850): `Pipeline.busy?/0` vor dem Start wäre
+  Check-then-Act — zwischen Abfrage und erstem Modellaufruf kann die Pipeline
+  starten, und dann lägen beide auf der Karte. Hier entscheidet der GenServer,
+  also atomar.
+
+  **Die `:live`-Lane ist Absicht.** Background-Jobs pausieren während einer
+  Aufnahme (#355) — eine Frage mitten in der laufenden Sitzung ist aber genau
+  der Anwendungsfall und startete dort sonst nie. `:live` ist seit #418 frei
+  und ausdrücklich als Spur für latenzkritische Jobs erhalten.
+  """
+  @spec run_frei((-> any()), keyword()) :: {:belegt, String.t()} | any()
+  def run_frei(fun, opts \\ []) when is_function(fun, 0) do
+    label = Keyword.get(opts, :label, "anon")
+    priority = Keyword.get(opts, :priority, :live)
+    GenServer.call(@name, {:enq_frei, fun, label, priority}, :infinity)
+  end
+
   @spec enqueue((-> any()), keyword()) :: :ok
   def enqueue(fun, opts \\ []) when is_function(fun, 0) do
     label = Keyword.get(opts, :label, "anon")
@@ -125,6 +147,16 @@ defmodule Worker.GpuQueue do
   @impl true
   def handle_call({:enq, :sync, fun, label, priority}, from, state) do
     {:noreply, schedule(state, {make_job_id(), :sync, fun, label, from, priority})}
+  end
+
+  # Issue #850: nicht-wartender Erwerb. Frei heisst „kein Job läuft" — wartende
+  # Jobs sind egal, weil `:live` ohnehin vor ihnen drankommt.
+  def handle_call({:enq_frei, fun, label, priority}, from, %{running: nil} = state) do
+    {:noreply, schedule(state, {make_job_id(), :sync, fun, label, from, priority})}
+  end
+
+  def handle_call({:enq_frei, _fun, _label, _priority}, _from, state) do
+    {:reply, {:belegt, state.running[:label] || "unbekannt"}, state}
   end
 
   def handle_call(:status, _from, state) do

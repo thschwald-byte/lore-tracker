@@ -48,6 +48,7 @@ defmodule HubWeb.CampaignLive do
     Derive,
     Facts,
     Flags,
+    FragFenster,
     Layout,
     Members,
     Meta,
@@ -130,6 +131,9 @@ defmodule HubWeb.CampaignLive do
       socket
       |> assign(:current_user, user)
       |> assign(:campaign_id, campaign_id)
+      # #850: Zustand des Frag-Fensters aus EINER Stelle (#1005-Lehre —
+      # ein Feld, das eine Klausel später per Map-Update schreibt, muss hier stehen).
+      |> assign(:frag, FragFenster.initial())
       |> Snapshot.initial_assigns()
       |> Snapshot.mount_load()
 
@@ -485,6 +489,10 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("shutdown_worker", _, socket), do: Meta.shutdown_worker(socket)
 
+  # #850 (erster Schnitt): das Frag-Fenster. Alles Weitere im Modul — diese
+  # Datei steht dicht an der God-Module-Grenze.
+  def handle_event("frag_" <> _ = e, params, socket), do: FragFenster.event(socket, e, params)
+
   # ─── Event stream ────────────────────────────────────────────────
 
   @impl true
@@ -839,6 +847,14 @@ defmodule HubWeb.CampaignLive do
       ),
       do: Snapshot.apply_campaign_replay(socket, cid, status, payload)
 
+  # #850 (S3): die Antwort des Frage-Jack. Sie kommt auf dem Topic DIESES
+  # Laufs, nicht auf dem der Kampagne — sonst läse die ganze Runde mit, was
+  # einer gefragt hat. Die Klausel steht VOR dem Auffangzweig darunter, der
+  # sonst jede Statusmeldung schluckt; `frage_lauf_id` ist das schärfere
+  # Merkmal.
+  def handle_info({:pipeline_status, %{"frage_lauf_id" => _} = payload}, socket),
+    do: FragFenster.antwort(socket, payload)
+
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
   # Issue #1149: Rückmeldungen der Lese-Schlange. Best-effort — bleiben sie
@@ -861,6 +877,11 @@ defmodule HubWeb.CampaignLive do
     do: {:noreply, Snapshot.marke_gerendert(socket, kind)}
 
   # Issue #1200: nach dem Moduswechsel die schweren Teile stufenweise füllen.
+  # #850: ein Schritt der synthetischen Konsole. **Pflicht, nicht Kosmetik** —
+  # die CampaignLive hat keinen handle_info-Auffangzweig (#1149), jede
+  # unerwartete Nachricht bringt sie zum Absturz.
+  def handle_info({:frag_schritt, lauf_id}, socket), do: FragFenster.schritt(socket, lauf_id)
+
   def handle_info({:bearbeiten_fuellen, lauf, teile}, socket),
     do: {:noreply, ViewMode.fuellen(socket, lauf, teile)}
 

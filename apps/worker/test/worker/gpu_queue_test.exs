@@ -48,6 +48,52 @@ defmodule Worker.GpuQueueTest do
     :ok
   end
 
+  describe "run_frei/2 — nicht-wartender Erwerb (#850)" do
+    test "freie Karte: der Job läuft und liefert sein Ergebnis" do
+      assert GpuQueue.run_frei(fn -> :fertig end, label: "frage") == :fertig
+    end
+
+    test "belegte Karte: sofort Absage mit dem Namen des laufenden Jobs" do
+      parent = self()
+
+      # Ein Job, der die Karte hält, bis wir ihn gezielt loslassen.
+      halter =
+        Task.async(fn ->
+          GpuQueue.run(
+            fn ->
+              send(parent, {:haelt, self()})
+              receive do: (:los -> :ok)
+            end,
+            label: "extraktion"
+          )
+        end)
+
+      assert_receive {:haelt, job_pid}, 1000
+
+      # Kein Einreihen, kein Warten: sofortige Absage. Eine Frage, die zwanzig
+      # Minuten hinter einer Extraktion wartet, beantwortet niemanden.
+      assert {:belegt, "extraktion"} = GpuQueue.run_frei(fn -> :nie end, label: "frage")
+
+      send(job_pid, :los)
+      Task.await(halter, 2000)
+
+      # Danach ist die Karte wieder frei.
+      assert GpuQueue.run_frei(fn -> :jetzt end, label: "frage") == :jetzt
+    end
+
+    test "die Live-Lane läuft auch bei aktiver Aufnahme" do
+      # Background-Jobs pausieren während einer Aufnahme (#355). Eine Frage
+      # mitten in der laufenden Sitzung ist aber genau der Anwendungsfall —
+      # als Background-Job startete sie dort nie.
+      Phoenix.PubSub.broadcast(Worker.PubSub, "recording_state", {:recording_state, true})
+      Process.sleep(20)
+
+      assert GpuQueue.run_frei(fn -> :trotzdem end, label: "frage") == :trotzdem
+
+      Phoenix.PubSub.broadcast(Worker.PubSub, "recording_state", {:recording_state, false})
+    end
+  end
+
   describe "Phase 1 — strikt-serielle Background-Queue" do
     test "serialisiert zwei parallele Jobs (jeder ≥ 100ms Abstand)" do
       parent = self()

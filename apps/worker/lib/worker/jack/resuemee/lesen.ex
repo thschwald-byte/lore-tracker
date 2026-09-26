@@ -84,7 +84,7 @@ defmodule Worker.Jack.Resuemee.Lesen do
       %{
         name: "boegen",
         beschreibung:
-          "Die Bögen, die Fakten dieser Sitzung berühren: Titel, Art, Status, Leitfrage " <>
+          "Die Bögen, die #{boegen_umfang(s)} berühren: Titel, Art, Status, Leitfrage " <>
             "und die IDs der Fakten dazu. " <> boegen_zweck(s),
         parameter: objekt(%{}),
         wiederholung: :frei,
@@ -132,10 +132,28 @@ defmodule Worker.Jack.Resuemee.Lesen do
         "laufenden, durchnummeriert 1 bis #{length(s.fakten)}. Die ID nennt die " <>
         "Sitzung: S1-F12 ist der zwölfte Fakt der ersten Sitzung."
 
+  # Issue #850: der Frage-Jack bekommt wie der Chronik-Jack ALLE Fakten der
+  # Kampagne (`Worker.Jack.Frage.Eingabe`) — eine Frage an die Kampagne hat
+  # keine „diese Sitzung". Ohne eigene Klausel läse er hier „die Fakten dieser
+  # Sitzung", bekäme aber S1-F1..Sn-Fm und hielte einen Bruchteil für alles.
+  defp fakten_umfang(%Stand{art: :frage} = s),
+    do:
+      "Ohne sitzung ALLE Fakten der Kampagne — von der ersten Sitzung bis zur " <>
+        "laufenden, durchnummeriert 1 bis #{length(s.fakten)}. Die ID nennt die " <>
+        "Sitzung: S1-F12 ist der zwölfte Fakt der ersten Sitzung."
+
   defp fakten_umfang(%Stand{} = s),
     do:
       "Ohne sitzung die Fakten dieser Sitzung (#{s.sitzung.nummer}), " <>
         "durchnummeriert 1 bis #{length(s.fakten)}."
+
+  # Issue #850: `boegen` liest die Bögen der Fakten im Stand. Beim Frage-Jack
+  # sind das alle Fakten der Kampagne, nicht die einer Sitzung — die
+  # Beschreibung muss denselben Umfang nennen wie `fakten_umfang/1`, sonst
+  # sucht das Modell einen Bogen in der falschen Menge.
+  defp boegen_umfang(%Stand{art: :frage}), do: "Fakten der Kampagne"
+  defp boegen_umfang(%Stand{art: :chronik}), do: "Fakten der Kampagne"
+  defp boegen_umfang(%Stand{}), do: "Fakten dieser Sitzung"
 
   defp boegen_zweck(%Stand{art: :epos, lauf: :durchsicht}),
     do: "Zum Nachschlagen, zu welchem Bogen ein Fakt gehört."
@@ -148,6 +166,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
   defp boegen_zweck(%Stand{art: :chronik}),
     do:
       "Ein Bogen kann mehrere Phasen der Chronik umfassen; er ist ein Ausgangspunkt, keine Phase."
+
+  # Issue #850: der Frage-Jack hat keine Gliederung und kein Werk — Bögen sind
+  # für ihn Nachschlagewerk.
+  defp boegen_zweck(%Stand{art: :frage}),
+    do: "Zum Nachschlagen, zu welchem Bogen ein Fakt gehört."
 
   defp boegen_zweck(%Stand{lauf: :schreiben}),
     do:

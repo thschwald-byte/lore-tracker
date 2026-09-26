@@ -26,6 +26,45 @@ defmodule HubWeb.PipelineStatusTest do
     end
   end
 
+  describe "route/1 — die Frage geht an EINEN, nicht an die Kampagne (#850)" do
+    test "frage_lauf_id schlägt die campaign_id" do
+      # Fragt der Spielleiter „was plant der Schurke", läsen auf dem
+      # Kampagnen-Topic alle Spieler mit. Deshalb hat die Antwort einen
+      # eigenen Topic, den nur der Frager kennt.
+      assert PipelineStatus.route(%{
+               "frage_lauf_id" => "lauf-1",
+               "campaign_id" => "cid-abc"
+             }) == "frage:lauf-1"
+    end
+
+    test "ohne frage_lauf_id bleibt es beim Kampagnen-Topic" do
+      assert PipelineStatus.route(%{"campaign_id" => "cid-abc", "kind" => "pipeline_stage"}) ==
+               "pipeline_status:cid-abc"
+    end
+
+    test "eine nicht-binäre Lauf-ID fällt auf die Kampagne zurück" do
+      assert PipelineStatus.route(%{"frage_lauf_id" => nil, "campaign_id" => "cid-abc"}) ==
+               "pipeline_status:cid-abc"
+    end
+
+    test "der Kampagnen-Topic sieht die Antwort NICHT" do
+      cid = "cid-#{uid()}"
+      lauf = "lauf-#{uid()}"
+      Phoenix.PubSub.subscribe(Hub.PubSub, PipelineStatus.topic(cid))
+      Phoenix.PubSub.subscribe(Hub.PubSub, PipelineStatus.frage_topic(lauf))
+
+      PipelineStatus.broadcast(%{
+        "kind" => "frage_antwort",
+        "campaign_id" => cid,
+        "frage_lauf_id" => lauf,
+        "text" => "Die Antwort."
+      })
+
+      assert_receive {:pipeline_status, %{"text" => "Die Antwort."}}
+      refute_receive {:pipeline_status, _}, 50
+    end
+  end
+
   describe "topic/1" do
     test "stabil präfigiert" do
       assert PipelineStatus.topic("cid-1") == "pipeline_status:cid-1"

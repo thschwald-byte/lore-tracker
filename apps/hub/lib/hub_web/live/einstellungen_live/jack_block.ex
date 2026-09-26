@@ -27,6 +27,9 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
     * `chronik_jack_model` (J7, #1211) — das Modell des Chronik-Jack, der die
       Zeitleiste der Kampagne schreibt (ersetzt den deterministischen
       Zeitstrahl, der kein Modell brauchte). Dieselbe Form.
+    * `frage_jack_model` + `frage_pruefer_model` (#850) — der Frage-Jack und
+      der Prüfer seiner Antwort. Zwei Felder statt eines, weil Prüfer und
+      Geprüfter nicht dasselbe Modell sein sollten (s. `Worker.Jack.Frage.Stuetzung`).
     * `epos_jack_model` (J6, #1210) — das Modell des Epos-Jack, der das
       Epos-Kapitel jeder Sitzung schreibt (an der Stelle der früheren
       Stufe 5). Dieselbe Form wie `resuemee_jack_model`: Textfeld mit
@@ -181,6 +184,48 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
             Leer = Jacks Modell (<code>model_stage2_local</code>). Der Epos-Jack schreibt das
             Epos-Kapitel jeder Sitzung frei, in drei Läufen (Überblick, Schreiben, Durchsicht);
             Endpunkt, Regler und Kontextfenster teilt er mit Jack.
+          </p>
+        </div>
+
+        <div class="block">
+          <label for="frage-jack-model" class="text-xs text-ink-2">
+            Modell des Frage-Jack (<code>frage_jack_model</code>)
+          </label>
+          <input
+            id="frage-jack-model"
+            type="text"
+            name="settings[frage_jack_model]"
+            value={@settings["frage_jack_model"] || ""}
+            list="resuemee-jack-modelle"
+            placeholder="leer = Jacks Modell"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          />
+          <p class="text-[10px] text-ink-2/70 mt-1">
+            Leer = Jacks Modell (<code>model_stage2_local</code>). Der Frage-Jack beantwortet
+            eine Frage an die Kampagne aus den geprüften Fakten — ein Lauf, gedeckelt auf
+            12 Runden und 5 Minuten, weil am Tisch jemand wartet.
+          </p>
+        </div>
+
+        <div class="block">
+          <label for="frage-pruefer-model" class="text-xs text-ink-2">
+            Modell der Stützungsprüfung (<code>frage_pruefer_model</code>)
+          </label>
+          <input
+            id="frage-pruefer-model"
+            type="text"
+            name="settings[frage_pruefer_model]"
+            value={@settings["frage_pruefer_model"] || ""}
+            list="resuemee-jack-modelle"
+            placeholder="leer = Modell des Frage-Jack"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          />
+          <p class="text-[10px] text-ink-2/70 mt-1">
+            Prüft, ob die Antwort von den Fakten getragen wird, die sie nennt. <strong>Hier
+            gehört ein anderes Modell hin als oben</strong>: Ein Modell, das sich überreden
+            lässt, kann seine eigene Überredung nicht prüfen — gemessen am 25.09.2026, als
+            ein Modell eine Injektion befolgte und dieselbe Instanz das Ergebnis hätte
+            bewerten sollen. Leer = dasselbe wie oben.
           </p>
         </div>
 

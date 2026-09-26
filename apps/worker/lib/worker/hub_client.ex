@@ -453,6 +453,12 @@ defmodule Worker.HubClient do
   def handle_message(_topic, "start_jack_iterationen", payload, socket),
     do: Replay.on_jack_iterationen(payload, socket)
 
+  def handle_message(_topic, "start_frage", payload, socket),
+    do: Replay.on_frage(payload, socket)
+
+  def handle_message(_topic, "abbrechen_frage", payload, socket),
+    do: Replay.on_frage_abbruch(payload, socket)
+
   def handle_message(_topic, "bridge_publish", payload, socket),
     do: Bridge.on_publish(payload, socket)
 

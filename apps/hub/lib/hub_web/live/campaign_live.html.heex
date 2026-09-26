@@ -1207,6 +1207,19 @@
                       class="text-ink-2/40 hover:text-warning"
                       title="Unstimmigkeit an diesem Fakt melden (Span)"
                     >⚠ melden</button>
+                    <%!-- #850 (Prototyp): der zweite Eingang ins Frag-Fenster. Wer
+                         das Objekt vor sich hat, soll den Befund nicht in einer
+                         Liste suchen müssen. Das Ziel ist das Zeichen, NICHT die
+                         Zeile — die ist seit #916 schon klickbar (Kuration), und
+                         ein zweiter Klick-Sinn auf derselben Fläche wäre eine
+                         stille Kollision. --%>
+                    <button
+                      type="button"
+                      phx-click="frag_zu_fakt"
+                      phx-value-claim={f["claim"]}
+                      class="text-primary/30 hover:text-primary"
+                      title="Dazu nachfragen — öffnet das Fenster mit dieser Frage"
+                    >💬</button>
                     <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
                   </div>
                 </li>
@@ -1857,4 +1870,10 @@
         character_names={@character_names}
         assignments={@speaker_assignments}
       />
+
+      <%!-- #850 (erster Schnitt): „Frag die Runde" — schwebendes Fenster über
+           allen Spalten, nicht modal, beweglich. Liegt bewusst GANZ am Ende
+           und außerhalb der Spalten: Es gehört zu keiner von ihnen und muss
+           über jeder stehen können. --%>
+      <HubWeb.CampaignLive.FragFenster.fenster frag={@frag} campaign_id={@campaign_id} />
     </div>
