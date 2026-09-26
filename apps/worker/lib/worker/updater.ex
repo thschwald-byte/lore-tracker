@@ -382,7 +382,8 @@ defmodule Worker.Updater do
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
       not gpu_busy?() and
       not pipeline_busy?() and
-      not frage_busy?()
+      not frage_busy?() and
+      not jack_busy?()
   catch
     # Ein hängender/abgestürzter Status-GenServer → konservativ „nicht idle".
     _, _ -> false
@@ -470,6 +471,20 @@ defmodule Worker.Updater do
 
     laeuft or gespraech
   end
+
+  # Issue #1259: läuft irgendein Agentenlauf? `gpu_busy?` sieht nur die, die
+  # innerhalb der Pipeline laufen (`pipeline.ex` wickelt den ganzen Lauf in
+  # `GpuQueue.run/2`) — ein von Hand gefahrener Jack ist dort unsichtbar. Am
+  # 26.09.2026 hat genau das auf worker_prod einen 50-Minuten-Lauf gekostet:
+  # `Pipeline.busy? == false`, Queue leer, `idle? == true`, Halt mitten im Lauf.
+  #
+  # Fail-OPEN, anders als die Nachbarn: `Laeufe.anzahl/0` liefert bei fehlender
+  # Registry 0, und das ist hier richtig — ohne Registry gibt es keinen
+  # registrierten Lauf, und ein erfundenes „busy" blockierte das Update
+  # dauerhaft. Der Schutz liegt darin, dass die Registry im Anwendungsbaum
+  # neben dem Updater startet: Ist der da, ist sie es auch.
+  @doc false
+  def jack_busy?, do: Worker.Agent.Laeufe.anzahl() > 0
 
   # GenServer.call mit Schutz: Timeout/Exit wird zu nil (Caller behandelt nil
   # als „nichts läuft" bzw. der idle?-catch greift).

@@ -293,4 +293,126 @@ defmodule Worker.UpdaterTest do
              "idle?/0 fragt den Frage-Pfad nicht — der Riegel ist tot"
     end
   end
+
+  describe "jack_busy?/0 (#1259, der Prod-Vorfall vom 26.09.2026)" do
+    alias Worker.Agent.Laeufe
+
+    setup do
+      ensure_started(Laeufe.registry(), fn ->
+        Registry.start_link(keys: :duplicate, name: Laeufe.registry())
+      end)
+
+      :ok
+    end
+
+    test "kein Lauf → nicht busy" do
+      refute Updater.jack_busy?()
+    end
+
+    test "ein Agentenlauf verhindert das Update — auch ohne GPU-Queue-Eintrag" do
+      # DER Vorfall: Ein Hub-Deploy löste das Selbstupdate aus, und der Updater
+      # hielt den Node mitten in einem 50-Minuten-Zeit-Jack-Lauf. Live gemessen:
+      # Pipeline.busy? == false, Queue leer, idle? == true. Der Schutz der Jacks
+      # hing daran, dass `pipeline.ex` den ganzen Lauf in `GpuQueue.run/2`
+      # wickelt — wer einen Jack von Hand fährt, war ungeschützt.
+      me = self()
+
+      task =
+        Task.async(fn ->
+          Laeufe.anmelden("Worker.Agent.Modell.Ollama")
+          send(me, :laeuft)
+
+          receive do
+            :fertig -> :ok
+          after
+            5_000 -> :timeout
+          end
+        end)
+
+      assert_receive :laeuft, 2_000
+      assert Updater.jack_busy?(), "ein laufender Jack muss ein Update verhindern"
+      assert Laeufe.liste() == ["Worker.Agent.Modell.Ollama"]
+
+      send(task.pid, :fertig)
+      Task.await(task)
+    end
+
+    test "ein abgestürzter Lauf hält das Update NICHT für immer auf" do
+      # Der Grund für eine Registry statt eines Zählers: Der Eintrag hängt am
+      # Prozess. Ein Zähler, den ein abgestürzter Lauf nicht herunterzählt,
+      # blockierte das Update dauerhaft — schlimmer als der Vorfall selbst.
+      {:ok, pid} =
+        Task.start(fn ->
+          Laeufe.anmelden("stirbt")
+          Process.sleep(:infinity)
+        end)
+
+      ref = Process.monitor(pid)
+      # Warten, bis die Anmeldung wirklich durch ist.
+      Process.sleep(50)
+      assert Updater.jack_busy?()
+
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
+
+      # Die Registry räumt asynchron auf; kurz nachfassen statt zu raten.
+      wait_until(fn -> not Updater.jack_busy?() end)
+      refute Updater.jack_busy?()
+    end
+
+    test "ohne Registry ist es NICHT busy (fail-open, mit Absicht)" do
+      # Anders als `gpu_busy?` und `frage_busy?`: Ohne Registry gibt es keinen
+      # registrierten Lauf. Ein erfundenes „busy" blockierte das Update auf
+      # jeder Maschine ohne laufenden Worker — der Schutz liegt darin, dass die
+      # Registry im Anwendungsbaum neben dem Updater startet.
+      if pid = Process.whereis(Laeufe.registry()) do
+        try do
+          Supervisor.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
+      refute Updater.jack_busy?()
+    end
+
+    defp wait_until(pruefung, versuche \\ 40) do
+      cond do
+        pruefung.() -> :ok
+        versuche <= 0 -> :timeout
+        true -> Process.sleep(25) && wait_until(pruefung, versuche - 1)
+      end
+    end
+  end
+
+  describe "die Verdrahtung des Agenten-Riegels (#1259)" do
+    @lauf_ex "lib/worker/agent/lauf.ex"
+
+    test "laufen/1 meldet an UND ab — beides an EINER Stelle" do
+      # Angemeldet wird in `laufen/1`, nicht bei den Aufrufern: Läge es dort,
+      # müsste jeder Einstieg es kennen, und der eine, der es vergisst, ist
+      # wieder ungeschützt (#1153/#1204/#1090-Lehre). Ohne `abmelden` im
+      # `after` bliebe ein langlebiger Aufrufer für immer als „läuft" stehen.
+      code = File.read!(@lauf_ex)
+
+      assert code =~ "Worker.Agent.Laeufe.anmelden(",
+             "kein Anmelden in laufen/1 — jeder von Hand gefahrene Jack ist ungeschützt"
+
+      assert code =~ "Worker.Agent.Laeufe.abmelden()",
+             "kein Abmelden — ein langlebiger Aufrufer blockiert das Update dauerhaft"
+
+      [_, nach_try] = String.split(code, "after", parts: 2)
+
+      assert nach_try =~ "Laeufe.abmelden()",
+             "das Abmelden muss im after-Block stehen, sonst überlebt es einen Fehler nicht"
+    end
+
+    test "idle?/0 ruft jack_busy?/0" do
+      code = File.read!("lib/worker/updater.ex")
+      [idle, _] = String.split(code, "def gpu_busy?", parts: 2)
+
+      assert idle =~ "not jack_busy?()",
+             "idle?/0 fragt die Agentenläufe nicht — der Riegel ist tot"
+    end
+  end
 end
