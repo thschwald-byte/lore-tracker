@@ -34,7 +34,9 @@ defmodule Mix.Tasks.Lore.PrTest do
      Discord-Pair-Flow nötig). Worker-BEAM startet als detached
      `lore-issue-<N>-port-$PORT-worker-$IDX`. Die uvicorn-Sidecars laufen unter
      `lore-issue-<N>-port-$PORT-sidecar-<label>` (via `LORE_PRTEST_TAG`).
-  6. Wenn `--seed`: `mix lore.seed.romeo --hub http://localhost:$PORT
+  6. Wenn `--seed`: der Stand aus `--daten` (Default **v5** = seattleV5 per
+     `mix lore.teststage.einspielen`, #1260; `--daten romeo` nimmt
+     `mix lore.seed.romeo --hub http://localhost:$PORT
      --as-admin <first-admin>`.
   7. Browser öffnet auf `http://localhost:$PORT/`.
   8. CLAUDE.local.md "Currently running PR-test instances" wird aktualisiert.
@@ -58,7 +60,7 @@ defmodule Mix.Tasks.Lore.PrTest do
 
     {opts, positional} =
       OptionParser.parse!(args,
-        strict: [seed: :boolean, admins: :string, discord: :boolean],
+        strict: [seed: :boolean, admins: :string, discord: :boolean, daten: :string],
         aliases: [s: :seed, a: :admins]
       )
 
@@ -69,7 +71,7 @@ defmodule Mix.Tasks.Lore.PrTest do
 
         _ ->
           Mix.raise(
-            "Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3] [--discord]"
+            "Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3] [--discord] [--daten v5|romeo]"
           )
       end
 
@@ -86,8 +88,21 @@ defmodule Mix.Tasks.Lore.PrTest do
       port: port,
       admins: admins,
       seed?: seed?,
-      discord?: discord?
+      discord?: discord?,
+      daten: daten!(opts)
     })
+  end
+
+  # Issue #1260: `--daten` wählt den Stand. Default **v5** (seattleV5) — nur an
+  # vier echten Sitzungen zeigen sich Speicherspitzen, Fenster und Jack-Läufe;
+  # `romeo` bleibt für Onboarding- und Leerlauf-Tests.
+  defp daten!(opts) do
+    case opts[:daten] do
+      nil -> :v5
+      "v5" -> :v5
+      "romeo" -> :romeo
+      anderes -> Mix.raise("--daten kennt v5 und romeo, nicht #{inspect(anderes)}")
+    end
   end
 
   defp parse_admins(opts) do

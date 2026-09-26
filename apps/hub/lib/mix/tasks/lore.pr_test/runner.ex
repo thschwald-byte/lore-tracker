@@ -7,10 +7,18 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   #     `Node.start` (Ergebnis bewusst per `_ =` verworfen, Node ggf. schon
   #     distributed) → Dialyzer hält die Funktion für no_return / den Node.start-
   #     Call für „will not succeed".
+  #   - daten_einspielen!/5 + seed_v5!/2 (#1260): dieselbe Klasse — sie hängen
+  #     am selben `if seed?` wie seed_romeo!/3.
   #   - seed_romeo!/3: nur dadurch „unused", weil sein einziger Call-Pfad hinter
   #     der (fälschlich) no_return-Funktion liegt — reiner Cascade-Effekt.
   # Kein Verhaltens-Bug; nowarn statt Code für Dialyzers Blind-Spots zu verbiegen.
-  @dialyzer {:nowarn_function, [wait_for_worker_connected!: 1, seed_romeo!: 3]}
+  @dialyzer {:nowarn_function,
+             [
+               wait_for_worker_connected!: 1,
+               seed_romeo!: 3,
+               daten_einspielen!: 5,
+               seed_v5!: 2
+             ]}
 
   @repo_root Path.expand("../../../../../..", __DIR__)
 
@@ -19,6 +27,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   # `run/1` ihn per `Map.get(opts, :discord?, false)` liest.
   @spec run(%{
           optional(:discord?) => boolean,
+          optional(:daten) => :v5 | :romeo,
           branch: String.t(),
           port: 4001 | 4002,
           admins: [String.t()],
@@ -27,6 +36,8 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   def run(%{branch: branch, port: port, admins: admins, seed?: seed?} = opts) do
     # Issue #1156: ohne `--discord` startet kein Stage-Worker am echten Gateway.
     discord? = Map.get(opts, :discord?, false)
+    # Issue #1260: seattleV5 ist der Default, Romeo die Ausnahme.
+    daten = Map.get(opts, :daten, :v5)
     worktree = "#{@repo_root}/../lore-pr-#{port}"
     runtime_dir = "/tmp/pr-#{port}"
     jwt_secret = Base.encode64(:crypto.strong_rand_bytes(32))
@@ -69,7 +80,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       # ist (Max 60s); fallback Sleep wenn RPC nicht klappt.
       wait_for_worker_connected!(hub_node)
       first_admin = List.first(admins)
-      seed_romeo!(worktree, port, first_admin)
+      daten_einspielen!(daten, worktree, port, tag, first_admin)
     end
 
     write_pr_test_registry!(port, branch, runtime_dir, worktree)
@@ -390,6 +401,64 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
     spawn_detached!(cmd, Path.join(worktree, "apps/worker"), env, log, pid_file)
     Mix.shell().info("  Worker-BEAM (#{sname}) → log #{log}")
+  end
+
+  # ─── Daten einspielen ───────────────────────────────────────────
+  #
+  # Issue #1260: Der Default ist **seattleV5**, nicht mehr die Romeo-Demo. Nur
+  # an vier echten Sitzungen zeigen sich die Dinge, um die es seit Monaten geht
+  # (Speicherspitzen #1087 ff., Fenster, Jack-Läufe, der Trichter der Chronik);
+  # Romeo hat auf Prod 174 Blöcke und erreicht die Pfade nicht, die an echten
+  # Daten brechen.
+  #
+  # **Der Rückfall auf Romeo ist LAUT.** Der v5-Abzug liegt außerhalb des Repos
+  # (er trägt die echten Namen der Runde) und fehlt auf einer frischen Maschine.
+  # Still auf Romeo zurückzufallen wäre schlimmer als ein Abbruch: Man arbeitet
+  # eine Stunde an einer Stage, die nicht das enthält, was man messen wollte.
+
+  defp daten_einspielen!(:romeo, worktree, port, _tag, admin),
+    do: seed_romeo!(worktree, port, admin)
+
+  defp daten_einspielen!(:v5, worktree, port, tag, admin) do
+    verzeichnis = Shared.TeststageAbzug.standard_verzeichnis()
+
+    if Shared.TeststageAbzug.vorhanden?(verzeichnis) do
+      seed_v5!(worktree, tag)
+    else
+      Mix.shell().error("""
+
+          KEIN seattleV5-ABZUG in #{verzeichnis}
+
+          Der Teststage-Default liegt außerhalb des Repos und ist nicht
+          eingecheckt — er trägt die echten Namen der Runde. Erzeugen:
+
+            mix lore.teststage.abzug --von worker_prod@<host>
+
+        Es wird stattdessen die Romeo-Demo geseedet. Sie ist KLEIN (174
+        Blöcke) und erreicht die Pfade nicht, die an echten Daten brechen.
+      """)
+
+      seed_romeo!(worktree, port, admin)
+    end
+  end
+
+  defp seed_v5!(worktree, tag) do
+    knoten = "#{tag}-worker-0@#{short_hostname()}"
+    Mix.shell().info("  Spiele seattleV5 ein (mix lore.teststage.einspielen → #{knoten}) …")
+
+    {output, status} =
+      System.cmd("mix", ["lore.teststage.einspielen", "--nach", knoten],
+        cd: Path.join(worktree, "apps/worker"),
+        stderr_to_stdout: true
+      )
+
+    if status == 0 do
+      Mix.shell().info("  seattleV5 drin. Die Artefakte entstehen aus den Ereignissen.")
+    else
+      # Laut, aber nicht tödlich: Die Stage läuft, sie ist nur leer — und das
+      # steht hier, statt dass man es beim Klicken merkt.
+      Mix.shell().error("  seattleV5 einspielen gescheitert (Status #{status}):\n#{output}")
+    end
   end
 
   # ─── romeo seed ─────────────────────────────────────────────────
