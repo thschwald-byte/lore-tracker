@@ -1729,9 +1729,14 @@ einem Absturz von selbst — ein Zähler, den ein abgestürzter Lauf nicht
 herunterzählt, hielte das Update für immer auf. Dort **fail-open** (ohne
 Registry kein registrierter Lauf), anders als bei den Nachbarn; der Schutz
 liegt darin, dass die Registry neben dem Updater im Anwendungsbaum startet.
-**Offen: die Serialisierung.** Ein von Hand gefahrener Jack läuft nicht durch
-die `GpuQueue` und kann deshalb gleichzeitig mit Pipeline-Arbeit auf der Karte
-liegen — der Riegel schützt vor dem Update, nicht vor Gleichzeitigkeit.
+**Offen: die Serialisierung (#1261).** Ein von Hand gefahrener Jack läuft nicht
+durch die `GpuQueue` und kann deshalb gleichzeitig mit Pipeline-Arbeit auf der
+Karte liegen — der Riegel schützt vor dem Update, nicht vor Gleichzeitigkeit.
+Ein Schaden daraus ist **nicht beobachtet**, belegt ist nur der fehlende
+Schutz; zwei Fallen stehen dort benannt (ein geschachteltes `GpuQueue.run`
+wäre ein Deadlock, s. `gap_fill.ex:18`, und ein stundenlanger Jack als
+Queue-Eintrag hielte jede Whisper-Transkription auf — welche Bahn er bekäme,
+ist eine eigene Entscheidung).
 
 Dazu speziell für den Frage-Jack (`Updater.frage_busy?/0`). Zwei Zustände, von denen
 `gpu_busy?` nur den ersten sieht: Ein **laufender Lauf** hält die Karte, steht
