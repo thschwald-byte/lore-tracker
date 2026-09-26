@@ -165,4 +165,132 @@ defmodule Worker.UpdaterTest do
     refute s.updating?
     assert s.task_ref == nil
   end
+
+  describe "frage_busy?/0 (#1259)" do
+    alias Worker.Jack.Frage.{Dienst, Gespraech}
+
+    setup do
+      clear_all_tables!()
+
+      ensure_started(Worker.TaskSupervisor, fn ->
+        Task.Supervisor.start_link(name: Worker.TaskSupervisor)
+      end)
+
+      ensure_started(Dienst.registry(), fn ->
+        Registry.start_link(keys: :unique, name: Dienst.registry())
+      end)
+
+      :ok
+    end
+
+    # Der Halter ist ein Singleton im Anwendungsbaum und überlebt Testdateien:
+    # In der vollen Suite lagen Gespräche aus `dienst_test.exs` darin, und
+    # `anzahl() == 1` war eine Annahme über fremden Zustand. Geleert wird
+    # deshalb beim Start, nicht gezählt was zufällig übrig ist.
+    defp start_gespraech! do
+      ensure_started(Gespraech, fn -> Gespraech.start_link([]) end)
+      :sys.replace_state(Process.whereis(Gespraech), fn _ -> %{} end)
+      :ok
+    end
+
+    test "Gespraech-Prozess nicht erreichbar → konservativ busy (fail-closed)" do
+      # Wie bei `gpu_busy?`: ein hängender Prozess darf kein Update
+      # durchlassen. Die Gegenrichtung wäre schlimmer — ein Update mitten im
+      # Gespräch verliert den Verlauf still.
+      if pid = Process.whereis(Gespraech) do
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
+      assert Updater.frage_busy?()
+    end
+
+    test "nichts läuft, kein Gespräch → nicht busy" do
+      start_gespraech!()
+      refute Updater.frage_busy?()
+    end
+
+    test "ein offenes Gespräch verhindert das Update — auch ohne laufenden Job" do
+      # DER Fall dieses Tickets: Zwischen zwei Fragen rechnet nichts. Ohne
+      # diesen Riegel hielte sich der Worker für untätig, startete neu, und der
+      # Verlauf wäre weg — im Fenster stünde weiter „Chat max 3".
+      start_gespraech!()
+      refute Updater.frage_busy?()
+
+      Gespraech.merken("g-offen", %{auftrag: "A", verlauf: [%{role: :user, content: "x"}]})
+      # Der Merk-Weg ist ein Cast; auf die Antwort des nächsten Calls warten.
+      assert Gespraech.anzahl() == 1
+
+      assert Updater.frage_busy?(), "ein offenes Gespräch muss ein Update verhindern"
+
+      Gespraech.verwerfen("g-offen")
+      assert Gespraech.anzahl() == 0
+      refute Updater.frage_busy?()
+    end
+
+    test "ein verfallenes Gespräch zählt NICHT mehr" do
+      # Sonst hielte ein Eintrag, den der Sweep noch nicht geholt hat, das
+      # Update bis zu fünf Minuten länger auf, ohne dass es jemandem nützt.
+      start_gespraech!()
+
+      Gespraech.merken("g-alt", %{auftrag: "A", verlauf: []})
+      assert Gespraech.anzahl() == 1
+
+      :sys.replace_state(Process.whereis(Gespraech), fn st ->
+        Map.update!(
+          st,
+          "g-alt",
+          &%{&1 | ts: System.monotonic_time(:millisecond) - 10 * Gespraech.ttl_ms()}
+        )
+      end)
+
+      refute Updater.frage_busy?()
+      assert Gespraech.anzahl() == 1, "gezählt wird gegen die Frist, nicht gelöscht"
+    end
+
+    test "ein registrierter Lauf verhindert das Update, auch vor dem Karten-Erwerb" do
+      # Zwischen `Registry.register` und `GpuQueue.run_frei` ist die Karte frei
+      # und der Task existiert trotzdem. `gpu_busy?` sieht dieses Fenster nicht.
+      start_gespraech!()
+      refute Updater.frage_busy?()
+
+      me = self()
+
+      task =
+        Task.async(fn ->
+          {:ok, _} = Registry.register(Dienst.registry(), "lauf-1", :frage)
+          send(me, :registriert)
+
+          receive do
+            :fertig -> :ok
+          after
+            5_000 -> :timeout
+          end
+        end)
+
+      assert_receive :registriert, 2_000
+      assert Updater.frage_busy?(), "ein registrierter Frage-Lauf muss ein Update verhindern"
+
+      send(task.pid, :fertig)
+      Task.await(task)
+    end
+  end
+
+  describe "die Verdrahtung (#1259)" do
+    @updater "lib/worker/updater.ex"
+
+    test "idle?/0 ruft frage_busy?/0 — ohne das ist der Riegel wirkungslos" do
+      # Ein fehlender Aufruf erzeugt keinen Fehler: `frage_busy?/0` wäre nur
+      # eine Funktion, die niemand ruft, und ein Update mitten im Gespräch
+      # käme weiterhin durch. Nichts würde rot (#1090-Klasse).
+      code = File.read!(@updater)
+      [idle, _] = String.split(code, "def gpu_busy?", parts: 2)
+
+      assert idle =~ "not frage_busy?()",
+             "idle?/0 fragt den Frage-Pfad nicht — der Riegel ist tot"
+    end
+  end
 end

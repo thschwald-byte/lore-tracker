@@ -81,6 +81,19 @@ defmodule Worker.Jack.Frage.Dienst do
   @spec laeuft?(String.t()) :: boolean()
   def laeuft?(lauf_id), do: Registry.lookup(@registry, lauf_id) != []
 
+  @doc """
+  Läuft überhaupt ein Frage-Lauf? (#1259, für `Worker.Updater.idle?/0`)
+
+  **Gefragt wird die Registry, nicht die Warteschlange.** Ein Lauf, der die
+  Karte hält, ist über `GpuQueue.list/0` ohnehin sichtbar — aber zwischen der
+  Registrierung und dem Erwerb der Karte (`run_frei/2`) liegt ein kurzes
+  Fenster, in dem die Karte frei ist und der Task trotzdem existiert. Ein
+  Update in diesem Moment schösse ihn ab, und der Fragende sähe den Wartetext
+  bis zu seiner Zeitgrenze drehen.
+  """
+  @spec laeuft_etwas?() :: boolean()
+  def laeuft_etwas?, do: Registry.count(@registry) > 0
+
   defp fahren(lauf_id, campaign_id, frage, melden, opts) do
     {gespraech_id, opts} = Keyword.pop(opts, :gespraech_id)
     fortsetzung = Gespraech.holen(gespraech_id)

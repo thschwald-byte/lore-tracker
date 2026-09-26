@@ -939,6 +939,10 @@ schoss den laufenden Whisper ab. `gpu_busy?/0` zählt jetzt **laufende und
 wartende** Jobs (ein Halt verliert wartende ersatzlos — die Queue hält
 Closures) und ist im Fehlerfall **konservativ busy**; der abgelöste Check war
 an dieser Stelle fail-**open** und liess bei hängender Queue ein Update durch.
+**Seit #1259 steht `frage_busy?/0` daneben** — die Karte zu beobachten genügt
+für den Frage-Jack (#850) nicht, weil ein offenes Chat-Gespräch zwischen zwei
+Fragen gar nichts rechnet und ein Neustart seinen Verlauf trotzdem verliert
+(s. „Frag die Kampagne").
 
 **Warum die Queue nicht persistiert wird.** Naheliegend wäre „Warteschlange auf
 Platte". Geht nicht: sie hält **Closures**, und eine Closure überlebt keinen
@@ -1703,6 +1707,26 @@ Verlauf, und darauf sollen keine Belege gestützt werden. Der Hub erfährt es
 Gemerkt wird **nur nach einer Antwort**; der Zähler läuft aus demselben Grund
 an der Antwort herunter und nicht am Absenden — eine verbrauchte Frage ohne
 Gegenwert liesse sich niemandem erklären.
+
+**Ein Selbstupdate reisst weder einen Lauf noch ein offenes Gespräch mit**
+(#1259, `Worker.Updater.frage_busy?/0` in `idle?/0`). Zwei Zustände, von denen
+`gpu_busy?` nur den ersten sieht: Ein **laufender Lauf** hält die Karte, steht
+also in `GpuQueue.running` — fast vollständig, denn zwischen der Registrierung
+des Tasks und dem Erwerb der Karte liegt ein kurzes Fenster, in dem die Karte
+frei ist und der Task trotzdem existiert (deshalb wird die Registry gefragt,
+`Dienst.laeuft_etwas?/0`). Der eigentliche Grund ist aber das **offene
+Chat-Gespräch**: Zwischen zwei Fragen rechnet nichts, der Fragende denkt nach
+und tippt. Ohne den Riegel hielte sich der Worker in genau dieser Pause für
+untätig und startete neu — und weil die Verläufe im Arbeitsspeicher leben, wäre
+der Zusammenhang **still** weg: Im Fenster stünde weiter „Chat max 3", die
+nächste Frage bekäme eine Antwort, und die kennte die vorige nicht. Wer das
+erlebt, hält es für ein schwaches Modell, nicht für einen Neustart (dieselbe
+Klasse wie der abgeschossene Whisper-Lauf, #1055). `Gespraech.offen?/0` zählt
+gegen die **Frist**, nicht gegen die schiere Anwesenheit — ein verfallener
+Eintrag, den der Sweep noch nicht geholt hat, hielte das Update sonst bis zu
+fünf Minuten länger auf. Beide Abfragen sind im Fehlerfall **konservativ
+busy**; ein vergessenes Fenster verzögert das Update um höchstens die
+Gesprächs-Frist (30 min), danach versucht der Updater es wieder.
 
 **Kein eigenes Kontextfenster.** `ctx_jack` ist **kein Ollama-Parameter**: Der
 `/v1`-Client sendet kein `num_ctx`, der Wert ist allein Jacks

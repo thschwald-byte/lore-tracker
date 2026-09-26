@@ -381,7 +381,8 @@ defmodule Worker.Updater do
     not Worker.Repo.any_active_recording?() and
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
       not gpu_busy?() and
-      not pipeline_busy?()
+      not pipeline_busy?() and
+      not frage_busy?()
   catch
     # Ein hängender/abgestürzter Status-GenServer → konservativ „nicht idle".
     _, _ -> false
@@ -427,6 +428,47 @@ defmodule Worker.Updater do
       _ ->
         true
     end
+  end
+
+  # Issue #1259: der Frage-Jack (#850) zählt als busy — und zwar in ZWEI
+  # Zuständen, von denen `gpu_busy?` nur den ersten sieht.
+  #
+  # **Ein laufender Lauf** hält die Karte, steht also in `GpuQueue.running` und
+  # wäre schon gedeckt. Fast: Zwischen der Registrierung des Tasks und dem
+  # Erwerb der Karte (`run_frei/2`) liegt ein kurzes Fenster, in dem die Karte
+  # frei ist und der Task trotzdem existiert. Deshalb wird die Registry
+  # gefragt, nicht die Warteschlange.
+  #
+  # **Ein offenes Chat-Gespräch** ist der eigentliche Grund. Zwischen zwei
+  # Fragen rechnet nichts: Der Fragende denkt nach und tippt. Ohne diesen Riegel
+  # hielte sich der Worker in genau dieser Pause für untätig und startete neu —
+  # und weil `Worker.Jack.Frage.Gespraech` im Arbeitsspeicher lebt, wäre der
+  # Verlauf danach weg. **Still weg:** Im Fenster stünde weiter „Chat max 3",
+  # die nächste Frage bekäme eine Antwort, und die kennte die vorige nicht. Wer
+  # das erlebt, hält es für ein schwaches Modell, nicht für einen Neustart —
+  # dieselbe Klasse wie der abgeschossene Whisper-Lauf (#1055).
+  #
+  # Ein vergessenes Fenster verzögert das Update um höchstens die Frist des
+  # Gesprächs (`Gespraech.ttl_ms/0`, 30 min); der Updater versucht es danach
+  # wieder. Das ist die gleiche Abwägung wie bei einer laufenden Aufnahme.
+  #
+  # Fehlerfall ist konservativ busy, wie bei `gpu_busy?` — ein hängender
+  # Prozess darf kein Update durchlassen.
+  @doc false
+  def frage_busy? do
+    laeuft =
+      case safe_call(Worker.Jack.Frage.Dienst, :laeuft_etwas?) do
+        false -> false
+        _ -> true
+      end
+
+    gespraech =
+      case safe_call(Worker.Jack.Frage.Gespraech, :offen?) do
+        false -> false
+        _ -> true
+      end
+
+    laeuft or gespraech
   end
 
   # GenServer.call mit Schutz: Timeout/Exit wird zu nil (Caller behandelt nil
